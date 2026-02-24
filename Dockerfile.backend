@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y gcc libffi-dev && rm -rf /var/lib/apt/lists/*
+
+# Install Python requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Backend Code
+COPY . .
+
+# Expose HTTP Port
+EXPOSE 8000
+
+# Expose ZMQ Ports (Internal or External)
+EXPOSE 5555
+EXPOSE 5556
+
+# Run Server
+CMD ["python", "server.py"]

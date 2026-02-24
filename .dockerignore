@@ -1,0 +1,37 @@
+# Secrets (env vars set in EasyPanel)
+.env
+.env.*
+
+# Python virtual env
+.venv
+__pycache__
+*.pyc
+
+# SQLite local DBs
+*.db
+
+# Frontend build artifacts (rebuilt in Docker)
+frontend/node_modules
+frontend/dist
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Gemini Agent
+.gemini/
+
+# Debug/test scripts
+check_users.py
+create_admin.py
+debug_auth.py
+diagnose_db.py
+test_link.py
+test_token.py
+verify_full_system.py
+verify_portfolio.py
+verify_zmq.py
