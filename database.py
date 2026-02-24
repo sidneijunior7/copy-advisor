@@ -2,6 +2,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
+import socket
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,10 +23,32 @@ if SQLALCHEMY_DATABASE_URL.startswith("postgresql"):
 else:
     print("Database: Using SQLite (Local)")
 
+
+def _build_connect_args():
+    """Build connect_args, forcing IPv4 for PostgreSQL to avoid IPv6 issues in Docker."""
+    if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        return {"check_same_thread": False}
+    
+    connect_args = {}
+    try:
+        # Extract hostname from DATABASE_URL to resolve to IPv4
+        from urllib.parse import urlparse
+        parsed = urlparse(SQLALCHEMY_DATABASE_URL)
+        if parsed.hostname:
+            # Force IPv4 resolution (AF_INET) — avoids "Network is unreachable" on IPv6-only DNS
+            ipv4 = socket.getaddrinfo(parsed.hostname, None, socket.AF_INET)[0][4][0]
+            connect_args["hostaddr"] = ipv4
+            print(f"Database: Resolved {parsed.hostname} -> {ipv4} (IPv4)")
+    except Exception as e:
+        print(f"Database: IPv4 resolution failed ({e}), using default DNS")
+    
+    return connect_args
+
+
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, 
-    # check_same_thread is only needed for SQLite
-    connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+    connect_args=_build_connect_args(),
+    pool_pre_ping=True,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

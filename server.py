@@ -17,9 +17,25 @@ import database
 import models
 import auth
 
-# Initialize DB Tables
-models.Base.metadata.create_all(bind=database.engine)    
-    
+import time
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize DB Tables (with retry for container startup)
+MAX_DB_RETRIES = 5
+for _attempt in range(1, MAX_DB_RETRIES + 1):
+    try:
+        models.Base.metadata.create_all(bind=database.engine)
+        break
+    except Exception as e:
+        if _attempt == MAX_DB_RETRIES:
+            logger.error(f"Failed to connect to database after {MAX_DB_RETRIES} attempts: {e}")
+            raise
+        logger.warning(f"DB connection attempt {_attempt}/{MAX_DB_RETRIES} failed: {e}. Retrying in {_attempt * 2}s...")
+        time.sleep(_attempt * 2)
+     
 # Seed Default TDM_DEV User
 def seed_superuser():
     db = database.SessionLocal()
@@ -41,9 +57,6 @@ def seed_superuser():
 
 seed_superuser()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # --- Trade Manager (Updated for Multi-Tenant) ---
 class TradeManager:
