@@ -4,6 +4,7 @@ import logging
 from typing import List, Dict, Set, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import uvicorn
@@ -381,7 +382,18 @@ async def create_portfolio(portfolio: PortfolioCreate, current_user: models.User
 @app.get("/portfolios")
 async def list_portfolios(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    return current_user.portfolios
+    result = []
+    for p in current_user.portfolios:
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "public_key": p.public_key,
+            "strategies": [
+                {"id": s.id, "name": s.name, "magic_number": s.magic_number}
+                for s in p.strategies
+            ]
+        })
+    return result
 
 @app.get("/me/manager")
 async def get_manager_details(current_user: models.User = Depends(get_current_user)):
@@ -405,7 +417,7 @@ async def list_licenses(current_user: models.User = Depends(get_current_user), d
 
 @app.post("/portfolios/{portfolio_id}/add_strategy/{strategy_id}")
 async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != "MANAGER": return HTTPException(status_code=403)
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == current_user.id).first()
     strategy = db.query(models.Strategy).filter(models.Strategy.id == strategy_id, models.Strategy.user_id == current_user.id).first()
     
@@ -453,11 +465,21 @@ async def check_license(check: LicenseCheck, db: Session = Depends(get_db)):
     return {"status": "active", "topic": zmq_topic, "max_lots": valid_license.max_lots}
 
 # Serve static files (Frontend)
-if not os.path.exists("frontend/dist"):
+FRONTEND_DIST = "frontend/dist"
+if not os.path.exists(FRONTEND_DIST):
     logger.warning("frontend/dist not found.")
     if not os.path.exists("frontend"): os.makedirs("frontend")
 else:
-    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
+    app.mount("/assets", StaticFiles(directory=f"{FRONTEND_DIST}/assets"), name="assets")
+
+    # SPA catch-all: serve index.html for any unknown path
+    # This handles page refreshes on React Router routes (e.g. /manager/portfolios)
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        index = f"{FRONTEND_DIST}/index.html"
+        if os.path.exists(index):
+            return FileResponse(index)
+        raise HTTPException(status_code=404, detail="Frontend not found")
 
 # --- ZeroMQ Listener (For Master) ---
 async def start_zmq_listener():
