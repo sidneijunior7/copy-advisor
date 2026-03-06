@@ -74,12 +74,16 @@ export function useWebSocket(): UseWebSocketReturn {
                 } else if (msg.type === 'UPDATE') {
                     const data = msg.data;
                     if (data.action === 'OPEN') {
-                        setTrades(prev => ({ ...prev, [data.ticket]: data }));
+                        // Use same key format as server STATE: "strategyId_ticket"
+                        const key = data.strategy_id ? `${data.strategy_id}_${data.ticket}` : String(data.ticket);
+                        setTrades(prev => ({ ...prev, [key]: data }));
                         addLog(`Trade Opened: ${data.symbol} #${data.ticket}`, 'success');
                     } else if (data.action === 'CLOSE') {
                         setTrades(prev => {
                             const next = { ...prev };
-                            delete next[data.ticket];
+                            // Key is "strategyId_ticket", find by ticket suffix
+                            const key = Object.keys(next).find(k => k.endsWith(`_${data.ticket}`)) || String(data.ticket);
+                            delete next[key];
                             return next;
                         });
                         addLog(`Trade Closed: ${data.ticket}`, 'info');
