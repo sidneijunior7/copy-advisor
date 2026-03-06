@@ -381,7 +381,18 @@ async def create_portfolio(portfolio: PortfolioCreate, current_user: models.User
 @app.get("/portfolios")
 async def list_portfolios(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    return current_user.portfolios
+    result = []
+    for p in current_user.portfolios:
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "public_key": p.public_key,
+            "strategies": [
+                {"id": s.id, "name": s.name, "magic_number": s.magic_number}
+                for s in p.strategies
+            ]
+        })
+    return result
 
 @app.get("/me/manager")
 async def get_manager_details(current_user: models.User = Depends(get_current_user)):
@@ -405,7 +416,7 @@ async def list_licenses(current_user: models.User = Depends(get_current_user), d
 
 @app.post("/portfolios/{portfolio_id}/add_strategy/{strategy_id}")
 async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != "MANAGER": return HTTPException(status_code=403)
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == current_user.id).first()
     strategy = db.query(models.Strategy).filter(models.Strategy.id == strategy_id, models.Strategy.user_id == current_user.id).first()
     
