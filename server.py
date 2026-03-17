@@ -513,6 +513,9 @@ async def main():
     await asyncio.gather(zmq_task, server.serve())
 
 if __name__ == "__main__":
+    import os
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
