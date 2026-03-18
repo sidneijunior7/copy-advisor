@@ -485,7 +485,7 @@ else:
 async def start_zmq_listener():
     pull_socket = trade_manager.zmq_context.socket(zmq.PULL)
     master_port = os.environ.get("ZMQ_MASTER_PORT", "5557")
-    pull_socket.bind(f"tcp://*:{master_port}") 
+    pull_socket.bind(f"tcp://*:5557") 
     try:
         while True:
             msg = await pull_socket.recv_string()
