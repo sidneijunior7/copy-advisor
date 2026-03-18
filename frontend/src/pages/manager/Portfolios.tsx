@@ -97,15 +97,15 @@ export default function Portfolios() {
                 {/* List */}
                 <div className="space-y-4">
                     {portfolios.map(p => (
-                        <Card key={p.id} className="border-l-4 border-l-primary hover:border-primary/80 transition shadow-sm">
+                        <Card key={p.id} className="hover:border-primary/80 transition shadow-sm">
                             <h3 className="text-xl font-bold text-foreground mb-2">{p.name}</h3>
                             <div className="mb-4">
                                 <h4 className="text-xs text-muted-foreground uppercase font-semibold mb-2">Linked Strategies:</h4>
                                 {p.strategies && p.strategies.length > 0 ? (
                                     <div className="flex flex-wrap gap-2">
                                         {p.strategies.map((s: any) => (
-                                            <span key={s.id} className="bg-primary/10 text-primary px-2 py-1 rounded text-sm border border-primary/20">
-                                                {s.name} (#{s.magic_number})
+                                            <span key={s.id} className="bg-primary/3 text-primary px-2 py-1 rounded text-sm border border-primary/20">
+                                                {s.name}
                                             </span>
                                         ))}
                                     </div>

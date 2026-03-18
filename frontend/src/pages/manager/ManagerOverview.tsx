@@ -17,7 +17,7 @@ export default function ManagerOverview() {
                     <div className="p-3 bg-accent/2 rounded-xl text-accent"><Activity size={24} /></div>
                     <div>
                         <p className="text-muted-foreground text-sm">System Status</p>
-                        <p className={`text-xl font-bold ${status === 'CONNECTED' ? 'text-emerald-400' : 'text-red-400'}`}>{status}</p>
+                        <p className={`text-xl font-bold ${status === 'CONNECTED' ? 'text-primary' : 'text-red-400'}`}>{status}</p>
                     </div>
                 </Card>
                 <Card className="flex items-center space-x-4 from-emerald-900/20 via-background to-background bg-gradient-to-br">
