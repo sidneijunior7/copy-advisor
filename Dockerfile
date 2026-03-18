@@ -34,6 +34,7 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 EXPOSE 8000
 EXPOSE 5555
 EXPOSE 5556
+EXPOSE 5557
 
 # Run Server
 CMD ["python", "server.py"]
