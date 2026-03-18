@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                               Trademetric Copy Trader Master.mq5 |
 //|                                 Copyright 2026, Trademetric Inc. |
 //|                                   https://www.trademetric.com.br |
@@ -11,6 +11,8 @@
 
 // Inputs
 input string InpSecretKey = "YOUR_STRATEGY_SECRET_KEY"; // Strategy Secret Key provided by Manager
+input string InpServerIP = "127.0.0.1"; // Server IP / Hostname
+input int InpMasterPort = 5557; // Master Port (PULL)
 
 // Globals
 Context context;
@@ -23,11 +25,12 @@ int OnInit()
   {
 //---
    Print("Connecting to ZMQ Pull Server...");
-   if(!socket.connect("tcp://127.0.0.1:5555")) { //tcp://trademetric-mirror-server.dletnt.easypanel.host:5555
-      Print("Failed to connect to ZMQ Server!");
+   string connect_url = StringFormat("tcp://%s:%d", InpServerIP, InpMasterPort);
+   if(!socket.connect(connect_url)) { //tcp://trademetric-mirror-server.dletnt.easypanel.host:5557
+      Print("Failed to connect to ZMQ Server on ", connect_url);
       return(INIT_FAILED);
    }
-   Print("ZMQ Connected (PUSH -> 5555)");
+   Print("ZMQ Connected (PUSH -> ", InpMasterPort, ")");
 //---
    return(INIT_SUCCEEDED);
   }
