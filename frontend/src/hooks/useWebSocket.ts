@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export type Trade = {
     key: string;
@@ -18,7 +19,11 @@ export type Trade = {
 // The hub sends numbers; the pages compare type against '0' (BUY)
 const toTrade = (data: any): Trade => ({ ...data, type: String(data.type) });
 
-export type WebSocketStatus = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+export type WebSocketStatus = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'FORBIDDEN';
+
+// Close codes set by the server (server.py)
+const CLOSE_UNAUTHORIZED = 4401; // Token invalid or expired: log out
+const CLOSE_FORBIDDEN = 4403; // This account has no live view: don't retry
 
 export type LogEntry = {
     id: number;
@@ -35,6 +40,12 @@ interface UseWebSocketReturn {
 }
 
 export function useWebSocket(): UseWebSocketReturn {
+    const { token, logout } = useAuth();
+    const tokenRef = useRef(token);
+    const logoutRef = useRef(logout);
+    tokenRef.current = token;
+    logoutRef.current = logout;
+
     const [status, setStatus] = useState<WebSocketStatus>('DISCONNECTED');
     const [trades, setTrades] = useState<Record<string, Trade>>({});
     const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -51,6 +62,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
     const connect = useCallback(() => {
         if (socketRef.current?.readyState === WebSocket.OPEN) return;
+        if (!tokenRef.current) return;
 
         setStatus('CONNECTING');
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -68,6 +80,8 @@ export function useWebSocket(): UseWebSocketReturn {
         socketRef.current = ws;
 
         ws.onopen = () => {
+            // The server waits for the token before sending anything
+            ws.send(JSON.stringify({ type: 'AUTH', token: tokenRef.current }));
             setStatus('CONNECTED');
             addLog('Connected to Server', 'success');
         };
@@ -99,10 +113,20 @@ export function useWebSocket(): UseWebSocketReturn {
             }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+            socketRef.current = null;
+            if (event.code === CLOSE_UNAUTHORIZED) {
+                setStatus('DISCONNECTED');
+                logoutRef.current();
+                return;
+            }
+            if (event.code === CLOSE_FORBIDDEN) {
+                setStatus('FORBIDDEN');
+                addLog('This account has no access to live trades', 'error');
+                return;
+            }
             setStatus('DISCONNECTED');
             addLog('Disconnected. Reconnecting...', 'error');
-            socketRef.current = null;
             // Reconnect
             reconnectTimeoutRef.current = window.setTimeout(connect, 3000);
         };
@@ -124,6 +148,14 @@ export function useWebSocket(): UseWebSocketReturn {
             if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         };
     }, [connect]);
+
+    // A refreshed token extends the open connection, which would otherwise close when the old one expires
+    useEffect(() => {
+        const ws = socketRef.current;
+        if (token && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'AUTH', token }));
+        }
+    }, [token]);
 
     return { status, trades, logs, connect };
 }

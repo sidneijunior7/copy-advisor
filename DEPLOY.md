@@ -76,4 +76,25 @@ Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um sl
 
 - **Netting:** o Slave ajusta a posição líquida do símbolo inteiro. Operar manualmente o mesmo símbolo numa conta netting copiada faz o EA "corrigir" a operação manual. Com várias cópias no mesmo símbolo, o SL/TP não é copiado.
 - **Master antigo:** fechamento parcial continua virando fechamento total, porque o formato antigo não distingue os dois.
-- **Fora deste trabalho:** tudo que é segurança (SEC-*). O `/ws` e o barramento ZMQ continuam sem autenticação.
+- **Segurança:** a Fase 1 está na seção abaixo. O barramento ZMQ (portas 5555/5556) continua sem autenticação; isso depende da troca de transporte.
+
+## Fase 1 de segurança
+
+**Antes do deploy**
+- `SECRET_KEY` no `mirror-api`: pelo menos 32 caracteres aleatórios (`python -c "import secrets; print(secrets.token_urlsafe(48))"`). Sem ela, ou com um valor fraco, a API **não sobe**. Trocar a chave desloga todo mundo.
+- `CORS_ORIGINS` fica vazio em produção, porque o dashboard é servido pela própria API.
+- Faça o deploy do `mirror-hub` junto com o da API. O hub novo manda o `manager_id` em cada evento, e é por ele que a API filtra o `/ws`. Com um hub antigo, os managers deixam de receber atualizações ao vivo (só o TDM_DEV continua vendo).
+
+**Depois do deploy**
+1. A migração `0003` desativa as contas de admin que usavam as senhas que estavam no Git (`tdmdev123` e `Trademetric2026!`). Defina uma senha nova pelo console do container:
+   ```
+   python create_admin.py <email>
+   ```
+   Num console sem terminal interativo: `ADMIN_PASSWORD='<senha>' python create_admin.py <email>`. O mesmo comando cria uma conta TDM_DEV se o email não existir.
+2. As senhas migram de `sha256_crypt` para bcrypt sozinhas, no próximo login de cada usuário.
+3. **`master_key`:** cada manager pode gerar uma chave nova com `POST /me/manager/rotate-key`, e depois precisa atualizar todos os Masters dele. Enquanto o transporte for ZMQ em claro, a chave nova vaza do mesmo jeito que a antiga. Por isso a rotação em massa fica para quando o transporte mudar.
+
+**O que mudou para quem usa o dashboard**
+- O `/ws` só aceita conexão depois de receber `{"type": "AUTH", "token": ...}`. Cada manager vê só as próprias posições, e o TDM_DEV vê todas. Uma conta CLIENT é recusada (código 4403), porque ainda não existe vínculo entre cliente e manager.
+- O token é renovado sozinho um minuto antes de expirar, até o limite de `SESSION_MAX_HOURS` desde o login. Um token expirado ou uma resposta 401 levam de volta para o login.
+- Um manager congelado perde o acesso na hora, sem esperar o token expirar.

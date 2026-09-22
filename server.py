@@ -3,10 +3,11 @@ import asyncio
 import datetime
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
-from typing import List, Dict, Set, Optional
+from typing import Dict, Optional, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -32,36 +33,32 @@ logger = logging.getLogger(__name__)
 HUB_EVENTS_URL = os.getenv("HUB_EVENTS_URL", "tcp://127.0.0.1:5558")
 HUB_HEALTH_URL = os.getenv("HUB_HEALTH_URL", "http://127.0.0.1:8001/health")
 
-# Seed Default TDM_DEV User
-def seed_superuser():
-    db = database.SessionLocal()
-    try:
-        # Check if TDM_DEV exists
-        if not db.query(models.User).filter(models.User.role == "TDM_DEV").first():
-             print("Creating default TDM_DEV user...")
-             # hashed = auth.get_password_hash("tdmdev123")
-             hashed = "$5$rounds=535000$Y2Q0D0XknO0vUy0N$CF1gxqanWC0SPF1qd4.VvgHD9bmfGRM6UoKy8c/p4x/"
-             print(f"DEBUG SEED: Used Hardcoded Hash: {hashed}")
-             print(f"DEBUG SEED: Immediate Verify: {auth.verify_password('tdmdev123', hashed)}")
-             
-             dev_user = models.User(email="dev@trademetric.com", password_hash=hashed, role="TDM_DEV", status="active")
-             db.add(dev_user)
-             db.commit()
-             print("TDM_DEV created: dev@trademetric.com / tdmdev123")
-    finally:
-        db.close()
+# Browser origins allowed to call the API from another host (e.g. the Vite dev server).
+# Empty in production: the dashboard is served by this same app.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+
+WS_AUTH_TIMEOUT = 5  # Seconds a dashboard has to send its token after connecting
+WS_CLOSE_UNAUTHORIZED = 4401  # The client should log out instead of reconnecting
+WS_CLOSE_FORBIDDEN = 4403
+
+# Accounts with no dashboard access (a TDM_DEV is never locked out by status)
+def is_blocked(user: models.User) -> bool:
+    return user.status != "active" and user.role != "TDM_DEV"
 
 
-def open_positions_state() -> Dict[str, dict]:
-    """Open Master positions, keyed like the hub's WEB events ("strategyId_login_posId")."""
+def open_positions_state(manager_id: Optional[int]) -> Dict[str, dict]:
+    """Open Master positions, keyed like the hub's WEB events ("strategyId_login_posId").
+    manager_id None = every manager (TDM_DEV)."""
     db = database.SessionLocal()
     try:
-        rows = (
+        query = (
             db.query(models.MasterPosition, models.Strategy.name)
             .join(models.Strategy, models.Strategy.id == models.MasterPosition.strategy_id)
             .filter(models.MasterPosition.closed_at.is_(None))
-            .all()
         )
+        if manager_id is not None:
+            query = query.filter(models.MasterPosition.manager_id == manager_id)
+        rows = query.all()
         state = {}
         for p, strategy_name in rows:
             key = f"{p.strategy_id}_{p.master_login}_{p.pos_id}"
@@ -88,34 +85,41 @@ def open_positions_state() -> Dict[str, dict]:
 # --- Web dashboard relay ---
 class TradeManager:
     def __init__(self):
-        self.web_clients: Set[WebSocket] = set()
+        # Authenticated dashboards and the manager each one may see (None = all, for TDM_DEV)
+        self.web_clients: Dict[WebSocket, Optional[int]] = {}
 
-    async def connect_web(self, websocket: WebSocket):
-        await websocket.accept()
-        self.web_clients.add(websocket)
+    async def connect_web(self, websocket: WebSocket, manager_id: Optional[int]):
+        self.web_clients[websocket] = manager_id
         logger.info(f"New Web Client connected. Total: {len(self.web_clients)}")
         # Send current state
-        trades = await asyncio.to_thread(open_positions_state)
+        trades = await asyncio.to_thread(open_positions_state, manager_id)
         await websocket.send_json({"type": "STATE", "trades": trades})
 
     def disconnect_web(self, websocket: WebSocket):
-        self.web_clients.discard(websocket)
+        self.web_clients.pop(websocket, None)
         logger.info(f"Web Client disconnected. Total: {len(self.web_clients)}")
 
     async def broadcast_to_web(self, message: dict):
         if not self.web_clients:
             return
-        
+
+        # Events without an owner (a hub older than this API) only go to TDM_DEV: fail closed
+        data = message.get("data") or {}
+        owner = data.get("manager_id")
+        public = {**message, "data": {k: v for k, v in data.items() if k != "manager_id"}} if data else message
+
         disconnected = []
-        for client in list(self.web_clients):  # Clients may connect while we await a send
+        for client, scope in list(self.web_clients.items()):  # Clients may connect while we await a send
+            if scope is not None and scope != owner:
+                continue
             try:
-                await client.send_json(message)
+                await client.send_json(public)
             except Exception as e:
                 logger.error(f"Error sending to web client: {e}")
                 disconnected.append(client)
-        
+
         for client in disconnected:
-            self.web_clients.discard(client)
+            self.web_clients.pop(client, None)
 
     def relay_hub_events(self, loop: asyncio.AbstractEventLoop, stop: threading.Event):
         """
@@ -151,7 +155,6 @@ trade_manager = TradeManager()
 # --- FastAPI App ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    seed_superuser()
     stop = threading.Event()
     relay = threading.Thread(target=trade_manager.relay_hub_events, args=(asyncio.get_running_loop(), stop),
                              name="hub-relay", daemon=True)
@@ -161,14 +164,15 @@ async def lifespan(app: FastAPI):
     relay.join(2)
 
 app = FastAPI(lifespan=lifespan)
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if CORS_ORIGINS:
+    from fastapi.middleware.cors import CORSMiddleware
+    # The token travels in the Authorization header, not in cookies: no credentials needed
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- Dependencies ---
@@ -179,21 +183,25 @@ def get_db():
     finally:
         db.close()
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def user_from_token(token: str, db: Session) -> Optional[models.User]:
+    """The account behind a valid, unexpired token, or None."""
     payload = auth.decode_token(token)
-    if payload is None:
+    email = payload.get("sub") if payload else None
+    if not email:
+        return None
+    return db.query(models.User).filter(models.User.email == email).first()
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    user = user_from_token(token, db)
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    email: str = payload.get("sub")
-    if email is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    # A manager frozen after logging in loses access at once, not when the token expires
+    if is_blocked(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Account is {user.status}")
     return user
 
 # --- Pydantic Schemas ---
@@ -225,14 +233,61 @@ class LicenseCheck(BaseModel):
 
 # --- API Routes ---
 
+def ws_session(token) -> Tuple[Optional[Tuple[int, Optional[int], float]], int]:
+    """((user_id, manager scope, token expiry), 0) for a dashboard token, or (None, close code)."""
+    if not isinstance(token, str):
+        return None, WS_CLOSE_UNAUTHORIZED
+    db = database.SessionLocal()
+    try:
+        user = user_from_token(token, db)
+        if user is None:
+            return None, WS_CLOSE_UNAUTHORIZED
+        # Clients have no link to a manager yet, so there is nothing they may watch
+        if is_blocked(user) or user.role not in ("MANAGER", "TDM_DEV"):
+            return None, WS_CLOSE_FORBIDDEN
+        scope = None if user.role == "TDM_DEV" else user.id
+        return (user.id, scope, float(auth.decode_token(token)["exp"])), 0
+    finally:
+        db.close()
+
+async def receive_auth(websocket: WebSocket, timeout: float) -> Optional[str]:
+    """The token of the next {"type": "AUTH", "token": ...} message; None on timeout or anything else."""
+    try:
+        msg = await asyncio.wait_for(websocket.receive_json(), timeout)
+    except (asyncio.TimeoutError, ValueError):
+        return None
+    return msg.get("token") if isinstance(msg, dict) and msg.get("type") == "AUTH" else None
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await trade_manager.connect_web(websocket)
+    # Browsers can't set headers on a WebSocket, and a token in the URL ends up in proxy logs:
+    # the first message carries it instead.
+    await websocket.accept()
     try:
+        session, close_code = await asyncio.to_thread(ws_session, await receive_auth(websocket, WS_AUTH_TIMEOUT))
+        if session is None:
+            await websocket.close(code=close_code)
+            return
+        user_id, scope, expires_at = session
+
+        await trade_manager.connect_web(websocket, scope)
+        # The connection lives as long as the token; the dashboard re-sends AUTH after each refresh
         while True:
-            # Keep connection alive
-            data = await websocket.receive_text()
+            remaining = expires_at - time.time()
+            token = await receive_auth(websocket, remaining) if remaining > 0 else None
+            if token is None:
+                if remaining > 0:
+                    continue  # Keepalive or unknown message: ignore
+                await websocket.close(code=WS_CLOSE_UNAUTHORIZED)  # Token expired without a refresh
+                return
+            renewed, close_code = await asyncio.to_thread(ws_session, token)
+            if renewed is None or renewed[0] != user_id:
+                await websocket.close(code=close_code or WS_CLOSE_UNAUTHORIZED)
+                return
+            expires_at = renewed[2]
     except WebSocketDisconnect:
+        pass
+    finally:
         trade_manager.disconnect_web(websocket)
 
 def fetch_hub_health() -> dict:
@@ -276,16 +331,31 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         logger.warning(f"Login failed: User {form_data.username} not found")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     
-    if not auth.verify_password(form_data.password, user.password_hash):
+    valid, needs_rehash = auth.verify_password(form_data.password, user.password_hash)
+    if not valid:
         logger.warning(f"Login failed: Incorrect password for user {form_data.username}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     
-    if user.status != 'active' and user.role != 'TDM_DEV':
+    if is_blocked(user):
         logger.warning(f"Login failed: Account {user.email} is {user.status}")
         raise HTTPException(status_code=403, detail=f"Account is {user.status}")
+
+    # sha256_crypt hashes become bcrypt the first time the plain password is available
+    if needs_rehash and not auth.validate_password(form_data.password):
+        user.password_hash = auth.get_password_hash(form_data.password)
+        db.commit()
+        logger.info(f"Password hash of {user.email} upgraded to bcrypt")
     
     access_token = auth.create_access_token(data={"sub": user.email, "role": user.role})
     logger.info(f"Login successful for user: {user.email}")
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/token/refresh", response_model=Token)
+async def refresh_access_token(token: str = Depends(oauth2_scheme), current_user: models.User = Depends(get_current_user)):
+    """A new token for a still-valid one. The session still ends SESSION_MAX_HOURS after the login."""
+    auth_time = auth.decode_token(token).get("auth_time")
+    access_token = auth.create_access_token(data={"sub": current_user.email, "role": current_user.role},
+                                            session_start=auth_time)
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/admin/managers")
@@ -301,6 +371,9 @@ async def create_manager(user: UserCreate, current_user: models.User = Depends(g
     if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+    password_error = auth.validate_password(user.password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
     
     hashed_password = auth.get_password_hash(user.password)
     # Managers created by Dev are active by default, or frozen? Let's say active.
@@ -374,6 +447,16 @@ async def get_manager_details(current_user: models.User = Depends(get_current_us
         "master_key": current_user.master_key,
         "status": current_user.status
     }
+
+@app.post("/me/manager/rotate-key")
+async def rotate_master_key(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Revoke a leaked master_key. Every Master EA of this manager must be reconfigured with the new one;
+    the hub stops accepting the old key within HUB_DIRECTORY_TTL_SECONDS."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    current_user.master_key = models.generate_key()
+    db.commit()
+    logger.info(f"master_key rotated for manager {current_user.id}")
+    return {"master_key": current_user.master_key}
 
 @app.get("/licenses")
 async def list_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

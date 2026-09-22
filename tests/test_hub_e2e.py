@@ -10,6 +10,7 @@ import urllib.request
 import pytest
 import zmq
 
+import auth
 import database
 import models
 
@@ -34,7 +35,8 @@ def setup():
         portfolio.strategies.append(strategy)
         db.add_all([strategy, portfolio])
         db.commit()
-        info = {"key": manager.master_key, "portfolio": portfolio.id, "manager": manager.id}
+        info = {"key": manager.master_key, "portfolio": portfolio.id, "manager": manager.id,
+                "token": auth.create_access_token({"sub": manager.email, "role": "MANAGER"})}
     finally:
         db.close()
     ports = {name: free_port() for name in ("pull", "pub", "events", "health")}
@@ -174,11 +176,13 @@ def test_api_relays_hub_events_to_dashboard(setup):
         assert body["hub"]["status"] == "healthy"
 
         with connect(f"ws://127.0.0.1:{api_port}/ws") as ws:
+            ws.send(json.dumps({"type": "AUTH", "token": info["token"]}))
             assert json.loads(ws.recv(timeout=5))["type"] == "STATE"
             time.sleep(1)  # Let the API's SUB finish connecting to the hub
             peer.push.send_string(f"{info['key']}|V2|900|OPEN|66|1|GBPUSD|2|1.30000|0|0|4242")
             update = json.loads(ws.recv(timeout=5))
             assert update["type"] == "UPDATE"
+            assert "manager_id" not in update["data"]
             assert update["data"]["ticket"] == 66 and update["data"]["volume"] == 2.0 and update["data"]["type"] == 1
     finally:
         peer.close()

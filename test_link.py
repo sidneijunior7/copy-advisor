@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 
@@ -5,7 +6,7 @@ BASE_URL = "http://localhost:8000"
 
 def test_endpoints():
     print("--- LOGIN ---")
-    resp = requests.post(f"{BASE_URL}/token", data={"username": "dev@trademetric.com", "password": "tdmdev123"})
+    resp = requests.post(f"{BASE_URL}/token", data={"username": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"]})
     if resp.status_code != 200:
         print(f"Login failed: {resp.status_code} {resp.text}")
         return

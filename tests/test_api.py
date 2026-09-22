@@ -8,6 +8,7 @@ os.environ["HUB_EVENTS_URL"] = "tcp://127.0.0.1:9"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+import auth  # noqa: E402
 import database  # noqa: E402
 import models  # noqa: E402
 import server  # noqa: E402
@@ -49,7 +50,9 @@ def test_ws_state_comes_from_open_master_positions(client):
     finally:
         db.close()
 
+    token = auth.create_access_token({"sub": "state@x.com", "role": "MANAGER"})
     with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "AUTH", "token": token})
         msg = ws.receive_json()
     assert msg["type"] == "STATE"
     key = f"{strategy_id}_11_1"

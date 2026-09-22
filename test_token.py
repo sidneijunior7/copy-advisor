@@ -1,10 +1,11 @@
+import os
 
 import requests
 
 url = "http://localhost:8000/token"
 data = {
-    "username": "dev@trademetric.com",
-    "password": "tdmdev123"
+    "username": os.environ["ADMIN_EMAIL"],
+    "password": os.environ["ADMIN_PASSWORD"]
 }
 
 print("Testing /token with form data...")

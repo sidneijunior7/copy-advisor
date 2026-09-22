@@ -1,42 +1,48 @@
+"""
+Create a TDM_DEV account, or set a new password on an existing account.
+
+    python create_admin.py <email>
+
+The password is read from the terminal (or from ADMIN_PASSWORD, for non-interactive consoles
+such as EasyPanel's) and is never printed.
+"""
+import getpass
+import os
+import sys
+
 import database
 import models
 import auth
 
-def create_admin():
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    email = sys.argv[1].strip().lower()
+
+    password = os.getenv("ADMIN_PASSWORD")
+    if not password:
+        password = getpass.getpass("New password: ")
+        if password != getpass.getpass("Repeat: "):
+            sys.exit("Passwords do not match")
+    error = auth.validate_password(password)
+    if error:
+        sys.exit(error)
+
     db = database.SessionLocal()
     try:
-        # Configuration for the first admin
-        email = "trademetric@trademetric.com.br"
-        password = "Trademetric2026!" # PLEASE CHANGE THIS AFTER FIRST LOGIN
-        
-        # Check if user already exists
         user = db.query(models.User).filter(models.User.email == email).first()
         if user:
-            print(f"User {email} already exists.")
-            return
-
-        hashed_password = auth.get_password_hash(password)
-        admin_user = models.User(
-            email=email,
-            password_hash=hashed_password,
-            role="TDM_DEV", # Superuser role matching server.py checks
-            status="active"
-        )
-        db.add(admin_user)
+            user.password_hash = auth.get_password_hash(password)
+            print(f"Password updated for {email} ({user.role})")
+        else:
+            db.add(models.User(email=email, password_hash=auth.get_password_hash(password),
+                               role="TDM_DEV", status="active"))
+            print(f"TDM_DEV account created: {email}")
         db.commit()
-        print(f"=========================================")
-        print(f"Admin user created successfully!")
-        print(f"Email: {email}")
-        print(f"Password: {password}")
-        print(f"Role: TDM_DEV")
-        print(f"=========================================")
-        print(f"IMPORTANT: Use these credentials to log in")
-        print(f"and then change your password.")
-    except Exception as e:
-        print(f"Error creating admin: {e}")
-        db.rollback()
     finally:
         db.close()
 
+
 if __name__ == "__main__":
-    create_admin()
+    main()

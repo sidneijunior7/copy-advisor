@@ -7,7 +7,7 @@ import tempfile
 _tmpdir = tempfile.mkdtemp(prefix="tdm_tests_")
 os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL") or \
     "sqlite:///" + os.path.join(_tmpdir, "test.db").replace("\\", "/")
-os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-with-at-least-32-characters")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402

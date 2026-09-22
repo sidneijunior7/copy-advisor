@@ -386,6 +386,7 @@ class HubCore:
         self.web({"type": "UPDATE", "data": {
             "key": f"{pos.strategy_id}_{pos.uid}",
             "action": reason,
+            "manager_id": pos.manager_id,  # The API routes on it: each dashboard only sees its own manager
             "strategy_id": pos.strategy_id,
             "strategy_name": strategy.name if strategy else "",
             "ticket": pos.pos_id,
