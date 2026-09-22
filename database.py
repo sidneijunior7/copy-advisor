@@ -29,7 +29,8 @@ def _build_connect_args():
     if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         return {"check_same_thread": False}
     
-    connect_args = {}
+    # Fail fast instead of hanging the caller when the database is unreachable
+    connect_args = {"connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "3"))}
     try:
         # Extract hostname from DATABASE_URL to resolve to IPv4
         from urllib.parse import urlparse
@@ -52,6 +53,8 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+IS_POSTGRES = SQLALCHEMY_DATABASE_URL.startswith("postgresql")
 
 Base = declarative_base()
 

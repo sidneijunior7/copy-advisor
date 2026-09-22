@@ -1,0 +1,22 @@
+# Signal hub (service "mirror-hub"). Run exactly one replica, update order stop-first:
+# two hubs running at once would split masters and slaves between them.
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y gcc libffi-dev && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY database.py models.py hub.py ./
+
+# 5555 Masters/Slaves PUSH and 5556 Slaves SUB: published on the host.
+# 5558 events for the API and 8001 health: internal network only.
+EXPOSE 5555 5556 5558 8001
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"
+
+CMD ["python", "hub.py"]

@@ -1,16 +1,21 @@
 
 import asyncio
+import datetime
+import json
 import logging
+import urllib.error
+import urllib.request
+from contextlib import asynccontextmanager
 from typing import List, Dict, Set, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import uvicorn
 import os
+import threading
 import zmq
-import zmq.asyncio
 from pydantic import BaseModel
 
 # Internal Imports
@@ -18,25 +23,15 @@ import database
 import models
 import auth
 
-import time
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize DB Tables (with retry for container startup)
-MAX_DB_RETRIES = 5
-for _attempt in range(1, MAX_DB_RETRIES + 1):
-    try:
-        models.Base.metadata.create_all(bind=database.engine)
-        break
-    except Exception as e:
-        if _attempt == MAX_DB_RETRIES:
-            logger.error(f"Failed to connect to database after {MAX_DB_RETRIES} attempts: {e}")
-            raise
-        logger.warning(f"DB connection attempt {_attempt}/{MAX_DB_RETRIES} failed: {e}. Retrying in {_attempt * 2}s...")
-        time.sleep(_attempt * 2)
-     
+# The signal hub (hub.py) runs as a separate service; the API only relays its events to the dashboard.
+# Schema is managed by Alembic: run `python migrate.py` before starting (the Dockerfile CMD does).
+HUB_EVENTS_URL = os.getenv("HUB_EVENTS_URL", "tcp://127.0.0.1:5558")
+HUB_HEALTH_URL = os.getenv("HUB_HEALTH_URL", "http://127.0.0.1:8001/health")
+
 # Seed Default TDM_DEV User
 def seed_superuser():
     db = database.SessionLocal()
@@ -56,30 +51,55 @@ def seed_superuser():
     finally:
         db.close()
 
-seed_superuser()
+
+def open_positions_state() -> Dict[str, dict]:
+    """Open Master positions, keyed like the hub's WEB events ("strategyId_login_posId")."""
+    db = database.SessionLocal()
+    try:
+        rows = (
+            db.query(models.MasterPosition, models.Strategy.name)
+            .join(models.Strategy, models.Strategy.id == models.MasterPosition.strategy_id)
+            .filter(models.MasterPosition.closed_at.is_(None))
+            .all()
+        )
+        state = {}
+        for p, strategy_name in rows:
+            key = f"{p.strategy_id}_{p.master_login}_{p.pos_id}"
+            state[key] = {
+                "key": key,
+                "strategy_id": p.strategy_id,
+                "strategy_name": strategy_name,
+                "ticket": p.pos_id,
+                "master_login": p.master_login,
+                "symbol": p.symbol,
+                "type": p.type,
+                "volume": p.volume,
+                "price": p.price_open,
+                "sl": p.sl,
+                "tp": p.tp,
+                "magic": p.magic,
+                "timestamp": (p.updated_at or p.opened_at).replace(tzinfo=datetime.timezone.utc).timestamp(),
+            }
+        return state
+    finally:
+        db.close()
 
 
-# --- Trade Manager (Updated for Multi-Tenant) ---
+# --- Web dashboard relay ---
 class TradeManager:
     def __init__(self):
-        # In-memory state for Web Dashboard
-        self.active_trades: Dict[str, dict] = {} 
         self.web_clients: Set[WebSocket] = set()
-        
-        # ZMQ Context
-        self.zmq_context = zmq.asyncio.Context()
-        self.pub_socket = self.zmq_context.socket(zmq.PUB)
-        self.pub_socket.bind("tcp://*:5556") # Publisher for Slaves
 
     async def connect_web(self, websocket: WebSocket):
         await websocket.accept()
         self.web_clients.add(websocket)
         logger.info(f"New Web Client connected. Total: {len(self.web_clients)}")
         # Send current state
-        await websocket.send_json({"type": "STATE", "trades": self.active_trades})
+        trades = await asyncio.to_thread(open_positions_state)
+        await websocket.send_json({"type": "STATE", "trades": trades})
 
     def disconnect_web(self, websocket: WebSocket):
-        self.web_clients.remove(websocket)
+        self.web_clients.discard(websocket)
         logger.info(f"Web Client disconnected. Total: {len(self.web_clients)}")
 
     async def broadcast_to_web(self, message: dict):
@@ -87,7 +107,7 @@ class TradeManager:
             return
         
         disconnected = []
-        for client in self.web_clients:
+        for client in list(self.web_clients):  # Clients may connect while we await a send
             try:
                 await client.send_json(message)
             except Exception as e:
@@ -95,113 +115,52 @@ class TradeManager:
                 disconnected.append(client)
         
         for client in disconnected:
-            self.web_clients.remove(client)
+            self.web_clients.discard(client)
 
-    async def broadcast_to_specific_topic(self, topic: str, message: str):
+    def relay_hub_events(self, loop: asyncio.AbstractEventLoop, stop: threading.Event):
         """
-        Broadcasts to a specific ZMQ Topic.
-        Format: TOPIC message
+        Forward the hub's WEB events to dashboard clients. Runs in a thread with a plain ZMQ socket,
+        so it works on any event loop (zmq.asyncio fails on Windows' Proactor loop).
+        ZMQ reconnects by itself if the hub restarts.
         """
+        sub = zmq.Context.instance().socket(zmq.SUB)
+        sub.setsockopt(zmq.LINGER, 0)
+        # Swarm's ingress drops idle TCP after ~15 min; keepalive keeps the subscription alive overnight
+        sub.setsockopt(zmq.TCP_KEEPALIVE, 1)
+        sub.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
+        sub.setsockopt(zmq.TCP_KEEPALIVE_INTVL, 15)
+        sub.connect(HUB_EVENTS_URL)
+        sub.subscribe("WEB ")
+        logger.info(f"Relaying hub events from {HUB_EVENTS_URL}")
         try:
-            full_msg = f"{topic} {message}"
-            await self.pub_socket.send_string(full_msg)
-        except Exception as e:
-            logger.error(f"Error broadcasting: {e}")
-
-    async def process_master_message(self, master_key: str, payload: str, db: Session):
-        try:
-            parts = payload.split('|')
-            # Format: ACTION|POS_ID|TYPE|SYMBOL|VOL|PRICE|SL|TP|MAGIC
-            if len(parts) < 9: return
-            
-            action = parts[0]
-            pos_id = int(parts[1])
-            type_   = int(parts[2])
-            symbol  = parts[3]
-            vol     = float(parts[4])
-            price   = float(parts[5])
-            sl      = float(parts[6])
-            tp      = float(parts[7])
-            magic   = int(parts[8])
-
-            # 1. FIND MANAGER BY MASTER KEY
-            manager = db.query(models.User).filter(models.User.master_key == master_key).first()
-            if not manager:
-                logger.warning(f"Invalid Master Key: {master_key}")
-                return
-
-            if manager.status != 'active':
-                logger.warning(f"Manager {manager.email} is {manager.status}. Trade ignored.")
-                return
-
-            # 2. FIND STRATEGY BY MAGIC NUMBER FOR THIS MANAGER
-            strategy = db.query(models.Strategy).filter(
-                models.Strategy.user_id == manager.id, 
-                models.Strategy.magic_number == magic
-            ).first()
-            
-            if not strategy:
-                logger.warning(f"Strategy not found for Magic {magic} (Manager: {manager.email})")
-                return
-
-            if not strategy.is_active: return
-
-            # 3. CONSTRUCT SIGNAL
-            signal = {
-                "action": action,
-                "ticket": pos_id,
-                "symbol": symbol,
-                "type": type_,
-                "volume": vol,
-                "price": price,
-                "sl": sl,
-                "tp": tp,
-                "strategy_id": strategy.id,
-                "magic": magic
-            }
-
-            # 4. BROADCAST to ZMQ Topics (Strategy & Portfolios)
-            await self.broadcast_to_specific_topic(f"S_{strategy.id}", payload)
-            for portfolio in strategy.portfolios:
-                await self.broadcast_to_specific_topic(f"P_{portfolio.id}", payload)
-
-            # 5. UPDATE WEB DASHBOARD
-            trade_data = {
-                "action": action,
-                "raw": payload,
-                "strategy_name": strategy.name,
-                "timestamp": asyncio.get_event_loop().time(),
-                "ticket": pos_id,
-                "magic": magic
-            }
-            if action == "OPEN":
-                trade_details = {
-                    "type": type_,
-                    "symbol": symbol,
-                    "volume": vol,
-                    "price": price,
-                    "sl": sl,
-                    "tp": tp
-                }
-                unique_id = f"{strategy.id}_{pos_id}"
-                self.active_trades[unique_id] = {**trade_data, **trade_details}
-                trade_data.update(trade_details)
-            
-            elif action == "CLOSE":
-                unique_id = f"{strategy.id}_{pos_id}"
-                if unique_id in self.active_trades:
-                    del self.active_trades[unique_id]
-
-            await self.broadcast_to_web({"type": "UPDATE", "data": trade_data})
-            logger.info(f"Broadcasted signal for Strategy {strategy.name} (Magic {magic})")
-
-        except Exception as e:
-            logger.error(f"Error processing master message: {e}")
+            while not stop.is_set():
+                if not sub.poll(500):
+                    continue
+                msg = sub.recv_string()
+                try:
+                    event = json.loads(msg[4:])
+                except ValueError as e:
+                    logger.error(f"Invalid hub event: {e}")
+                    continue
+                asyncio.run_coroutine_threadsafe(self.broadcast_to_web(event), loop)
+        finally:
+            sub.close()
 
 trade_manager = TradeManager()
 
 # --- FastAPI App ---
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    seed_superuser()
+    stop = threading.Event()
+    relay = threading.Thread(target=trade_manager.relay_hub_events, args=(asyncio.get_running_loop(), stop),
+                             name="hub-relay", daemon=True)
+    relay.start()
+    yield
+    stop.set()
+    relay.join(2)
+
+app = FastAPI(lifespan=lifespan)
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
@@ -276,26 +235,37 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         trade_manager.disconnect_web(websocket)
 
+def fetch_hub_health() -> dict:
+    try:
+        with urllib.request.urlopen(HUB_HEALTH_URL, timeout=1) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:  # 503 = hub loop stalled; the body still has the details
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {"status": "error", "message": f"HTTP {e.code}"}
+    except Exception as e:
+        return {"status": "unreachable", "message": str(e)}
+
 @app.get("/health")
 @app.get("/api/health")
 async def health_check(db: Session = Depends(get_db)):
+    db_type = "PostgreSQL (Supabase)" if database.IS_POSTGRES else "SQLite (Local)"
+    hub = await asyncio.to_thread(fetch_hub_health)
     try:
-        # Check database connection type
-        db_url = str(database.engine.url)
-        db_type = "PostgreSQL (Supabase)" if "postgresql" in db_url else "SQLite (Local)"
-        
-        # Check if users table is accessible
         user_count = db.query(models.User).count()
-        
-        return {
-            "status": "healthy",
-            "version": "v2026.02.23.2307",
-            "database_type": db_type,
-            "user_count": user_count
-        }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {"status": "error", "message": str(e)}
+        # Only a dead database makes the API itself unhealthy; hub problems are reported, not fatal
+        return JSONResponse(status_code=503, content={"status": "error", "database": str(e), "hub": hub})
+
+    return {
+        "status": "healthy" if hub.get("status") == "healthy" and not hub.get("warming") else "degraded",
+        "version": "v2026.09.15",
+        "database_type": db_type,
+        "user_count": user_count,
+        "hub": hub,
+    }
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -481,41 +451,15 @@ else:
             return FileResponse(index)
         raise HTTPException(status_code=404, detail="Frontend not found")
 
-# --- ZeroMQ Listener (For Master) ---
-async def start_zmq_listener():
-    pull_socket = trade_manager.zmq_context.socket(zmq.PULL)
-    pull_socket.bind("tcp://*:5555") 
-    try:
-        while True:
-            msg = await pull_socket.recv_string()
-            logger.info(f"DEBUG: ZMQ Received raw: {msg}")
-            parts = msg.split('|', 1)
-            if len(parts) == 2:
-                key = parts[0]
-                payload = parts[1]
-                db = database.SessionLocal()
-                try:
-                    await trade_manager.process_master_message(key, payload, db)
-                finally:
-                    db.close()
-            else:
-                logger.warning(f"Malformed message: {msg}")
-    except Exception as e:
-        logger.error(f"ZMQ Listener Error: {e}")
-    finally:
-        pull_socket.close()
-
-# --- Main Entry Point ---
+# --- Main Entry Point (local dev; the container runs `python migrate.py && uvicorn server:app`) ---
 async def main():
-    zmq_task = asyncio.create_task(start_zmq_listener())
     config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
-    await asyncio.gather(zmq_task, server.serve())
+    await server.serve()
 
 if __name__ == "__main__":
-    import os
-    if os.name == 'nt':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    import migrate
+    migrate.main()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

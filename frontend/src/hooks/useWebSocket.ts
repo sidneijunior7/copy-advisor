@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export type Trade = {
+    key: string;
     ticket: string;
     type: string;
     symbol: string;
@@ -9,8 +10,13 @@ export type Trade = {
     sl: string;
     tp: string;
     magic?: string;
-    // Add other fields if necessary
+    strategy_id?: number;
+    strategy_name?: string;
+    timestamp?: number;
 };
+
+// The hub sends numbers; the pages compare type against '0' (BUY)
+const toTrade = (data: any): Trade => ({ ...data, type: String(data.type) });
 
 export type WebSocketStatus = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
 
@@ -70,23 +76,22 @@ export function useWebSocket(): UseWebSocketReturn {
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'STATE') {
-                    setTrades(msg.trades);
+                    const state: Record<string, Trade> = {};
+                    for (const [key, data] of Object.entries(msg.trades)) state[key] = toTrade(data);
+                    setTrades(state);
                 } else if (msg.type === 'UPDATE') {
+                    // Every UPDATE carries the full position state: volume 0 means closed
                     const data = msg.data;
-                    if (data.action === 'OPEN') {
-                        // Use same key format as server STATE: "strategyId_ticket"
-                        const key = data.strategy_id ? `${data.strategy_id}_${data.ticket}` : String(data.ticket);
-                        setTrades(prev => ({ ...prev, [key]: data }));
-                        addLog(`Trade Opened: ${data.symbol} #${data.ticket}`, 'success');
-                    } else if (data.action === 'CLOSE') {
+                    if (Number(data.volume) > 0) {
+                        setTrades(prev => ({ ...prev, [data.key]: toTrade(data) }));
+                        addLog(`${data.action}: ${data.symbol} #${data.ticket} (${data.volume})`, 'success');
+                    } else {
                         setTrades(prev => {
                             const next = { ...prev };
-                            // Key is "strategyId_ticket", find by ticket suffix
-                            const key = Object.keys(next).find(k => k.endsWith(`_${data.ticket}`)) || String(data.ticket);
-                            delete next[key];
+                            delete next[data.key];
                             return next;
                         });
-                        addLog(`Trade Closed: ${data.ticket}`, 'info');
+                        addLog(`Trade Closed: ${data.symbol} #${data.ticket}`, 'info');
                     }
                 }
             } catch (error) {
