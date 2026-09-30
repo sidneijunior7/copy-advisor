@@ -1,132 +1,179 @@
 
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
+import { Briefcase, Link as LinkIcon, Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import api from '../../api';
 import Card from '../../components/Card';
-import { Link as LinkIcon, Plus, Copy, Check } from 'lucide-react';
+import CopyField from '../../components/CopyField';
+import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { Field, Input, Select } from '../../components/ui/Field';
+import { apiError } from '../../lib/utils';
+
+type PortfolioForm = { name: string };
+type LinkForm = { portfolio_id: string; strategy_id: string };
 
 export default function Portfolios() {
     const [portfolios, setPortfolios] = useState<any[]>([]);
     const [strategies, setStrategies] = useState<any[]>([]);
-    const { register: regPort, handleSubmit: subPort, reset: resPort } = useForm();
-    const { register: regLink, handleSubmit: subLink, reset: resLink } = useForm();
-    const [copied, setCopied] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const portfolioForm = useForm<PortfolioForm>();
+    const linkForm = useForm<LinkForm>();
 
     const refresh = async () => {
         try {
             const [p, s] = await Promise.all([api.get('/portfolios'), api.get('/strategies')]);
             setPortfolios(p.data);
             setStrategies(s.data);
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.error(e);
+            toast.error('Não foi possível carregar os portfólios.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { refresh(); }, []);
 
-    const onCreatePortfolio = async (data: any) => {
+    const onCreatePortfolio = async (data: PortfolioForm) => {
         try {
-            console.log("Creating portfolio with data:", data);
             await api.post('/portfolios', data);
-            resPort();
+            portfolioForm.reset();
+            toast.success(`Portfólio "${data.name}" criado`);
             refresh();
         } catch (e) {
-            console.error("Failed to create portfolio:", e);
-            alert("Failed to create portfolio. Check console.");
+            console.error(e);
+            toast.error(apiError(e, 'Não foi possível criar o portfólio.'));
         }
     };
 
-    const onLink = async (data: any) => {
-        if (!data.portfolio_id || !data.strategy_id) {
-            alert("Please select both a Portfolio and a Strategy.");
-            return;
-        }
+    const onLink = async (data: LinkForm) => {
         try {
             await api.post(`/portfolios/${data.portfolio_id}/add_strategy/${data.strategy_id}`);
-            resLink();
+            linkForm.reset();
+            toast.success('Estratégia vinculada ao portfólio');
             refresh();
-        } catch (e: any) {
+        } catch (e) {
             console.error(e);
-            alert(e.response?.data?.detail || "Failed to link strategy.");
+            toast.error(apiError(e, 'Não foi possível vincular a estratégia.'));
         }
     };
 
-    const copyToClipboard = (text: string) => {
-        navigator.clipboard.writeText(text);
-        setCopied(text);
-        setTimeout(() => setCopied(null), 2000);
-    };
+    // Strategies the chosen portfolio already has can't be linked twice
+    const selectedPortfolio = portfolios.find(p => String(p.id) === linkForm.watch('portfolio_id'));
+    const linkedIds = new Set<number>(selectedPortfolio?.strategies.map((s: any) => s.id) ?? []);
+    const canLink = portfolios.length > 0 && strategies.length > 0;
 
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-foreground">Portfolios</h1>
-            <p className="text-muted-foreground">Bundle strategies into portfolios for clients to follow.</p>
+            <PageHeader
+                title="Portfólios"
+                description="Agrupe estratégias em portfólios que seus clientes podem copiar."
+                icon={<Briefcase />}
+            />
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-                {/* Creation Forms */}
+            <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
                 <div className="space-y-6">
-                    <Card title="Create Portfolio">
-                        <form onSubmit={subPort(onCreatePortfolio)} className="flex gap-2">
-                            <input {...regPort('name', { required: true })} className="flex-1 p-3 bg-background border border-input rounded-lg focus:border-primary outline-none text-foreground placeholder:text-muted-foreground transition" placeholder="Portfolio Name" />
-                            <button className="bg-primary hover:bg-primary/90 px-6 rounded-lg text-primary-foreground font-bold shadow-lg shadow-primary/20 transition"><Plus /></button>
+                    <Card title="Novo portfólio" icon={<Plus />}>
+                        <form onSubmit={portfolioForm.handleSubmit(onCreatePortfolio)} className="space-y-4" noValidate>
+                            <Field label="Nome" htmlFor="portfolio-name" error={portfolioForm.formState.errors.name?.message}>
+                                <Input
+                                    {...portfolioForm.register('name', { required: 'Informe um nome' })}
+                                    id="portfolio-name"
+                                    placeholder="Ex.: Carteira Conservadora"
+                                />
+                            </Field>
+                            <Button className="w-full" loading={portfolioForm.formState.isSubmitting}>
+                                {!portfolioForm.formState.isSubmitting && <Plus />} Criar portfólio
+                            </Button>
                         </form>
                     </Card>
 
-                    <Card title="Link Strategy to Portfolio">
-                        <form onSubmit={subLink(onLink)} className="space-y-4">
-                            <div>
-                                <label className="text-xs text-muted-foreground uppercase font-semibold">Portfolio</label>
-                                <select {...regLink('portfolio_id', { required: true })} className="w-full mt-1 p-3 bg-background border border-input rounded-lg text-foreground focus:border-primary outline-none transition">
-                                    <option value="">Select Portfolio...</option>
+                    <Card
+                        title="Vincular estratégia"
+                        description="Os sinais da estratégia passam a ser enviados a quem copia o portfólio."
+                        icon={<LinkIcon />}
+                    >
+                        <form onSubmit={linkForm.handleSubmit(onLink)} className="space-y-4" noValidate>
+                            <Field label="Portfólio" htmlFor="link-portfolio" error={linkForm.formState.errors.portfolio_id?.message}>
+                                <Select
+                                    {...linkForm.register('portfolio_id', { required: 'Selecione um portfólio' })}
+                                    id="link-portfolio"
+                                    disabled={!canLink}
+                                >
+                                    <option value="">Selecione...</option>
                                     {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-xs text-muted-foreground uppercase font-semibold">Strategy</label>
-                                <select {...regLink('strategy_id', { required: true })} className="w-full mt-1 p-3 bg-background border border-input rounded-lg text-foreground focus:border-primary outline-none transition">
-                                    <option value="">Select Strategy...</option>
-                                    {strategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                </select>
-                            </div>
-                            <button className="w-full py-3 bg-muted hover:bg-muted/80 rounded-lg text-foreground font-bold flex items-center justify-center transition border border-border/50">
-                                <LinkIcon size={18} className="mr-2" /> Link Strategy
-                            </button>
+                                </Select>
+                            </Field>
+                            <Field label="Estratégia" htmlFor="link-strategy" error={linkForm.formState.errors.strategy_id?.message}>
+                                <Select
+                                    {...linkForm.register('strategy_id', { required: 'Selecione uma estratégia' })}
+                                    id="link-strategy"
+                                    disabled={!canLink}
+                                >
+                                    <option value="">Selecione...</option>
+                                    {strategies.map(s => (
+                                        <option key={s.id} value={s.id} disabled={linkedIds.has(s.id)}>
+                                            {s.name} (#{s.magic_number}){linkedIds.has(s.id) ? ' — já vinculada' : ''}
+                                        </option>
+                                    ))}
+                                </Select>
+                            </Field>
+                            <Button variant="secondary" className="w-full" disabled={!canLink} loading={linkForm.formState.isSubmitting}>
+                                {!linkForm.formState.isSubmitting && <LinkIcon />} Vincular
+                            </Button>
+                            {!loading && !canLink && (
+                                <p className="text-xs text-muted-foreground">
+                                    Crie ao menos um portfólio e uma estratégia para fazer o vínculo.
+                                </p>
+                            )}
                         </form>
                     </Card>
                 </div>
 
-                {/* List */}
-                <div className="space-y-4">
-                    {portfolios.map(p => (
-                        <Card key={p.id} className="border-l-4 border-l-primary hover:border-primary/80 transition shadow-sm">
-                            <h3 className="text-xl font-bold text-foreground mb-2">{p.name}</h3>
-                            <div className="mb-4">
-                                <h4 className="text-xs text-muted-foreground uppercase font-semibold mb-2">Linked Strategies:</h4>
-                                {p.strategies && p.strategies.length > 0 ? (
-                                    <div className="flex flex-wrap gap-2">
-                                        {p.strategies.map((s: any) => (
-                                            <span key={s.id} className="bg-primary/10 text-primary px-2 py-1 rounded text-sm border border-primary/20">
-                                                {s.name} (#{s.magic_number})
-                                            </span>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-muted-foreground italic">No strategies linked yet.</p>
+                <div className="space-y-4 lg:col-span-2">
+                    {loading ? (
+                        <p className="text-sm text-muted-foreground">Carregando...</p>
+                    ) : portfolios.length === 0 ? (
+                        <div className="panel">
+                            <EmptyState
+                                icon={<Briefcase />}
+                                title="Nenhum portfólio criado"
+                                description="Crie um portfólio e vincule estratégias para liberar a chave de conexão dos clientes."
+                            />
+                        </div>
+                    ) : portfolios.map(p => (
+                        <Card key={p.id} className="transition-colors hover:border-primary/30">
+                            <div className="flex items-start justify-between gap-4">
+                                <h3 className="text-lg font-semibold">{p.name}</h3>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                    {p.strategies.length} {p.strategies.length === 1 ? 'estratégia' : 'estratégias'}
+                                </span>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {p.strategies.length > 0 ? p.strategies.map((s: any) => (
+                                    <Badge key={s.id} variant="primary" className="font-medium">
+                                        {s.name} <span className="font-mono opacity-70">#{s.magic_number}</span>
+                                    </Badge>
+                                )) : (
+                                    <p className="text-sm text-muted-foreground">
+                                        Nenhuma estratégia vinculada: os clientes deste portfólio ainda não recebem sinais.
+                                    </p>
                                 )}
                             </div>
 
-                            <div className="bg-muted/30 p-3 rounded border border-border/50">
-                                <label className="text-xs text-muted-foreground uppercase block mb-1">Public Connection Key (For Clients)</label>
-                                <div
-                                    onClick={() => copyToClipboard(p.public_key)}
-                                    className="flex items-center justify-between cursor-pointer"
-                                >
-                                    <code className="text-primary font-mono text-sm">{p.public_key}</code>
-                                    {copied === p.public_key ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} className="text-muted-foreground hover:text-foreground transition" />}
-                                </div>
+                            <div className="mt-5 border-t border-border pt-4">
+                                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                    Chave de conexão dos clientes
+                                </p>
+                                <CopyField value={p.public_key} label="Chave de conexão" />
                             </div>
                         </Card>
                     ))}
-                    {portfolios.length === 0 && <p className="text-muted-foreground">No portfolios created.</p>}
                 </div>
             </div>
         </div>

@@ -1,70 +1,75 @@
 
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { Activity, Layers, LayoutDashboard, Scale, ScrollText, TrendingUp } from 'lucide-react';
+import { connectionLabels, useWebSocket } from '../../hooks/useWebSocket';
+import ActivityLog from '../../components/ActivityLog';
 import Card from '../../components/Card';
-import { Activity, TrendingUp } from 'lucide-react';
+import ConnectionBadge from '../../components/ConnectionBadge';
+import KPICard from '../../components/KPICard';
+import PageHeader from '../../components/PageHeader';
+import PositionsTable from '../../components/PositionsTable';
 
 export default function ManagerOverview() {
-    const { status, trades } = useWebSocket();
-    const activeTrades = Object.values(trades);
+    const { status, trades, logs } = useWebSocket();
+    const openPositions = Object.values(trades).sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+
+    const totalLots = openPositions.reduce((sum, t) => sum + Number(t.volume), 0);
+    const strategiesInMarket = new Set(openPositions.map(t => t.strategy_id ?? t.magic)).size;
+    const symbols = new Set(openPositions.map(t => t.symbol)).size;
 
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-foreground mb-2">Dashboard Overview</h1>
-            <p className="text-muted-foreground">Real-time monitoring of active operations.</p>
+            <PageHeader
+                title="Visão Geral"
+                description="Acompanhamento em tempo real das posições das suas contas Master."
+                icon={<LayoutDashboard />}
+            >
+                <ConnectionBadge status={status} />
+            </PageHeader>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <Card className="flex items-center space-x-4 from-emerald-900/20 via-background to-background bg-gradient-to-br">
-                    <div className="p-3 bg-accent/2 rounded-xl text-accent"><Activity size={24} /></div>
-                    <div>
-                        <p className="text-muted-foreground text-sm">System Status</p>
-                        <p className={`text-xl font-bold ${status === 'CONNECTED' ? 'text-emerald-400' : 'text-red-400'}`}>{status}</p>
-                    </div>
-                </Card>
-                <Card className="flex items-center space-x-4 from-emerald-900/20 via-background to-background bg-gradient-to-br">
-                    <div className="p-3 bg-accent/2 rounded-xl text-accent"><TrendingUp size={24} /></div>
-                    <div>
-                        <p className="text-muted-foreground text-sm">Active Trades</p>
-                        <p className="text-xl font-bold text-foreground">{activeTrades.length}</p>
-                    </div>
-                </Card>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <KPICard
+                    label="Servidor"
+                    value={connectionLabels[status]}
+                    valueClassName={status === 'CONNECTED' ? 'text-success' : status === 'ERROR' ? 'text-destructive' : 'text-warning'}
+                    subValue="Canal de sinais ao vivo"
+                    icon={<Activity />}
+                />
+                <KPICard
+                    label="Posições abertas"
+                    value={openPositions.length}
+                    subValue={`${symbols} ${symbols === 1 ? 'ativo' : 'ativos'}`}
+                    icon={<TrendingUp />}
+                />
+                <KPICard
+                    label="Estratégias posicionadas"
+                    value={strategiesInMarket}
+                    subValue="Com posição aberta agora"
+                    icon={<Layers />}
+                />
+                <KPICard
+                    label="Volume em aberto"
+                    value={totalLots.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}
+                    subValue="Lotes nas contas Master"
+                    icon={<Scale />}
+                />
             </div>
 
-            <Card title="Live Feed">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead>
-                            <tr className="bg-muted/50 text-muted-foreground uppercase tracking-wider">
-                                <th className="p-3 rounded-tl-lg">Ticket</th>
-                                <th className="p-3">Symbol</th>
-                                <th className="p-3">Type</th>
-                                <th className="p-3">Lots</th>
-                                <th className="p-3">Price</th>
-                                <th className="p-3 rounded-tr-lg">Time</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/50">
-                            {activeTrades.map((t: any) => (
-                                <tr key={t.ticket} className="hover:bg-muted/30 transition-colors">
-                                    <td className="p-3 font-mono text-foreground">{t.ticket}</td>
-                                    <td className="p-3 font-bold text-blue-400">{t.symbol}</td>
-                                    <td className="p-3">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold ${t.type === '0' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-red-900/30 text-red-400'}`}>
-                                            {t.type === '0' ? 'BUY' : 'SELL'}
-                                        </span>
-                                    </td>
-                                    <td className="p-3 text-foreground">{t.volume}</td>
-                                    <td className="p-3 text-foreground">{t.price}</td>
-                                    <td className="p-3 text-muted-foreground text-xs">{new Date(t.timestamp * 1000).toLocaleTimeString()}</td>
-                                </tr>
-                            ))}
-                            {activeTrades.length === 0 && (
-                                <tr>
-                                    <td colSpan={6} className="p-8 text-center text-gray-500 italic">No active trades at the moment.</td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+            <Card
+                title="Posições abertas"
+                description="O que está sendo replicado para os clientes neste momento."
+                icon={<TrendingUp />}
+                flush
+            >
+                <PositionsTable trades={openPositions} />
+            </Card>
+
+            <Card
+                title="Atividade"
+                description="Eventos recebidos desde que esta página foi aberta."
+                icon={<ScrollText />}
+                flush
+            >
+                <ActivityLog logs={logs} />
             </Card>
         </div>
     );

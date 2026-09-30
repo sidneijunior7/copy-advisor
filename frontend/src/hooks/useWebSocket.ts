@@ -21,6 +21,24 @@ const toTrade = (data: any): Trade => ({ ...data, type: String(data.type) });
 
 export type WebSocketStatus = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'FORBIDDEN';
 
+export const connectionLabels: Record<WebSocketStatus, string> = {
+    CONNECTED: 'Conectado',
+    CONNECTING: 'Conectando',
+    DISCONNECTED: 'Reconectando',
+    ERROR: 'Falha na conexão',
+    FORBIDDEN: 'Sem acesso',
+};
+
+// Signal reasons published by the hub (models.Signal.reason)
+const actionLabels: Record<string, string> = {
+    OPEN: 'Abertura',
+    ADD: 'Aumento',
+    PARTIAL: 'Parcial',
+    REVERSE: 'Reversão',
+    MODIFY: 'Ajuste de SL/TP',
+    SYNC: 'Sincronização',
+};
+
 // Close codes set by the server (server.py)
 const CLOSE_UNAUTHORIZED = 4401; // Token invalid or expired: log out
 const CLOSE_FORBIDDEN = 4403; // This account has no live view: don't retry
@@ -53,9 +71,12 @@ export function useWebSocket(): UseWebSocketReturn {
     const socketRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutRef = useRef<number | null>(null);
 
+    const logIdRef = useRef(0);
+
     const addLog = useCallback((message: string, level: LogEntry['level'] = 'info') => {
+        const id = ++logIdRef.current; // Date.now() repeats when two events land in the same millisecond
         setLogs(prev => [
-            { id: Date.now(), time: new Date().toLocaleTimeString(), message, level },
+            { id, time: new Date().toLocaleTimeString('pt-BR'), message, level },
             ...prev
         ].slice(0, 100)); // Keep last 100
     }, []);
@@ -74,7 +95,7 @@ export function useWebSocket(): UseWebSocketReturn {
             ? import.meta.env.VITE_WS_URL
             : `${protocol}//${import.meta.env.DEV ? 'localhost:8000' : window.location.host}/ws`;
 
-        addLog(`Connecting to ${wsUrl}...`, 'info');
+        addLog('Conectando ao servidor...', 'info');
 
         const ws = new WebSocket(wsUrl);
         socketRef.current = ws;
@@ -83,7 +104,7 @@ export function useWebSocket(): UseWebSocketReturn {
             // The server waits for the token before sending anything
             ws.send(JSON.stringify({ type: 'AUTH', token: tokenRef.current }));
             setStatus('CONNECTED');
-            addLog('Connected to Server', 'success');
+            addLog('Conectado ao servidor', 'success');
         };
 
         ws.onmessage = (event) => {
@@ -98,14 +119,14 @@ export function useWebSocket(): UseWebSocketReturn {
                     const data = msg.data;
                     if (Number(data.volume) > 0) {
                         setTrades(prev => ({ ...prev, [data.key]: toTrade(data) }));
-                        addLog(`${data.action}: ${data.symbol} #${data.ticket} (${data.volume})`, 'success');
+                        addLog(`${actionLabels[data.action] ?? data.action}: ${data.symbol} #${data.ticket} (${data.volume} lotes)`, 'success');
                     } else {
                         setTrades(prev => {
                             const next = { ...prev };
                             delete next[data.key];
                             return next;
                         });
-                        addLog(`Trade Closed: ${data.symbol} #${data.ticket}`, 'info');
+                        addLog(`Posição encerrada: ${data.symbol} #${data.ticket}`, 'info');
                     }
                 }
             } catch (error) {
@@ -122,11 +143,11 @@ export function useWebSocket(): UseWebSocketReturn {
             }
             if (event.code === CLOSE_FORBIDDEN) {
                 setStatus('FORBIDDEN');
-                addLog('This account has no access to live trades', 'error');
+                addLog('Esta conta não tem acesso ao acompanhamento ao vivo', 'error');
                 return;
             }
             setStatus('DISCONNECTED');
-            addLog('Disconnected. Reconnecting...', 'error');
+            addLog('Conexão perdida. Reconectando...', 'error');
             // Reconnect
             reconnectTimeoutRef.current = window.setTimeout(connect, 3000);
         };

@@ -1,94 +1,196 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=League+Spartan:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=League+Spartan:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Tokens shared with trademetric_dash: keep both files in sync */
 @layer base {
     :root {
-        --background: 0 0% 100%;
-        --foreground: 240 10% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 240 10% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 240 10% 3.9%;
-        --primary: 240 5.9% 10%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 240 4.8% 95.9%;
-        --secondary-foreground: 240 5.9% 10%;
-        --muted: 240 4.8% 95.9%;
-        --muted-foreground: 240 3.8% 46.1%;
-        --accent: 240 4.8% 95.9%;
-        --accent-foreground: 240 5.9% 10%;
-        --destructive: 0 84.2% 60.2%;
+        --background: 200 20% 6%;
+        --foreground: 0 0% 98%;
+
+        --card: 200 18% 9%;
+        --card-foreground: 0 0% 98%;
+
+        --popover: 200 18% 11%;
+        --popover-foreground: 0 0% 98%;
+
+        --primary: 162 72% 52%;
+        --primary-foreground: 200 20% 6%;
+
+        --secondary: 200 18% 12%;
+        --secondary-foreground: 0 0% 85%;
+
+        --muted: 200 15% 15%;
+        --muted-foreground: 200 10% 55%;
+
+        --accent: 200 18% 14%;
+        --accent-foreground: 0 0% 98%;
+
+        --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 98%;
-        --border: 240 5.9% 90%;
-        --input: 240 5.9% 90%;
-        --ring: 240 5.9% 10%;
-        --radius: 0.5rem;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --success: 142.1 76.2% 36.3%;
-        --success-foreground: 355.7 100% 97.3%;
-        --warning: 38 92% 50%;
-        --warning-foreground: 48 96% 89%;
-        --profit: 142.1 76.2% 36.3%;
-        --loss: 0 84.2% 60.2%;
+
+        --success: 162 72% 52%;
+        --success-foreground: 200 20% 6%;
+
+        --warning: 45 93% 47%;
+        --warning-foreground: 200 20% 6%;
+
+        --profit: 162 72% 52%;
+        --loss: 0 72% 51%;
+
+        --border: 200 15% 18%;
+        --input: 200 15% 18%;
+        --ring: 162 72% 52%;
+
+        --radius: 0.75rem;
+
+        --chart-1: 162 72% 52%;
+        --chart-2: 162 72% 42%;
+        --chart-3: 0 72% 51%;
+        --chart-4: 45 93% 47%;
+        --chart-5: 200 60% 50%;
+
+        --gradient-primary: linear-gradient(135deg, hsl(162 72% 52%), hsl(175 72% 45%));
+        --gradient-card: linear-gradient(180deg, hsl(200 18% 11%), hsl(200 18% 9%));
+
+        --shadow-glow: 0 0 40px -10px hsl(162 72% 52% / 0.3);
+        --shadow-card: 0 4px 20px -4px hsl(0 0% 0% / 0.5);
+
+        --sidebar-background: 200 20% 7%;
+        --sidebar-foreground: 0 0% 90%;
+        --sidebar-primary: 162 72% 52%;
+        --sidebar-primary-foreground: 200 20% 6%;
+        --sidebar-accent: 200 18% 12%;
+        --sidebar-accent-foreground: 0 0% 98%;
+        --sidebar-border: 200 15% 15%;
+        --sidebar-ring: 162 72% 52%;
     }
 
-    .dark {
-        --background: 220 25% 3.1%;
-        --foreground: 220 10% 98%;
-        --card: 220 20% 10%;
-        --card-foreground: 220 10% 98%;
-        --popover: 220 20% 12%;
-        --popover-foreground: 220 10% 98%;
-        --primary: 168 84% 48%;
-        --primary-foreground: 220 25% 6%;
-        --secondary: 220 15% 18%;
-        --secondary-foreground: 220 10% 85%;
-        --muted: 220 15% 15%;
-        --muted-foreground: 220 10% 55%;
-        --accent: 168 84% 48%;
-        --accent-foreground: 220 25% 6%;
-        --destructive: 0 72% 50%;
-        --destructive-foreground: 0 85% 97%;
-        --border: 220 15% 18%;
-        --input: 220 15% 18%;
-        --ring: 168 84% 48%;
-        --chart-1: 168 84% 48%;
-        --chart-2: 142 76% 45%;
-        --chart-3: 199 89% 55%;
-        --chart-4: 45 93% 55%;
-        --chart-5: 280 68% 60%;
-        --shadow-glow: 0 0 80px -20px hsl(168 84% 48% / .5);
-        --shadow-card: 0 4px 24px -4px hsl(0 0% 0% / .4);
-        --shadow-elevated: 0 20px 40px -12px hsl(0 0% 0% / .6);
+    .light {
+        --background: 0 0% 98%;
+        --foreground: 200 20% 10%;
+
+        --card: 0 0% 100%;
+        --card-foreground: 200 20% 10%;
+
+        --popover: 0 0% 100%;
+        --popover-foreground: 200 20% 10%;
+
+        --primary: 162 72% 38%;
+        --primary-foreground: 0 0% 100%;
+
+        --secondary: 200 10% 92%;
+        --secondary-foreground: 200 20% 20%;
+
+        --muted: 200 10% 94%;
+        --muted-foreground: 200 10% 40%;
+
+        --accent: 200 10% 94%;
+        --accent-foreground: 200 20% 10%;
+
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 100%;
+
+        --success: 162 72% 38%;
+        --success-foreground: 0 0% 100%;
+
+        --warning: 45 93% 47%;
+        --warning-foreground: 200 20% 10%;
+
+        --profit: 162 72% 38%;
+        --loss: 0 72% 51%;
+
+        --border: 200 10% 85%;
+        --input: 200 10% 85%;
+        --ring: 162 72% 38%;
+
+        --chart-1: 162 72% 38%;
+        --chart-2: 162 72% 30%;
+        --chart-3: 0 72% 51%;
+        --chart-4: 45 93% 47%;
+        --chart-5: 200 60% 50%;
+
+        --gradient-primary: linear-gradient(135deg, hsl(162 72% 38%), hsl(175 72% 35%));
+        --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(0 0% 98%));
+
+        --shadow-glow: 0 0 40px -10px hsl(162 72% 38% / 0.2);
+        --shadow-card: 0 4px 20px -4px hsl(0 0% 0% / 0.08);
+
+        --sidebar-background: 0 0% 97%;
+        --sidebar-foreground: 200 20% 15%;
+        --sidebar-primary: 162 72% 38%;
+        --sidebar-primary-foreground: 0 0% 100%;
+        --sidebar-accent: 200 10% 92%;
+        --sidebar-accent-foreground: 200 20% 10%;
+        --sidebar-border: 200 10% 88%;
+        --sidebar-ring: 162 72% 38%;
     }
 }
 
 @layer base {
+    html {
+        font-size: 100%;
+        color-scheme: dark;
+    }
+
+    html.light {
+        color-scheme: light;
+    }
+
+    @media (min-width: 1024px) {
+        html {
+            font-size: 90%;
+        }
+    }
+
     * {
-        border-color: hsl(var(--border));
+        @apply border-border;
     }
 
     body {
-        @apply bg-background text-foreground;
+        @apply bg-background text-foreground antialiased;
+        font-family: 'Inter', sans-serif;
     }
 }
 
-/* Glassmorphism Utilities */
-.glass {
-    @apply bg-white/10 dark:bg-black/10 backdrop-blur-md border border-white/20 dark:border-white/5 shadow-xl;
+@layer components {
+    .kpi-card {
+        @apply relative overflow-hidden rounded-xl border border-border bg-card p-5 transition-all duration-300;
+        background: var(--gradient-card);
+        box-shadow: var(--shadow-card);
+    }
+
+    .kpi-card:hover {
+        @apply border-primary/30;
+        box-shadow: var(--shadow-glow);
+    }
+
+    .kpi-value {
+        @apply font-mono text-[1.2rem] font-semibold tracking-tight;
+    }
+
+    .kpi-label {
+        @apply text-sm font-medium text-muted-foreground;
+    }
+
+    .panel {
+        @apply rounded-xl border border-border bg-card;
+        background: var(--gradient-card);
+        box-shadow: var(--shadow-card);
+    }
 }
 
-.glass-card {
-    @apply glass rounded-xl overflow-hidden;
+@layer utilities {
+    .text-gradient {
+        @apply bg-clip-text text-transparent;
+        background-image: var(--gradient-primary);
+    }
+
+    .font-spartan {
+        font-family: 'League Spartan', sans-serif;
+    }
 }
 
 /* Scrollbar */
@@ -102,9 +204,5 @@
 }
 
 ::-webkit-scrollbar-thumb {
-    @apply bg-muted-foreground/30 rounded-full hover:bg-muted-foreground/50;
-}
-
-.font-spartan {
-    font-family: "League Spartan", sans-serif !important;
+    @apply rounded-full bg-muted-foreground/30 hover:bg-muted-foreground/50;
 }

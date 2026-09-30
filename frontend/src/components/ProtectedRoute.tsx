@@ -14,7 +14,8 @@ export default function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
     }
 
     if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-        return <Navigate to="/unauthorized" replace />;
+        // /dashboard sends each role to its own home
+        return <Navigate to="/dashboard" replace />;
     }
 
     return <Outlet />;

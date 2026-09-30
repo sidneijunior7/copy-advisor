@@ -1,16 +1,32 @@
 import { useForm } from 'react-hook-form';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { ArrowRight, Lock, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { Activity, TrendingUp, Users } from 'lucide-react';
-import imageFx from '../assets/image_fx.png';
+import { Button } from '../components/ui/Button';
+import { Field, Input } from '../components/ui/Field';
+
+type LoginForm = { email: string; password: string };
+
+const highlights = [
+    { value: 'MT5', label: 'Master e Slave' },
+    { value: 'Live', label: 'Sinais em tempo real' },
+    { value: '1 : N', label: 'Uma conta, vários clientes' },
+];
+
+const loginError = (err: any): string => {
+    if (!err.response) return 'Não foi possível conectar ao servidor. Tente novamente.';
+    if (err.response.status === 401) return 'Email ou senha inválidos.';
+    if (err.response.status === 403) return 'Esta conta está suspensa. Fale com o suporte.';
+    return 'Não foi possível entrar. Tente novamente.';
+};
 
 export default function Login() {
-    const { register, handleSubmit, setError, formState: { errors } } = useForm();
-    const { login } = useAuth();
+    const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useForm<LoginForm>();
+    const { login, token } = useAuth();
     const navigate = useNavigate();
 
-    const onSubmit = async (data: any) => {
+    const onSubmit = async (data: LoginForm) => {
         try {
             const formData = new URLSearchParams();
             formData.append('username', data.email);
@@ -20,128 +36,112 @@ export default function Login() {
             login(res.data.access_token);
             navigate('/dashboard');
         } catch (err: any) {
-            setError('root', {
-                message: err.response?.data?.detail || 'Login failed'
-            });
+            setError('root', { message: loginError(err) });
         }
     };
 
+    if (token) return <Navigate to="/dashboard" replace />;
+
     return (
-        <div className="flex min-h-screen w-full bg-background font-sans">
-            {/* Visual Side (Left on Desktop) */}
-            <div className="hidden lg:flex lg:w-1/2 relative bg-zinc-950 items-center justify-center p-12 overflow-hidden">
-                <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-emerald-900/40 via-zinc-950 to-zinc-950">
-                    <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:20px_20px]" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-zinc-950/50" />
+        <div className="flex min-h-screen">
+            {/* Left Panel - Branding */}
+            <div className="relative hidden flex-col justify-between overflow-hidden bg-card p-12 lg:flex lg:w-1/2">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent" />
+                <div className="absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
+                <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
+                <div
+                    className="absolute inset-0 opacity-[0.05]"
+                    style={{
+                        backgroundImage: 'linear-gradient(hsl(var(--foreground)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)',
+                        backgroundSize: '60px 60px',
+                        maskImage: 'linear-gradient(to bottom right, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 60%)',
+                        WebkitMaskImage: 'linear-gradient(to bottom right, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 60%)',
+                    }}
+                />
+
+                <div className="relative z-10 flex items-baseline gap-2">
+                    <span className="font-spartan text-3xl font-bold text-foreground">trademetric.</span>
+                    <span className="text-xs font-semibold uppercase tracking-widest text-primary">Mirror</span>
                 </div>
 
-                <div className="relative z-10 w-full max-w-2xl space-y-12">
-                    <div className="space-y-4">
-                        <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white">
-                            Trademetric Mirror
-                        </h1>
-                        <p className="text-xl text-zinc-400">
-                            Orquestre seus investimentos com inteligência e precisão.
-                        </p>
-                    </div>
+                <div className="relative z-10 space-y-6">
+                    <h2 className="text-4xl font-bold leading-tight">
+                        Replique suas<br />
+                        <span className="text-gradient">estratégias</span><br />
+                        em tempo real
+                    </h2>
+                    <p className="max-w-md text-muted-foreground">
+                        Copytrade entre contas MetaTrader 5, com sinais distribuídos pela nuvem e
+                        controle total sobre quem recebe cada portfólio.
+                    </p>
 
-                    <div className="flex gap-4 w-full">
-                        <div className="flex-1 bg-background p-4 rounded-xl flex flex-col gap-3 shadow-lg hover:shadow-xl transition-shadow border border-border/50">
-                            <div className="h-10 w-10 flex items-center justify-center bg-primary/1 rounded-lg text-primary ">
-                                <TrendingUp size={20} />
+                    <div className="grid grid-cols-3 gap-4 pt-6">
+                        {highlights.map(h => (
+                            <div key={h.value} className="rounded-lg bg-secondary/50 p-4">
+                                <p className="font-mono text-2xl font-bold text-primary">{h.value}</p>
+                                <p className="text-xs text-muted-foreground">{h.label}</p>
                             </div>
-                            <div>
-                                <p className="text-xs font-medium text-muted-foreground">Total Profit</p>
-                                <p className="text-lg font-bold text-foreground">+124.5%</p>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 bg-background p-4 rounded-xl flex flex-col gap-3 shadow-lg hover:shadow-xl transition-shadow border border-border/50">
-                            <div className="h-10 w-10 flex items-center justify-center bg-primary/1 rounded-lg text-emerald-500">
-                                <Activity size={20} />
-                            </div>
-                            <div>
-                                <p className="text-xs font-medium text-muted-foreground">Win Rate</p>
-                                <p className="text-lg font-bold text-foreground">68.2%</p>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 bg-background p-4 rounded-xl flex flex-col gap-3 shadow-lg hover:shadow-xl transition-shadow border border-border/50">
-                            <div className="h-10 w-10 flex items-center justify-center bg-primary/1 rounded-lg text-teal-400">
-                                <Users size={20} />
-                            </div>
-                            <div>
-                                <p className="text-xs font-medium text-muted-foreground">Active Investors</p>
-                                <p className="text-lg font-bold text-foreground">1,240+</p>
-                            </div>
-                        </div>
+                        ))}
                     </div>
                 </div>
+
+                <p className="relative z-10 text-sm text-muted-foreground">
+                    © {new Date().getFullYear()} Trademetric. Todos os direitos reservados.
+                </p>
             </div>
 
-            {/* Form Side (Right on Desktop) */}
-            <div className="flex-1 flex items-center justify-center p-8 bg-background relative">
-                {/* Mobile Background Fallback */}
-                <div className="absolute inset-0 lg:hidden z-0">
-                    <img
-                        src={imageFx}
-                        alt="Background"
-                        className="w-full h-full object-cover opacity-2"
-                    />
-                </div>
-
-                <div className="w-full max-w-md space-y-8 relative z-10">
-                    <div className="text-center lg:text-left">
-                        <h1 className="font-spartan font-semibold text-foreground text-4xl">trademetric.</h1>
-                        <p className="mt-2 text-muted-foreground">
-                            Entre com suas credenciais para acessar o painel administrativo.
-                        </p>
+            {/* Right Panel - Form */}
+            <div className="flex w-full items-center justify-center p-8 lg:w-1/2">
+                <div className="w-full max-w-md space-y-8">
+                    <div className="flex items-baseline justify-center gap-2 lg:hidden">
+                        <span className="font-spartan text-2xl font-bold text-foreground">trademetric.</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">Mirror</span>
                     </div>
 
-                    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium leading-none text-foreground" htmlFor="email">
-                                Email
-                            </label>
-                            <input
-                                {...register('email', { required: true })}
+                    <div className="text-center lg:text-left">
+                        <h1 className="text-3xl font-bold">Bem-vindo de volta</h1>
+                        <p className="mt-2 text-muted-foreground">Insira suas credenciais para acessar o painel.</p>
+                    </div>
+
+                    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+                        <Field label="Email" htmlFor="email" error={errors.email?.message}>
+                            <Input
+                                {...register('email', { required: 'Informe seu email' })}
                                 id="email"
                                 type="email"
                                 autoComplete="username"
-                                placeholder="nome@empresa.com"
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 focus:border-primary/50"
+                                placeholder="email@exemplo.com"
+                                icon={<Mail />}
+                                className="h-12"
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium leading-none text-foreground" htmlFor="password">
-                                Senha
-                            </label>
-                            <input
-                                {...register('password', { required: true })}
+                        </Field>
+                        <Field label="Senha" htmlFor="password" error={errors.password?.message}>
+                            <Input
+                                {...register('password', { required: 'Informe sua senha' })}
                                 id="password"
                                 type="password"
                                 autoComplete="current-password"
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 focus:border-primary/50"
+                                placeholder="••••••••"
+                                icon={<Lock />}
+                                className="h-12"
                             />
-                        </div>
+                        </Field>
 
                         {errors.root && (
-                            <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm text-center border border-destructive/50 bg-red-950/10 text-red-500">
-                                {errors.root.message as string}
+                            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-center text-sm text-destructive">
+                                {errors.root.message}
                             </div>
                         )}
 
-                        <button
-                            type="submit"
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8 w-full shadow-lg hover:shadow-primary/25"
-                        >
+                        <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
                             Entrar
-                        </button>
+                            {!isSubmitting && <ArrowRight />}
+                        </Button>
                     </form>
 
-                    <div className="text-center text-sm text-muted-foreground">
-                        <p>Esqueceu sua senha? <a href="#" className="font-medium text-primary hover:underline underline-offset-4">Recuperar acesso</a></p>
-                    </div>
+                    <p className="text-center text-sm text-muted-foreground">
+                        Esqueceu a senha? Fale com o administrador da sua conta.
+                    </p>
                 </div>
             </div>
         </div>

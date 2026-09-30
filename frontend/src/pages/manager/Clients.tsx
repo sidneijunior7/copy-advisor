@@ -1,109 +1,191 @@
 
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
+import { Search, ShieldCheck, Users } from 'lucide-react';
+import { toast } from 'sonner';
 import api from '../../api';
 import Card from '../../components/Card';
-import { ShieldCheck, Search } from 'lucide-react';
+import EmptyState from '../../components/EmptyState';
+import PageHeader from '../../components/PageHeader';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { Field, Input, Select } from '../../components/ui/Field';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
+import { apiError, formatDate } from '../../lib/utils';
+
+type LicenseForm = { portfolio_id: string; client_mt5_login: string; max_lots: string };
 
 export default function Clients() {
     const [licenses, setLicenses] = useState<any[]>([]);
-    const [portfolios, setPortfolios] = useState<any[]>([]); // To populate select
-    const { register, handleSubmit, reset } = useForm();
+    const [portfolios, setPortfolios] = useState<any[]>([]);
+    const [strategies, setStrategies] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('');
+    const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<LicenseForm>({
+        defaultValues: { max_lots: '1.00' },
+    });
 
     const refresh = async () => {
         try {
-            const [l, p] = await Promise.all([api.get('/licenses'), api.get('/portfolios')]);
+            const [l, p, s] = await Promise.all([api.get('/licenses'), api.get('/portfolios'), api.get('/strategies')]);
             setLicenses(l.data);
             setPortfolios(p.data);
-        } catch (e) { console.error(e); }
+            setStrategies(s.data);
+        } catch (e) {
+            console.error(e);
+            toast.error('Não foi possível carregar os clientes.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { refresh(); }, []);
 
-    const onCreateLicense = async (data: any) => {
-        const payload = {
-            portfolio_id: parseInt(data.portfolio_id),
-            client_mt5_login: parseInt(data.client_mt5_login),
-            max_lots: parseFloat(data.max_lots)
-        };
-        await api.post('/licenses', payload);
-        reset();
-        refresh();
+    const onCreateLicense = async (data: LicenseForm) => {
+        try {
+            await api.post('/licenses', {
+                portfolio_id: parseInt(data.portfolio_id),
+                client_mt5_login: parseInt(data.client_mt5_login),
+                max_lots: parseFloat(data.max_lots),
+            });
+            reset();
+            toast.success(`Conta ${data.client_mt5_login} autorizada`);
+            refresh();
+        } catch (e) {
+            console.error(e);
+            toast.error(apiError(e, 'Não foi possível autorizar a conta.'));
+        }
     };
 
-    const filteredLicenses = licenses.filter(l => l.client_mt5_login.toString().includes(filter));
+    // A license grants either a whole portfolio or (older ones) a single strategy
+    const accessOf = (l: any) => {
+        if (l.portfolio_id != null) {
+            return { kind: 'Portfólio', name: portfolios.find(p => p.id === l.portfolio_id)?.name ?? `#${l.portfolio_id}` };
+        }
+        return { kind: 'Estratégia', name: strategies.find(s => s.id === l.strategy_id)?.name ?? `#${l.strategy_id}` };
+    };
+
+    const query = filter.trim().toLowerCase();
+    const filteredLicenses = licenses.filter(l =>
+        String(l.client_mt5_login).includes(query) || accessOf(l).name.toLowerCase().includes(query),
+    );
 
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-foreground">Client Management</h1>
-            <p className="text-muted-foreground">Whitelist MT5 accounts and manage access permissions.</p>
+            <PageHeader
+                title="Clientes"
+                description="Autorize contas MT5 a copiar seus portfólios e defina o limite de cada uma."
+                icon={<Users />}
+            />
 
-            {/* Create License Bar */}
-            <Card className="bg-gradient-to-r from-background to-muted/20 border-l-4 border-l-emerald-500">
-                <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center"><ShieldCheck size={20} className="mr-2 text-accent" /> New Authorization</h3>
-                <form onSubmit={handleSubmit(onCreateLicense)} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                    <div>
-                        <label className="text-xs text-muted-foreground uppercase font-semibold">Portfolio Access</label>
-                        <select {...register('portfolio_id', { required: true })} className="w-full mt-1 p-3 bg-background border border-input rounded-lg text-foreground focus:border-primary outline-none transition">
+            <Card
+                title="Nova autorização"
+                description="A conta só recebe sinais depois de autorizada aqui."
+                icon={<ShieldCheck />}
+            >
+                <form onSubmit={handleSubmit(onCreateLicense)} className="grid grid-cols-1 items-start gap-4 md:grid-cols-4" noValidate>
+                    <Field label="Portfólio" htmlFor="license-portfolio" error={errors.portfolio_id?.message}>
+                        <Select
+                            {...register('portfolio_id', { required: 'Selecione um portfólio' })}
+                            id="license-portfolio"
+                            disabled={portfolios.length === 0}
+                        >
+                            <option value="">{portfolios.length === 0 && !loading ? 'Crie um portfólio primeiro' : 'Selecione...'}</option>
                             {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground uppercase font-semibold">MT5 Login ID</label>
-                        <input {...register('client_mt5_login', { required: true })} type="number" className="w-full mt-1 p-3 bg-background border border-input rounded-lg text-foreground focus:border-primary outline-none transition" placeholder="e.g. 5002441" />
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground uppercase font-semibold">Max Lots Limit</label>
-                        <input {...register('max_lots', { required: true })} type="number" step="0.01" className="w-full mt-1 p-3 bg-background border border-input rounded-lg text-foreground focus:border-primary outline-none transition" placeholder="1.0" />
-                    </div>
-                    <button className="bg-accent hover:bg-accent/80 h-12 rounded-lg text-background font-bold transition shadow-lg shadow-emerald-900/20">
-                        Authorize Client
-                    </button>
+                        </Select>
+                    </Field>
+                    <Field label="Login MT5" htmlFor="license-login" error={errors.client_mt5_login?.message}>
+                        <Input
+                            {...register('client_mt5_login', {
+                                required: 'Informe o login',
+                                pattern: { value: /^\d+$/, message: 'Use apenas dígitos' },
+                            })}
+                            id="license-login"
+                            inputMode="numeric"
+                            className="font-mono"
+                            placeholder="Ex.: 5002441"
+                        />
+                    </Field>
+                    <Field label="Limite de lotes" htmlFor="license-lots" error={errors.max_lots?.message}>
+                        <Input
+                            {...register('max_lots', {
+                                required: 'Informe o limite',
+                                validate: v => parseFloat(v) > 0 || 'Deve ser maior que zero',
+                            })}
+                            id="license-lots"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            className="font-mono"
+                            placeholder="1.00"
+                        />
+                    </Field>
+                    <Button className="md:mt-[1.375rem]" loading={isSubmitting} disabled={portfolios.length === 0}>
+                        {!isSubmitting && <ShieldCheck />} Autorizar conta
+                    </Button>
                 </form>
             </Card>
 
-            {/* Filter */}
-            <div className="relative">
-                <Search className="absolute left-3 top-3 text-muted-foreground" size={20} />
-                <input
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    className="w-full p-3 pl-10 bg-background rounded-lg border border-input text-foreground focus:border-primary outline-none transition"
-                    placeholder="Search by MT5 Login ID..."
-                />
-            </div>
-
-            {/* List */}
-            <div className="overflow-hidden rounded-xl border border-border/50 bg-background/50 backdrop-blur-sm">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-muted/50 text-muted-foreground uppercase font-semibold">
-                        <tr>
-                            <th className="p-4">MT5 Login</th>
-                            <th className="p-4">Portfolio Context</th>
-                            <th className="p-4">Max Lots</th>
-                            <th className="p-4">Date Added</th>
-                            <th className="p-4">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/50">
-                        {filteredLicenses.map(l => (
-                            <tr key={l.id} className="hover:bg-muted/30 transition">
-                                <td className="p-4 font-mono text-foreground text-base">{l.client_mt5_login}</td>
-                                <td className="p-4 text-primary">Portfolio #{l.portfolio_id}</td>
-                                <td className="p-4 text-muted-foreground">{l.max_lots}</td>
-                                <td className="p-4 text-muted-foreground">{new Date(l.created_at).toLocaleDateString()}</td>
-                                <td className="p-4">
-                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.is_active ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-900/50' : 'bg-red-900/30 text-red-400 border border-red-900/50'}`}>
-                                        {l.is_active ? 'ACTIVE' : 'INACTIVE'}
-                                    </span>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-                {filteredLicenses.length === 0 && <div className="p-8 text-center text-muted-foreground">No licenses found matching your search.</div>}
-            </div>
+            <Card
+                title="Contas autorizadas"
+                description={loading ? undefined : `${licenses.length} ${licenses.length === 1 ? 'conta' : 'contas'}`}
+                icon={<Users />}
+                action={
+                    <div className="w-full max-w-xs">
+                        <Input
+                            value={filter}
+                            onChange={e => setFilter(e.target.value)}
+                            icon={<Search />}
+                            className="h-9"
+                            placeholder="Buscar por login ou portfólio"
+                            aria-label="Buscar por login ou portfólio"
+                        />
+                    </div>
+                }
+                flush
+            >
+                {loading ? (
+                    <p className="px-5 pb-5 text-sm text-muted-foreground">Carregando...</p>
+                ) : licenses.length === 0 ? (
+                    <EmptyState
+                        icon={<Users />}
+                        title="Nenhuma conta autorizada"
+                        description="Autorize o login MT5 de um cliente para que ele comece a copiar um portfólio."
+                    />
+                ) : filteredLicenses.length === 0 ? (
+                    <EmptyState icon={<Search />} title="Nenhum resultado" description={`Nada encontrado para "${filter}".`} />
+                ) : (
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Login MT5</TableHead>
+                                <TableHead>Acesso</TableHead>
+                                <TableHead className="text-right">Limite de lotes</TableHead>
+                                <TableHead>Autorizada em</TableHead>
+                                <TableHead className="text-right">Status</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filteredLicenses.map(l => {
+                                const access = accessOf(l);
+                                return (
+                                    <TableRow key={l.id}>
+                                        <TableCell className="font-mono font-semibold">{l.client_mt5_login}</TableCell>
+                                        <TableCell>
+                                            <span className="text-muted-foreground">{access.kind}</span> {access.name}
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono tabular-nums">{Number(l.max_lots).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                                        <TableCell className="text-muted-foreground">{formatDate(l.created_at)}</TableCell>
+                                        <TableCell className="text-right">
+                                            <Badge variant={l.is_active ? 'success' : 'muted'}>{l.is_active ? 'Ativa' : 'Inativa'}</Badge>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })}
+                        </TableBody>
+                    </Table>
+                )}
+            </Card>
         </div>
     );
 }

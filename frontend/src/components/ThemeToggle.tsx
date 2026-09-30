@@ -4,14 +4,16 @@ import { useTheme } from "../context/ThemeContext";
 
 export function ThemeToggle() {
     const { theme, toggleTheme } = useTheme();
+    const label = theme === "dark" ? "Usar tema claro" : "Usar tema escuro";
 
     return (
         <button
             onClick={toggleTheme}
-            className="p-2 rounded-lg transition-colors hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
-            title="Toggle Theme"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            title={label}
+            aria-label={label}
         >
-            {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
     );
 }
