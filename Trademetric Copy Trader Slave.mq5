@@ -23,6 +23,13 @@ enum ENUM_OPERATOR_LOTS
       divide = 1   //Divide [/]
    };
 
+enum ENUM_SIZING
+   {
+      sizing_factor = 0,  //Fixed factor
+      sizing_balance = 1, //Proportional to balance
+      sizing_equity = 2   //Proportional to equity
+   };
+
 sinput string inp_host = "127.0.0.1"; // Server Address
 sinput int inp_port = 5556; // ZMQ Port (signals)
 sinput int inp_push_port = 5555; // ZMQ Port (execution reports)
@@ -34,6 +41,8 @@ sinput bool inp_keep_original_magic = true;
 sinput bool inp_copy_sltp = true;
 sinput double inp_lots_factor = 1;
 sinput ENUM_OPERATOR_LOTS inp_lots_op = 0;
+sinput ENUM_SIZING inp_sizing_mode = sizing_factor; // Sizing
+sinput double inp_reference_capital = 10000; // Proportional: capital (account currency) that copies 1x the master lots
 sinput string inp_magic_to_copy = "0";
 sinput int inp_slippage_points = 20; // Max slippage (points)
 sinput int inp_late_max_deviation_points = 50; // Late entry: max distance from master price (points, 0 = never)
@@ -46,6 +55,7 @@ struct Copia {
    string symbol;  // Símbolo local (já traduzido)
    int    type;    // 0 = buy, 1 = sell
    double alvo;    // Volume local desejado
+   double escala;  // Volume local por lote do master, fixada na abertura (o equity oscilando não mexe na posição)
    long   magic;   // Magic do master
    bool   done;    // Fechada fora do EA (SL/TP/manual): nunca reabre
 };
@@ -122,6 +132,7 @@ int OnInit() {
 
    if(inp_lots_factor <= 0){Print("Lots Factor must be greater than zero."); return(INIT_FAILED);}
    lots_factor = inp_lots_op==multiply ? inp_lots_factor : (1/inp_lots_factor);
+   if(inp_sizing_mode != sizing_factor && inp_reference_capital <= 0) {Print("Reference capital must be greater than zero."); return(INIT_FAILED);}
 
    login = AccountInfoInteger(ACCOUNT_LOGIN);
    if(login <= 0) {Print("Conta não identificada. Faça login e reinicie o EA."); return(INIT_FAILED);}
@@ -361,12 +372,13 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
 
    string sym = c >= 0 ? copias[c].symbol : TraduzirSimbolo(master_symbol);
    if(sym == "") return;
-   double alvo = vol > 0 ? CalcularVolume(sym, vol) : 0;
+   double escala = c >= 0 ? copias[c].escala : EscalaAtual();
+   double alvo = vol > 0 ? CalcularVolume(sym, vol, escala) : 0;
 
    if(c < 0) {
       if(alvo <= 0) return;
       if(!licenca_ativa) {AvisarUmaVez("lic:" + uid, "Licença inativa: posição " + uid + " não copiada"); return;}
-      c = NovaCopia(uid, sym, type, magic);
+      c = NovaCopia(uid, sym, type, magic, escala);
    }
 
    bool pode_abrir = licenca_ativa && (ao_vivo || PrecoPerto(sym, type, price_open));
@@ -900,8 +912,15 @@ double NormalizarVolume(string sym, double vol, bool aplicar_minimo) {
    return NormalizeDouble(vol, VolumeDigits(sym));
 }
 
-double CalcularVolume(string sym, double master_volume) {
-   double volume = master_volume * lots_factor;
+// Volume local por lote do master, no momento em que uma cópia nasce
+double EscalaAtual() {
+   if(inp_sizing_mode == sizing_factor) return lots_factor;
+   double capital = AccountInfoDouble(inp_sizing_mode == sizing_equity ? ACCOUNT_EQUITY : ACCOUNT_BALANCE);
+   return lots_factor * MathMax(capital, 0) / inp_reference_capital;
+}
+
+double CalcularVolume(string sym, double master_volume, double escala) {
+   double volume = master_volume * escala;
    if(max_lots_limit > 0 && volume > max_lots_limit) volume = max_lots_limit;
    return NormalizarVolume(sym, volume, true);
 }
@@ -927,8 +946,9 @@ void SalvarMapa() {
    int h = FileOpen(tmp, FILE_WRITE | FILE_TXT | FILE_ANSI);
    if(h == INVALID_HANDLE) {Print("Não foi possível gravar o mapeamento: ", GetLastError()); return;}
    for(int i = 0; i < ArraySize(copias); i++)
-      FileWriteString(h, StringFormat("C|%s|%s|%d|%s|%I64d|%d\r\n", copias[i].uid, copias[i].symbol, copias[i].type,
-                                      DoubleToString(copias[i].alvo, 8), copias[i].magic, copias[i].done ? 1 : 0));
+      FileWriteString(h, StringFormat("C|%s|%s|%d|%s|%I64d|%d|%s\r\n", copias[i].uid, copias[i].symbol, copias[i].type,
+                                      DoubleToString(copias[i].alvo, 8), copias[i].magic, copias[i].done ? 1 : 0,
+                                      DoubleToString(copias[i].escala, 8)));
    for(int i = 0; i < ArraySize(vinculos); i++)
       FileWriteString(h, StringFormat("V|%s|%I64d\r\n", vinculos[i].uid, vinculos[i].pos));
    for(int i = 0; i < ArraySize(liquidos); i++)
@@ -949,8 +969,10 @@ void CarregarMapa() {
    while(!FileIsEnding(h)) {
       string f[];
       int n = StringSplit(FileReadString(h), '|', f);
-      if(n == 7 && f[0] == "C") {
-         int c = NovaCopia(f[1], f[2], (int)StringToInteger(f[3]), StringToInteger(f[5]));
+      if((n == 7 || n == 8) && f[0] == "C") {
+         // Mapeamento anterior ao EA-08 (7 campos): a cópia foi aberta com o fator fixo
+         double escala = n == 8 ? StringToDouble(f[7]) : lots_factor;
+         int c = NovaCopia(f[1], f[2], (int)StringToInteger(f[3]), StringToInteger(f[5]), escala);
          copias[c].alvo = StringToDouble(f[4]);
          copias[c].done = f[6] == "1";
       }
@@ -982,13 +1004,14 @@ int BuscarCopia(string uid) {
    return -1;
 }
 
-int NovaCopia(string uid, string sym, int type, long magic) {
+int NovaCopia(string uid, string sym, int type, long magic, double escala) {
    int c = ArraySize(copias);
    ArrayResize(copias, c + 1);
    copias[c].uid = uid;
    copias[c].symbol = sym;
    copias[c].type = type;
    copias[c].alvo = 0;
+   copias[c].escala = escala;
    copias[c].magic = magic;
    copias[c].done = false;
    return c;

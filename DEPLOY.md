@@ -56,6 +56,10 @@ A lista completa de variáveis está em `.env.example`.
 | `inp_late_max_deviation_points` | 50 | Entrada atrasada (posição descoberta pelo snapshot) só se o preço estiver a até N pontos da entrada do master; 0 = nunca |
 | `inp_symbol_map` | vazio | Tradução explícita, ex.: `EURUSD=EURUSDm;XAUUSD=GOLD` |
 | `inp_suffix_map` | vazio | Troca de sufixo, ex.: `.a=m` (EURUSD.a → EURUSDm) ou `=.raw` (acrescenta) |
+| `inp_sizing_mode` | Fixed factor | `Fixed factor`: lote do master × fator. `Proportional to balance/equity`: lote do master × fator × capital da conta ÷ `inp_reference_capital` |
+| `inp_reference_capital` | 10000 | Capital, na moeda da conta, que copia 1× os lotes do master (ex.: master opera 1 lote para cada 10 mil) |
+
+No modo proporcional a escala é calculada quando a cópia abre e fica gravada no mapeamento: o equity oscilando depois não aumenta nem reduz a posição. O volume nunca fica abaixo do mínimo do símbolo, então contas muito pequenas copiam o lote mínimo. O teto de lotes da licença continua valendo.
 
 ## Checklist no MT5 (contas demo)
 
@@ -71,6 +75,21 @@ Faça isto antes de liberar para clientes. Use uma conta hedging, uma netting e 
 - [ ] Linhas aparecem em `master_positions`, `signals` e `executions`.
 
 Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um slave recebe e `master` simula um master.
+
+## Observabilidade
+
+- **Latência de cópia:** o hub guarda o instante em que publicou cada `POS` e, quando o `EXEC` do slave chega com o mesmo `uid` e `seq`, grava a diferença em `executions.latency_ms` (migração `0004`). O `/health` do hub mostra `exec_latency_ms` com p50, p95 e máximo das últimas 1000 execuções. A medida começa no hub: o trecho master → hub não entra, porque o Master não envia horário confiável.
+- **Logs:** `LOG_FORMAT=json` nos dois serviços produz uma linha JSON por evento, com os campos passados em `extra=`. Os logs de acesso do uvicorn continuam em texto.
+- **Erros:** com `SENTRY_DSN` definido, exceções não tratadas e logs `ERROR` vão para o Sentry.
+
+Consulta de latência por portfólio:
+```sql
+SELECT portfolio_id, COUNT(*),
+       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95
+FROM executions WHERE latency_ms IS NOT NULL AND created_at > now() - interval '7 days'
+GROUP BY 1;
+```
 
 ## Limitações conhecidas
 

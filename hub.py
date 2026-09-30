@@ -28,7 +28,7 @@ import signal
 import sys
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Tuple
@@ -39,8 +39,8 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, DataError
 
 import database
 import models
+import observability
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("hub")
 
 PULL_BIND = os.getenv("HUB_PULL_BIND", "tcp://*:5555")
@@ -56,6 +56,8 @@ WRITE_QUEUE_SIZE = 10_000
 STALE_LOOP_SECONDS = 15
 SYNC_MISSES_TO_CLOSE = 2  # A position must be absent from this many V2SYNCs in a row before it is closed
 CLOSED_MEMORY = 10_000    # Recently closed positions remembered so a late message can't reopen them
+SENT_MEMORY = 10_000      # Published POS remembered to match execution reports (latency)
+LATENCY_SAMPLES = 1_000   # Recent latencies behind the /health percentiles
 PRICE_EPS = 1e-9
 
 
@@ -182,6 +184,9 @@ class HubCore:
         self.positions: Dict[Tuple[int, int, int], Position] = {}
         self.closed: "OrderedDict[Tuple[int, int, int], None]" = OrderedDict()
         self.seq: Dict[int, int] = {}
+        # (portfolio_id, seq) -> (uid, clock) of each POS, so an EXEC carrying that seq yields a latency
+        self.sent: "OrderedDict[Tuple[int, int], Tuple[str, float]]" = OrderedDict()
+        self.latencies: "deque[int]" = deque(maxlen=LATENCY_SAMPLES)
 
         # Warm-up: no SNAP until open positions were loaded from the database and every
         # master login that had one sent a V2SYNC (or WARMUP_SECONDS passed since the load).
@@ -283,10 +288,18 @@ class HubCore:
             self._warn("exec-size", f"Malformed EXEC: {msg[:120]}")
             return
         _, login, conn_key, uid, action, position_id, volume, price, retcode, seq = f
+        portfolio_id = self.directory().portfolio_by_key.get(conn_key)
+        # The slave reports the last seq it applied. It only measures this execution when that POS was
+        # about the same position; a late entry through SNAP still counts, from the POS it missed.
+        latency_ms = None
+        sent = self.sent.get((portfolio_id, int(seq)))
+        if sent is not None and sent[0] == uid:
+            latency_ms = max(0, round((self.clock() - sent[1]) * 1000))
+            self.latencies.append(latency_ms)
         self.persist({
             "kind": "execution",
             "uid": uid,
-            "portfolio_id": self.directory().portfolio_by_key.get(conn_key),
+            "portfolio_id": portfolio_id,
             "mt5_login": int(login),
             "action": action,
             "position_id": int(position_id),
@@ -294,8 +307,16 @@ class HubCore:
             "price": float(price),
             "retcode": int(retcode),
             "seq": int(seq),
+            "latency_ms": latency_ms,
             "at": datetime.datetime.utcnow(),
         })
+
+    def latency_stats(self) -> dict:
+        samples = sorted(self.latencies)
+        if not samples:
+            return {"count": 0}
+        pick = lambda q: samples[min(len(samples) - 1, int(q * len(samples)))]
+        return {"count": len(samples), "p50": pick(0.5), "p95": pick(0.95), "max": samples[-1]}
 
     # --- state machine ---
 
@@ -364,6 +385,9 @@ class HubCore:
         for portfolio_id in directory.portfolios_by_strategy.get(pos.strategy_id, ()):
             topic = f"P_{portfolio_id}"
             seq = self._next_seq(portfolio_id)
+            self.sent[(portfolio_id, seq)] = (pos.uid, self.clock())
+            while len(self.sent) > SENT_MEMORY:
+                self.sent.popitem(last=False)
             self.publish(topic, "|".join([
                 "POS", str(self.epoch), str(seq), pos.uid, str(s.type), s.symbol, fmt(s.volume),
                 fmt(s.price_open), fmt(s.sl), fmt(s.tp), str(s.magic), reason,
@@ -704,6 +728,7 @@ class Hub:
             "msgs": self.core.stats["msgs"],
             "errors": self.core.stats["errors"],
             "rejected": self.core.stats["rejected"],
+            "exec_latency_ms": self.core.latency_stats(),
             "db_ok": self.writer.db_ok,
             "db_queue": self.writer.q.qsize(),
             "db_dropped": self.writer.dropped,
@@ -768,6 +793,7 @@ class Hub:
 
 
 def main():
+    observability.setup("hub")
     hub = Hub()
 
     def stop(signum, frame):

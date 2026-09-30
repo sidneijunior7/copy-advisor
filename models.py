@@ -130,4 +130,5 @@ class Execution(Base):
     price = Column(Float)
     retcode = Column(Integer)
     seq = Column(BigInteger)
+    latency_ms = Column(Integer, nullable=True) # Hub publishing the state -> this report; None when unmatched
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)

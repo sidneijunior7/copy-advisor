@@ -246,3 +246,23 @@ def test_legacy_publish_can_be_disabled():
 @pytest.mark.parametrize("value,expected", [(1.1, "1.1"), (130000.0, "130000"), (0.00012345, "0.00012345"), (0.0, "0")])
 def test_fmt(value, expected):
     assert hub.fmt(value) == expected
+
+
+# --- PRD-03: latency from publishing a POS to the slave's execution report ---
+
+def test_exec_latency_matches_the_pos_it_answers():
+    h = Harness(directory=make_directory(portfolios=(7,)))
+    h.v2("OPEN", 1, 1.0)  # P_7 seq 1, uid 900_1
+    h.now += 0.25
+    h.core.handle_message("EXEC|12345|portfolio-key-7|900_1|OPEN|555001|1|1.1001|10009|1")
+    assert h.jobs[-1]["latency_ms"] == 250
+    assert h.core.latency_stats() == {"count": 1, "p50": 250, "p95": 250, "max": 250}
+
+
+def test_exec_for_another_position_has_no_latency():
+    h = Harness(directory=make_directory(portfolios=(7,)))
+    h.v2("OPEN", 1, 1.0)
+    h.core.handle_message("EXEC|12345|portfolio-key-7|900_2|OPEN|555001|1|1.1001|10009|1")
+    h.core.handle_message("EXEC|12345|unknown-key|900_1|OPEN|555001|1|1.1001|10009|1")
+    assert [j["latency_ms"] for j in h.jobs if j["kind"] == "execution"] == [None, None]
+    assert h.core.latency_stats() == {"count": 0}

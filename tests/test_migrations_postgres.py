@@ -74,7 +74,7 @@ def test_migrate_from_every_origin(pg_url, origin):
 
     insp = inspect(engine)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003_revoke_leaked_passwords"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004_execution_latency"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
     assert {"master_positions", "signals", "executions"} <= set(insp.get_table_names())

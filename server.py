@@ -24,9 +24,9 @@ from pydantic import BaseModel
 import database
 import models
 import auth
+import observability
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+observability.setup("api")
 logger = logging.getLogger(__name__)
 
 # The signal hub (hub.py) runs as a separate service; the API only relays its events to the dashboard.
