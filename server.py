@@ -6,9 +6,10 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, Tuple
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -40,6 +41,60 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o
 WS_AUTH_TIMEOUT = 5  # Seconds a dashboard has to send its token after connecting
 WS_CLOSE_UNAUTHORIZED = 4401  # The client should log out instead of reconnecting
 WS_CLOSE_FORBIDDEN = 4403
+
+# Failed logins and license checks allowed per client IP inside the window, then 429 until it slides
+AUTH_MAX_FAILURES = int(os.getenv("AUTH_MAX_FAILURES", "10"))
+AUTH_FAILURE_WINDOW_SECONDS = float(os.getenv("AUTH_FAILURE_WINDOW_SECONDS", "600"))
+
+
+class FailureLimiter:
+    """Per-key sliding window of failures. In memory: the API runs as a single replica."""
+
+    def __init__(self, max_failures: int, window: float, clock=time.monotonic):
+        self.max_failures = max_failures
+        self.window = window
+        self.clock = clock
+        self.failures: Dict[str, deque] = {}
+        self.lock = threading.Lock()
+
+    def _recent(self, key: str, now: float) -> deque:
+        q = self.failures.get(key)
+        if q is None:
+            return deque()
+        while q and now - q[0] >= self.window:
+            q.popleft()
+        if not q:
+            del self.failures[key]
+        return q
+
+    def blocked(self, key: str) -> bool:
+        with self.lock:
+            return len(self._recent(key, self.clock())) >= self.max_failures
+
+    def fail(self, key: str):
+        with self.lock:
+            now = self.clock()
+            self._recent(key, now)
+            self.failures.setdefault(key, deque()).append(now)
+            if len(self.failures) > 100_000:  # Bound memory under a distributed attack
+                self.failures.clear()
+
+    def reset(self):
+        with self.lock:
+            self.failures.clear()
+
+
+failure_limiter = FailureLimiter(AUTH_MAX_FAILURES, AUTH_FAILURE_WINDOW_SECONDS)
+
+
+def client_ip(request: Request) -> str:
+    # Behind EasyPanel's proxy uvicorn rewrites request.client from X-Forwarded-For (FORWARDED_ALLOW_IPS)
+    return request.client.host if request.client else "unknown"
+
+
+def check_not_limited(scope: str, request: Request):
+    if failure_limiter.blocked(f"{scope}:{client_ip(request)}"):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed attempts, try again later")
 
 # Accounts with no dashboard access (a TDM_DEV is never locked out by status)
 def is_blocked(user: models.User) -> bool:
@@ -221,11 +276,11 @@ class StrategyCreate(BaseModel):
 class PortfolioCreate(BaseModel):
     name: str
 
+# The hub only publishes portfolio topics (P_<id>): to sell one strategy, put it in its own portfolio
 class LicenseCreate(BaseModel):
     client_mt5_login: int
     max_lots: float
-    strategy_id: Optional[int] = None
-    portfolio_id: Optional[int] = None
+    portfolio_id: int
 
 class LicenseCheck(BaseModel):
     connection_key: str
@@ -323,16 +378,19 @@ async def health_check(db: Session = Depends(get_db)):
     }
 
 @app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    check_not_limited("login", request)
     logger.info(f"Login attempt for user: {form_data.username}")
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    
+
     if not user:
+        failure_limiter.fail(f"login:{client_ip(request)}")
         logger.warning(f"Login failed: User {form_data.username} not found")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
-    
+
     valid, needs_rehash = auth.verify_password(form_data.password, user.password_hash)
     if not valid:
+        failure_limiter.fail(f"login:{client_ip(request)}")
         logger.warning(f"Login failed: Incorrect password for user {form_data.username}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     
@@ -482,16 +540,10 @@ async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current
 @app.post("/licenses")
 async def create_license(license_data: LicenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    if license_data.strategy_id:
-        strat = db.query(models.Strategy).filter(models.Strategy.id == license_data.strategy_id, models.Strategy.user_id == current_user.id).first()
-        if not strat: raise HTTPException(status_code=404, detail="Strategy not found")
-    elif license_data.portfolio_id:
-        port = db.query(models.Portfolio).filter(models.Portfolio.id == license_data.portfolio_id, models.Portfolio.user_id == current_user.id).first()
-        if not port: raise HTTPException(status_code=404, detail="Portfolio not found")
-    else: raise HTTPException(status_code=400)
+    port = db.query(models.Portfolio).filter(models.Portfolio.id == license_data.portfolio_id, models.Portfolio.user_id == current_user.id).first()
+    if not port: raise HTTPException(status_code=404, detail="Portfolio not found")
 
     new_license = models.License(
-        strategy_id=license_data.strategy_id,
         portfolio_id=license_data.portfolio_id,
         client_mt5_login=license_data.client_mt5_login,
         max_lots=license_data.max_lots
@@ -501,7 +553,9 @@ async def create_license(license_data: LicenseCreate, current_user: models.User 
     return new_license
 
 @app.post("/api/license/check")
-async def check_license(check: LicenseCheck, db: Session = Depends(get_db)):
+async def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
+    """Anonymous (the Slave EA calls it); failures are rate limited per IP against key enumeration."""
+    check_not_limited("license", request)
     valid_license = None
     zmq_topic = ""
     portfolio = db.query(models.Portfolio).filter(models.Portfolio.public_key == check.connection_key).first()
@@ -514,6 +568,7 @@ async def check_license(check: LicenseCheck, db: Session = Depends(get_db)):
         zmq_topic = f"P_{portfolio.id}"
     
     if not valid_license:
+        failure_limiter.fail(f"license:{client_ip(request)}")
         raise HTTPException(status_code=403, detail="Invalid License or Key")
     return {"status": "active", "topic": zmq_topic, "max_lots": valid_license.max_lots}
 

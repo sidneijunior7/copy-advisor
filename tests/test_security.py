@@ -295,3 +295,64 @@ def test_manager_can_rotate_master_key(client):
     after = client.post("/me/manager/rotate-key", headers=headers).json()["master_key"]
     assert after != before
     assert client.get("/me/manager", headers=headers).json()["master_key"] == after
+
+
+# --- SEC-06 ---
+
+@pytest.fixture
+def fresh_limiter():
+    server.failure_limiter.reset()
+    yield
+    server.failure_limiter.reset()
+
+
+def make_portfolio(manager_id):
+    db = database.SessionLocal()
+    try:
+        portfolio = models.Portfolio(user_id=manager_id, name="P")
+        db.add(portfolio)
+        db.commit()
+        return portfolio.id, portfolio.public_key
+    finally:
+        db.close()
+
+
+def test_license_requires_a_portfolio(client):
+    manager_id, email = make_user()
+    headers = bearer(token_for(email))
+    r = client.post("/licenses", headers=headers, json={"client_mt5_login": 1, "max_lots": 1.0, "strategy_id": 1})
+    assert r.status_code == 422
+    portfolio_id, key = make_portfolio(manager_id)
+    r = client.post("/licenses", headers=headers, json={"client_mt5_login": 77, "max_lots": 2.0, "portfolio_id": portfolio_id})
+    assert r.status_code == 200
+    r = client.post("/api/license/check", json={"connection_key": key, "mt5_login": 77})
+    assert r.status_code == 200 and r.json()["topic"] == f"P_{portfolio_id}"
+
+
+def test_license_check_is_rate_limited_after_failures(client, fresh_limiter):
+    manager_id, email = make_user()
+    portfolio_id, key = make_portfolio(manager_id)
+    client.post("/licenses", headers=bearer(token_for(email)),
+                json={"client_mt5_login": 88, "max_lots": 1.0, "portfolio_id": portfolio_id})
+    for _ in range(server.AUTH_MAX_FAILURES):
+        r = client.post("/api/license/check", json={"connection_key": str(uuid.uuid4()), "mt5_login": 88})
+        assert r.status_code == 403
+    # Blocked even with the right key until the window slides
+    assert client.post("/api/license/check", json={"connection_key": key, "mt5_login": 88}).status_code == 429
+
+
+def test_login_is_rate_limited_after_failures(client, fresh_limiter):
+    _, email = make_user()
+    for _ in range(server.AUTH_MAX_FAILURES):
+        assert client.post("/token", data={"username": email, "password": "wrong"}).status_code == 401
+    assert client.post("/token", data={"username": email, "password": PASSWORD}).status_code == 429
+
+
+def test_failure_window_slides():
+    now = [0.0]
+    limiter = server.FailureLimiter(2, 10, clock=lambda: now[0])
+    limiter.fail("k")
+    limiter.fail("k")
+    assert limiter.blocked("k")
+    now[0] = 10.0
+    assert not limiter.blocked("k") and not limiter.failures

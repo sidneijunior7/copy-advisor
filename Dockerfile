@@ -36,6 +36,10 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 EXPOSE 8000
 
+# Trust X-Forwarded-For from EasyPanel's proxy, so the login/license rate limit sees the real client IP.
+# Port 8000 is only reachable through that proxy.
+ENV FORWARDED_ALLOW_IPS="*"
+
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
 

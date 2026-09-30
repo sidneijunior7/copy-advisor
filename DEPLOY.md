@@ -98,3 +98,5 @@ Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um sl
 - O `/ws` só aceita conexão depois de receber `{"type": "AUTH", "token": ...}`. Cada manager vê só as próprias posições, e o TDM_DEV vê todas. Uma conta CLIENT é recusada (código 4403), porque ainda não existe vínculo entre cliente e manager.
 - O token é renovado sozinho um minuto antes de expirar, até o limite de `SESSION_MAX_HOURS` desde o login. Um token expirado ou uma resposta 401 levam de volta para o login.
 - Um manager congelado perde o acesso na hora, sem esperar o token expirar.
+- Licença é sempre de portfólio: `POST /licenses` exige `portfolio_id`. Para vender uma estratégia avulsa, crie um portfólio só com ela. Licenças antigas por estratégia continuam listadas, mas nunca autenticaram no EA.
+- `/token` e `/api/license/check` respondem `429` depois de `AUTH_MAX_FAILURES` falhas do mesmo IP em `AUTH_FAILURE_WINDOW_SECONDS`. O IP vem do `X-Forwarded-For` do proxy do EasyPanel (`FORWARDED_ALLOW_IPS=*` no `Dockerfile`).
