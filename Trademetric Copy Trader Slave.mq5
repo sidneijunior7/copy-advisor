@@ -30,10 +30,10 @@ enum ENUM_SIZING
       sizing_equity = 2   //Proportional to equity
    };
 
-sinput string inp_host = "127.0.0.1"; // Server Address
+sinput string inp_host = "mirror.trademetric.com.br"; // Server Address
 sinput int inp_port = 5556; // ZMQ Port (signals)
 sinput int inp_push_port = 5557; // ZMQ Port (execution reports)
-sinput string inp_api_url = "http://127.0.0.1:8000"; // API URL
+sinput string inp_api_url = "https://mirror.trademetric.com.br"; // API URL
 sinput string inp_connection_key = "YOUR_PORTFOLIO_KEY"; // Portfolio Public Key
 sinput int inp_timer = 100; // Timer (ms)
 sinput ulong inp_standard_magic_number = 5457873;
@@ -87,6 +87,9 @@ struct Traducao {
 Context context;
 Socket socket(context, ZMQ_SUB);
 Socket reports(context, ZMQ_PUSH);
+// Trocar os inputs roda o OnInit de novo sem recarregar o EA: sockets e globais sobrevivem.
+// O OnDeinit desfaz o que o OnInit montou; senão a assinatura e os endereços antigos continuam ativos
+string sub_endpoint = "", sub_topic = "", reports_endpoint = "";
 CTrade trade;
 
 Copia    copias[];
@@ -161,6 +164,10 @@ int OnInit() {
    Print("License Valid! Subscribing to Topic: " + topic);
 
    // --- ZMQ CONNECTION ---
+   // Numa re-inicialização as globais do fluxo ainda são da assinatura anterior: recomeça pelo snapshot
+   last_epoch = "";
+   last_seq = 0;
+   need_snap = true;
    socket.setLinger(0);
    socket.setReceiveHighWaterMark(10000);
    socket.setTcpKeepAlive(1);
@@ -172,15 +179,18 @@ int OnInit() {
       LiberarTrava();
       return(INIT_FAILED);
    }
+   sub_endpoint = addr;
    // Assina antes de qualquer outra coisa: mensagens chegam na fila enquanto o EA aquece
    if(!socket.subscribe(topic + " ")) {
        Print("Erro ao subscrever topicos!");
        LiberarTrava();
        return(INIT_FAILED);
    }
+   sub_topic = topic + " ";
    reports.setLinger(0);
    reports.setSendHighWaterMark(1000);
-   reports.connect(StringFormat("tcp://%s:%d", inp_host, inp_push_port));
+   reports_endpoint = StringFormat("tcp://%s:%d", inp_host, inp_push_port);
+   reports.connect(reports_endpoint);
 
    trade.SetExpertMagicNumber(standard_magic_number);
    trade.SetDeviationInPoints(inp_slippage_points);
@@ -195,6 +205,9 @@ void OnDeinit(const int reason) {
    EventKillTimer();
    if(dirty) SalvarMapa();
    LiberarTrava();
+   if(sub_topic != "") {socket.unsubscribe(sub_topic); sub_topic = "";}
+   if(sub_endpoint != "") {socket.disconnect(sub_endpoint); sub_endpoint = "";}
+   if(reports_endpoint != "") {reports.disconnect(reports_endpoint); reports_endpoint = "";}
 }
 
 //+------------------------------------------------------------------+
@@ -236,9 +249,9 @@ void OnTimer() {
    ZmqMsg msg;
    for(int n = 0; n < 500 && socket.recv(msg, true); n++) {
        string full_data = msg.getData();
-       // Format: TOPIC MESSAGE
+       // Format: TOPIC MESSAGE. Só o tópico desta licença: a fila pode ter linhas de uma assinatura anterior
        int space = StringFind(full_data, " ");
-       if(space > 0) Processar(StringSubstr(full_data, space+1));
+       if(space > 0 && StringSubstr(full_data, 0, space) == topic) Processar(StringSubstr(full_data, space+1));
    }
    if(dirty) SalvarMapa();
 }

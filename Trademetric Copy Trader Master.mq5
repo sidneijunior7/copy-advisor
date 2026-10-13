@@ -11,7 +11,7 @@
 
 // Inputs
 input string InpSecretKey   = "YOUR_STRATEGY_SECRET_KEY"; // Master Key provided by Manager
-input string InpServer      = "tcp://127.0.0.1:5557";     // Hub address (PUSH)
+input string InpServer      = "tcp://mirror.trademetric.com.br:5557"; // Hub address (PUSH)
 input int    InpSyncSeconds = 10;                          // Full position refresh interval (seconds)
 
 // Protocol v2: every message carries the full state of one position (volume 0 = closed).
@@ -34,6 +34,10 @@ struct PosState {
 // Globals
 Context context;
 Socket socket(context, ZMQ_PUSH);
+// Changing the inputs re-runs OnInit without reloading the EA: the socket and every global survive.
+// A second connect() would leave PUSH round-robining between the old and the new address, so
+// OnDeinit disconnects what OnInit connected.
+string   hub_endpoint = "";
 
 PosState sent[];           // Last state sent to the hub
 bool     seeded = false;   // sent[] initialised from the terminal
@@ -63,6 +67,7 @@ int OnInit()
       Print("Failed to connect to ZMQ Server!");
       return(INIT_FAILED);
    }
+   hub_endpoint = InpServer;
    Print("ZMQ Connected (PUSH -> ", InpServer, ")");
 
    ArrayResize(sent, 0);
@@ -77,6 +82,10 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
+   if(hub_endpoint != "") {
+      socket.disconnect(hub_endpoint);
+      hub_endpoint = "";
+   }
   }
 //+------------------------------------------------------------------+
 void OnTrade()
