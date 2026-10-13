@@ -1,7 +1,7 @@
 """
 Manual probe for a running hub (local or staging).
 
-  python tools/hub_probe.py listen --host mirrorserver.trademetric.com.br --topic P_7
+  python tools/hub_probe.py listen --host mirror.trademetric.com.br --topic P_7
       Prints POS / SNAP / HB (and legacy lines) as a Slave would receive them.
 
   python tools/hub_probe.py master --host 127.0.0.1 --key <master_key> --magic 4242
