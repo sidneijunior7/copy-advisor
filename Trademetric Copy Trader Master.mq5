@@ -11,7 +11,7 @@
 
 // Inputs
 input string InpSecretKey   = "YOUR_STRATEGY_SECRET_KEY"; // Master Key provided by Manager
-input string InpServer      = "tcp://127.0.0.1:5555";     // Hub address (PUSH)
+input string InpServer      = "tcp://127.0.0.1:5557";     // Hub address (PUSH)
 input int    InpSyncSeconds = 10;                          // Full position refresh interval (seconds)
 
 // Protocol v2: every message carries the full state of one position (volume 0 = closed).

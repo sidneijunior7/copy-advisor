@@ -1,15 +1,15 @@
 """
 TDM Mirror signal hub. Runs as its own process/container, separate from the API.
 
-Masters PUSH position state to :5555, slaves SUB to :5556 on topic P_<portfolio_id>.
+Masters PUSH position state to :5557, slaves SUB to :5556 on topic P_<portfolio_id>.
 Every message carries the full state of one position (volume 0 = closed), so a slave
 that missed messages converges by applying the periodic SNAP published on the same stream.
 
-Master -> hub (PUSH :5555)
+Master -> hub (PUSH :5557)
     KEY|V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
     KEY|V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
     KEY|ACTION|POS_ID|TYPE|SYMBOL|VOL|PRICE|SL|TP|MAGIC           (legacy Master EA)
-Slave -> hub (PUSH :5555)
+Slave -> hub (PUSH :5557)
     EXEC|login|conn_key|uid|action|position_id|volume|price|retcode|seq
 Hub -> slaves (PUB :5556)
     P_<id> POS|epoch|seq|uid|type|symbol|vol|price_open|sl|tp|magic|reason
@@ -43,7 +43,7 @@ import observability
 
 logger = logging.getLogger("hub")
 
-PULL_BIND = os.getenv("HUB_PULL_BIND", "tcp://*:5555")
+PULL_BIND = os.getenv("HUB_PULL_BIND", "tcp://*:5557")
 PUB_BIND = os.getenv("HUB_PUB_BIND", "tcp://*:5556")
 EVENTS_BIND = os.getenv("HUB_EVENTS_BIND", "tcp://*:5558")
 HEALTH_PORT = int(os.getenv("HUB_HEALTH_PORT", "8001"))

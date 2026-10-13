@@ -14,7 +14,7 @@ async def verify():
     
     # Simulate Master (PUSH)
     push_socket = context.socket(zmq.PUSH)
-    push_socket.connect("tcp://localhost:5555")
+    push_socket.connect("tcp://localhost:5557")
     
     # Allow some time for connection
     await asyncio.sleep(1)

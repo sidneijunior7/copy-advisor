@@ -60,7 +60,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--sub-port", type=int, default=5556)
-    p.add_argument("--push-port", type=int, default=5555)
+    p.add_argument("--push-port", type=int, default=5557)
     sub = p.add_subparsers(dest="cmd", required=True)
     lp = sub.add_parser("listen")
     lp.add_argument("--topic", required=True)

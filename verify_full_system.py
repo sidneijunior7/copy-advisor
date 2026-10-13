@@ -104,7 +104,7 @@ async def main():
     
     # MASTER (PUSH)
     push = ctx.socket(zmq.PUSH)
-    push.connect("tcp://localhost:5555")
+    push.connect("tcp://localhost:5557")
     
     await asyncio.sleep(0.5)
 

@@ -6,8 +6,8 @@ O monólito passa a ser dois serviços, construídos a partir do mesmo repositó
 
 | Serviço | Dockerfile | O que faz | Portas |
 |---|---|---|---|
-| `mirror-api` | `Dockerfile` | API, dashboard e `/ws`; roda `migrate.py` ao subir | 8000 (domínio `mirrorserver.trademetric.com.br`) |
-| `mirror-hub` | `Dockerfile.hub` | Recebe os Masters, publica para os Slaves, grava sinais | 5555 e 5556 publicadas no host; 5558 e 8001 só na rede interna |
+| `mirror-api` | `Dockerfile` | API, dashboard e `/ws`; roda `migrate.py` ao subir | 8000 (domínio `mirror.trademetric.com.br`) |
+| `mirror-hub` | `Dockerfile.hub` | Recebe os Masters, publica para os Slaves, grava sinais | 5557 e 5556 publicadas no host; 5558 e 8001 só na rede interna |
 
 Um deploy da API não derruba mais os sinais. O hub roda sozinho, com o próprio `/health` na porta 8001.
 
@@ -27,22 +27,22 @@ O `migrate.py` reconhece sozinho um banco criado antes do Alembic: marca a revis
 **`mirror-hub` (serviço novo)**
 - Fonte: este repositório, `Dockerfile.hub`.
 - Variáveis: `DATABASE_URL` (a mesma da API) e `HUB_LEGACY_PUBLISH=1`.
-- Portas publicadas: `5555` e `5556`.
+- Portas publicadas: `5557` e `5556`.
 - **Uma réplica.** Se o EasyPanel permitir escolher a ordem de update, use *stop-first*. Com dois hubs no ar ao mesmo tempo, os Masters podem ir para um e os Slaves ficarem no outro.
 
 **`mirror-api` (serviço atual)**
-- **Remover** as portas publicadas `5555` e `5556`; elas passam para o hub.
+- **Remover** a porta publicada `5556` (e a `5557`, se existir); elas passam para o hub.
 - Variáveis novas (use o hostname interno do hub, que o EasyPanel mostra na página do serviço, algo como `<projeto>_mirror-hub`):
   - `HUB_EVENTS_URL=tcp://<hostname-do-hub>:5558`
   - `HUB_HEALTH_URL=http://<hostname-do-hub>:8001/health`
 
 A lista completa de variáveis está em `.env.example`.
 
-**Conferência:** `GET https://mirrorserver.trademetric.com.br/health` deve mostrar `"status": "healthy"` e o bloco `hub` com `"warming": false`.
+**Conferência:** `GET https://mirror.trademetric.com.br/health` deve mostrar `"status": "healthy"` e o bloco `hub` com `"warming": false`.
 
 ## Ordem de rollout
 
-1. **Janela de manutenção:** criar o `mirror-hub`, mover as portas 5555/5556 e fazer o deploy da API. Com `HUB_LEGACY_PUBLISH=1`, os EAs antigos continuam funcionando: o hub aceita o formato antigo do Master e publica as linhas `OPEN`/`CLOSE` que o Slave antigo entende.
+1. **Janela de manutenção:** criar o `mirror-hub` com as portas 5557 e 5556, tirar a 5556 da API e fazer o deploy da API. Com `HUB_LEGACY_PUBLISH=1`, os EAs antigos continuam funcionando: o hub aceita o formato antigo do Master e publica as linhas `OPEN`/`CLOSE` que o Slave antigo entende.
 2. **Masters:** instalar o Master v3 **com a conta sem posição aberta**. A versão antiga truncava `pos_id` grandes, então uma posição aberta com ela ganharia identidade nova na troca. Configurar o input novo `InpServer`, que antes era um `127.0.0.1` fixo no código.
 3. **Slaves:** distribuir o Slave v3 com a instrução de instalar **sem posição copiada aberta**. Posições do EA antigo (comentário `Copy ZMQ`) não são geridas pela v3, e o EA avisa no log quando encontra alguma.
 4. **Desligar o legado:** com todos os clientes atualizados, `HUB_LEGACY_PUBLISH=0`.
@@ -51,7 +51,7 @@ A lista completa de variáveis está em `.env.example`.
 
 | Input | Padrão | Uso |
 |---|---|---|
-| `inp_push_port` | 5555 | Envio das confirmações de execução |
+| `inp_push_port` | 5557 | Envio das confirmações de execução |
 | `inp_slippage_points` | 20 | Desvio máximo na execução |
 | `inp_late_max_deviation_points` | 50 | Entrada atrasada (posição descoberta pelo snapshot) só se o preço estiver a até N pontos da entrada do master; 0 = nunca |
 | `inp_symbol_map` | vazio | Tradução explícita, ex.: `EURUSD=EURUSDm;XAUUSD=GOLD` |
@@ -95,7 +95,7 @@ GROUP BY 1;
 
 - **Netting:** o Slave ajusta a posição líquida do símbolo inteiro. Operar manualmente o mesmo símbolo numa conta netting copiada faz o EA "corrigir" a operação manual. Com várias cópias no mesmo símbolo, o SL/TP não é copiado.
 - **Master antigo:** fechamento parcial continua virando fechamento total, porque o formato antigo não distingue os dois.
-- **Segurança:** a Fase 1 está na seção abaixo. O barramento ZMQ (portas 5555/5556) continua sem autenticação; isso depende da troca de transporte.
+- **Segurança:** a Fase 1 está na seção abaixo. O barramento ZMQ (portas 5557/5556) continua sem autenticação; isso depende da troca de transporte.
 
 ## Fase 1 de segurança
 

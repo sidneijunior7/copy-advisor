@@ -32,7 +32,7 @@ enum ENUM_SIZING
 
 sinput string inp_host = "127.0.0.1"; // Server Address
 sinput int inp_port = 5556; // ZMQ Port (signals)
-sinput int inp_push_port = 5555; // ZMQ Port (execution reports)
+sinput int inp_push_port = 5557; // ZMQ Port (execution reports)
 sinput string inp_api_url = "http://127.0.0.1:8000"; // API URL
 sinput string inp_connection_key = "YOUR_PORTFOLIO_KEY"; // Portfolio Public Key
 sinput int inp_timer = 100; // Timer (ms)
