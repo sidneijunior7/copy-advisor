@@ -104,3 +104,19 @@ def test_migrate_refuses_duplicate_magic_numbers(pg_url):
     # Transactional DDL: the stamp and every change rolled back together
     tables = inspect(engine).get_table_names()
     assert "alembic_version" not in tables and "master_positions" not in tables
+
+
+def test_concurrent_migrations_are_serialized(pg_url):
+    engine = create_engine(pg_url)
+    reset(engine)
+    env = dict(os.environ, DATABASE_URL=pg_url)
+    procs = [subprocess.Popen([sys.executable, "migrate.py"], cwd=ROOT, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+             for _ in range(2)]
+    outputs = [p.communicate(timeout=120)[0] for p in procs]
+    # Without the lock both would CREATE TABLE at once and one of them would fail
+    assert [p.returncode for p in procs] == [0, 0], outputs
+    with engine.connect() as c:
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004_execution_latency"
+        # Transaction-scoped lock: nothing stays held once migrate.py is done
+        assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0

@@ -41,9 +41,10 @@ def main():
     conn = connect()
     try:
         if database.IS_POSTGRES:
-            # Two API containers starting together must not migrate at the same time
-            conn.execute(text(f"SELECT pg_advisory_lock({ADVISORY_LOCK_ID})"))
-            conn.commit()
+            # Two API containers starting together must not migrate at the same time.
+            # Transaction-scoped: the commit or rollback below releases it, and the whole migration
+            # stays on one server connection even behind a transaction-mode pooler (Supabase 6543)
+            conn.execute(text(f"SELECT pg_advisory_xact_lock({ADVISORY_LOCK_ID})"))
 
         tables = inspect(conn).get_table_names()
         cfg.attributes["connection"] = conn
@@ -57,9 +58,6 @@ def main():
         conn.rollback()  # Postgres DDL is transactional: a failed migration leaves nothing half-applied
         raise
     finally:
-        if database.IS_POSTGRES:
-            conn.execute(text(f"SELECT pg_advisory_unlock({ADVISORY_LOCK_ID})"))
-            conn.commit()
         conn.close()
 
 
