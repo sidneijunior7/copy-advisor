@@ -1,7 +1,8 @@
 
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { Briefcase, Link as LinkIcon, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Briefcase, Check, Link as LinkIcon, Plus, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../../api';
 import Card from '../../components/Card';
@@ -19,15 +20,20 @@ type LinkForm = { portfolio_id: string; strategy_id: string };
 export default function Portfolios() {
     const [portfolios, setPortfolios] = useState<any[]>([]);
     const [strategies, setStrategies] = useState<any[]>([]);
+    const [licenses, setLicenses] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    // "<portfolio_id>:<strategy_id>" of the link waiting for confirmation / being removed
+    const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+    const [removing, setRemoving] = useState<string | null>(null);
     const portfolioForm = useForm<PortfolioForm>();
     const linkForm = useForm<LinkForm>();
 
     const refresh = async () => {
         try {
-            const [p, s] = await Promise.all([api.get('/portfolios'), api.get('/strategies')]);
+            const [p, s, l] = await Promise.all([api.get('/portfolios'), api.get('/strategies'), api.get('/licenses')]);
             setPortfolios(p.data);
             setStrategies(s.data);
+            setLicenses(l.data);
         } catch (e) {
             console.error(e);
             toast.error('Não foi possível carregar os portfólios.');
@@ -59,6 +65,22 @@ export default function Portfolios() {
         } catch (e) {
             console.error(e);
             toast.error(apiError(e, 'Não foi possível vincular a estratégia.'));
+        }
+    };
+
+    // The API refuses while the strategy has open positions: removing it would close the clients' copies
+    const onRemove = async (portfolio: any, strategy: any) => {
+        setRemoving(`${portfolio.id}:${strategy.id}`);
+        try {
+            await api.delete(`/portfolios/${portfolio.id}/strategies/${strategy.id}`);
+            toast.success(`${strategy.name} removida de ${portfolio.name}`);
+            refresh();
+        } catch (e) {
+            console.error(e);
+            toast.error(apiError(e, 'Não foi possível remover a estratégia.'));
+        } finally {
+            setRemoving(null);
+            setConfirmRemove(null);
         }
     };
 
@@ -145,35 +167,76 @@ export default function Portfolios() {
                                 description="Crie um portfólio e vincule estratégias para liberar a chave de conexão dos clientes."
                             />
                         </div>
-                    ) : portfolios.map(p => (
-                        <Card key={p.id} className="transition-colors hover:border-primary/30">
-                            <div className="flex items-start justify-between gap-4">
-                                <h3 className="text-lg font-semibold">{p.name}</h3>
-                                <span className="shrink-0 text-xs text-muted-foreground">
-                                    {p.strategies.length} {p.strategies.length === 1 ? 'estratégia' : 'estratégias'}
-                                </span>
-                            </div>
+                    ) : portfolios.map(p => {
+                        const activeClients = licenses.filter(l => l.portfolio_id === p.id && l.is_active).length;
+                        return (
+                            <Card key={p.id} className="transition-colors hover:border-primary/30">
+                                <div className="flex items-start justify-between gap-4">
+                                    <h3 className="text-lg font-semibold">{p.name}</h3>
+                                    <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                                        <span>{p.strategies.length} {p.strategies.length === 1 ? 'estratégia' : 'estratégias'}</span>
+                                        <Link
+                                            to={`/manager/clients?portfolio=${p.id}`}
+                                            className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+                                        >
+                                            <Users className="size-3.5" />
+                                            {activeClients} {activeClients === 1 ? 'cliente ativo' : 'clientes ativos'}
+                                        </Link>
+                                    </div>
+                                </div>
 
-                            <div className="mt-3 flex flex-wrap gap-2">
-                                {p.strategies.length > 0 ? p.strategies.map((s: any) => (
-                                    <Badge key={s.id} variant="primary" className="font-medium">
-                                        {s.name} <span className="font-mono opacity-70">#{s.magic_number}</span>
-                                    </Badge>
-                                )) : (
-                                    <p className="text-sm text-muted-foreground">
-                                        Nenhuma estratégia vinculada: os clientes deste portfólio ainda não recebem sinais.
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    {p.strategies.length > 0 ? p.strategies.map((s: any) => {
+                                        const key = `${p.id}:${s.id}`;
+                                        return confirmRemove === key ? (
+                                            <Badge key={s.id} variant="destructive" className="font-medium">
+                                                Remover {s.name}?
+                                                <button
+                                                    onClick={() => onRemove(p, s)}
+                                                    disabled={removing === key}
+                                                    aria-label={`Confirmar remoção de ${s.name}`}
+                                                    className="rounded-full p-0.5 transition-colors hover:bg-destructive/20 disabled:opacity-50"
+                                                >
+                                                    <Check className="size-3" />
+                                                </button>
+                                                <button
+                                                    onClick={() => setConfirmRemove(null)}
+                                                    disabled={removing === key}
+                                                    aria-label="Cancelar remoção"
+                                                    className="-mr-1 rounded-full p-0.5 transition-colors hover:bg-destructive/20 disabled:opacity-50"
+                                                >
+                                                    <X className="size-3" />
+                                                </button>
+                                            </Badge>
+                                        ) : (
+                                            <Badge key={s.id} variant="primary" className="font-medium">
+                                                {s.name} <span className="font-mono opacity-70">#{s.magic_number}</span>
+                                                <button
+                                                    onClick={() => setConfirmRemove(key)}
+                                                    title="Remover do portfólio"
+                                                    aria-label={`Remover ${s.name} de ${p.name}`}
+                                                    className="-mr-1 rounded-full p-0.5 opacity-60 transition hover:bg-primary/20 hover:opacity-100"
+                                                >
+                                                    <X className="size-3" />
+                                                </button>
+                                            </Badge>
+                                        );
+                                    }) : (
+                                        <p className="text-sm text-muted-foreground">
+                                            Nenhuma estratégia vinculada: os clientes deste portfólio ainda não recebem sinais.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="mt-5 border-t border-border pt-4">
+                                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Chave de conexão dos clientes
                                     </p>
-                                )}
-                            </div>
-
-                            <div className="mt-5 border-t border-border pt-4">
-                                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                                    Chave de conexão dos clientes
-                                </p>
-                                <CopyField value={p.public_key} label="Chave de conexão" />
-                            </div>
-                        </Card>
-                    ))}
+                                    <CopyField value={p.public_key} label="Chave de conexão" />
+                                </div>
+                            </Card>
+                        );
+                    })}
                 </div>
             </div>
         </div>

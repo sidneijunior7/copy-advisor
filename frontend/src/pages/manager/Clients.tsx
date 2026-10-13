@@ -1,7 +1,8 @@
 
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { Search, ShieldCheck, Users } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Ban, Check, Pencil, RotateCcw, Search, ShieldCheck, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../../api';
 import Card from '../../components/Card';
@@ -14,6 +15,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { apiError, formatDate } from '../../lib/utils';
 
 type LicenseForm = { portfolio_id: string; client_mt5_login: string; max_lots: string };
+type LicenseChanges = { max_lots?: number; is_active?: boolean };
+
+const formatLots = (value: number) => Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+
+// The Slave EA rechecks its license hourly
+const EA_DELAY = 'O EA aplica a mudança em até 1 hora.';
 
 export default function Clients() {
     const [licenses, setLicenses] = useState<any[]>([]);
@@ -21,6 +28,12 @@ export default function Clients() {
     const [strategies, setStrategies] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('');
+    // Portfolio filter lives in the URL so the Portfolios page can link to its clients
+    const [searchParams, setSearchParams] = useSearchParams();
+    const portfolioFilter = searchParams.get('portfolio') ?? '';
+    const [editing, setEditing] = useState<{ id: number; value: string } | null>(null);
+    const [confirmRevoke, setConfirmRevoke] = useState<number | null>(null);
+    const [busy, setBusy] = useState<number | null>(null);
     const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<LicenseForm>({
         defaultValues: { max_lots: '1.00' },
     });
@@ -57,6 +70,47 @@ export default function Clients() {
         }
     };
 
+    const updateLicense = async (l: any, changes: LicenseChanges, message: string, detail: string) => {
+        setBusy(l.id);
+        try {
+            const res = await api.patch(`/licenses/${l.id}`, changes);
+            setLicenses(current => current.map(x => (x.id === l.id ? res.data : x)));
+            toast.success(message, { description: detail });
+            return true;
+        } catch (e) {
+            console.error(e);
+            toast.error(apiError(e, 'Não foi possível alterar a licença.'));
+            return false;
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const saveLimit = async (l: any) => {
+        const value = parseFloat(editing?.value ?? '');
+        if (!(value > 0)) {
+            toast.error('O limite deve ser maior que zero.');
+            return;
+        }
+        if (await updateLicense(l, { max_lots: value }, `Conta ${l.client_mt5_login}: limite de ${formatLots(value)} lotes`, EA_DELAY)) {
+            setEditing(null);
+        }
+    };
+
+    const revoke = async (l: any) => {
+        await updateLicense(l, { is_active: false }, `Conta ${l.client_mt5_login} revogada`,
+            'Em até 1 hora o EA para de abrir posições. As que estiverem abertas seguem até fecharem no master.');
+        setConfirmRevoke(null);
+    };
+
+    const reactivate = (l: any) =>
+        updateLicense(l, { is_active: true }, `Conta ${l.client_mt5_login} reativada`, EA_DELAY);
+
+    const startEditing = (l: any) => {
+        setConfirmRevoke(null);
+        setEditing({ id: l.id, value: String(l.max_lots) });
+    };
+
     // A license grants either a whole portfolio or (older ones) a single strategy
     const accessOf = (l: any) => {
         if (l.portfolio_id != null) {
@@ -67,14 +121,16 @@ export default function Clients() {
 
     const query = filter.trim().toLowerCase();
     const filteredLicenses = licenses.filter(l =>
-        String(l.client_mt5_login).includes(query) || accessOf(l).name.toLowerCase().includes(query),
+        (!portfolioFilter || String(l.portfolio_id) === portfolioFilter) &&
+        (String(l.client_mt5_login).includes(query) || accessOf(l).name.toLowerCase().includes(query)),
     );
+    const activeCount = licenses.filter(l => l.is_active).length;
 
     return (
         <div className="space-y-6">
             <PageHeader
                 title="Clientes"
-                description="Autorize contas MT5 a copiar seus portfólios e defina o limite de cada uma."
+                description="Autorize contas MT5 a copiar seus portfólios e defina o limite de cada uma. Alterações chegam ao EA em até 1 hora."
                 icon={<Users />}
             />
 
@@ -128,18 +184,29 @@ export default function Clients() {
 
             <Card
                 title="Contas autorizadas"
-                description={loading ? undefined : `${licenses.length} ${licenses.length === 1 ? 'conta' : 'contas'}`}
+                description={loading ? undefined : `${licenses.length} ${licenses.length === 1 ? 'conta' : 'contas'}, ${activeCount} ${activeCount === 1 ? 'ativa' : 'ativas'}`}
                 icon={<Users />}
                 action={
-                    <div className="w-full max-w-xs">
-                        <Input
-                            value={filter}
-                            onChange={e => setFilter(e.target.value)}
-                            icon={<Search />}
-                            className="h-9"
-                            placeholder="Buscar por login ou portfólio"
-                            aria-label="Buscar por login ou portfólio"
-                        />
+                    <div className="flex w-full max-w-lg flex-col gap-2 sm:flex-row">
+                        <Select
+                            value={portfolioFilter}
+                            onChange={e => setSearchParams(e.target.value ? { portfolio: e.target.value } : {}, { replace: true })}
+                            className="h-9 sm:w-48"
+                            aria-label="Filtrar por portfólio"
+                        >
+                            <option value="">Todos os portfólios</option>
+                            {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </Select>
+                        <div className="flex-1">
+                            <Input
+                                value={filter}
+                                onChange={e => setFilter(e.target.value)}
+                                icon={<Search />}
+                                className="h-9"
+                                placeholder="Buscar por login ou portfólio"
+                                aria-label="Buscar por login ou portfólio"
+                            />
+                        </div>
                     </div>
                 }
                 flush
@@ -153,7 +220,11 @@ export default function Clients() {
                         description="Autorize o login MT5 de um cliente para que ele comece a copiar um portfólio."
                     />
                 ) : filteredLicenses.length === 0 ? (
-                    <EmptyState icon={<Search />} title="Nenhum resultado" description={`Nada encontrado para "${filter}".`} />
+                    <EmptyState
+                        icon={<Search />}
+                        title="Nenhum resultado"
+                        description={filter ? `Nada encontrado para "${filter}".` : 'Nenhuma conta autorizada neste portfólio.'}
+                    />
                 ) : (
                     <Table>
                         <TableHeader>
@@ -162,22 +233,86 @@ export default function Clients() {
                                 <TableHead>Acesso</TableHead>
                                 <TableHead className="text-right">Limite de lotes</TableHead>
                                 <TableHead>Autorizada em</TableHead>
-                                <TableHead className="text-right">Status</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead className="text-right">Ações</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {filteredLicenses.map(l => {
                                 const access = accessOf(l);
+                                const isBusy = busy === l.id;
                                 return (
                                     <TableRow key={l.id}>
                                         <TableCell className="font-mono font-semibold">{l.client_mt5_login}</TableCell>
                                         <TableCell>
                                             <span className="text-muted-foreground">{access.kind}</span> {access.name}
                                         </TableCell>
-                                        <TableCell className="text-right font-mono tabular-nums">{Number(l.max_lots).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                                        <TableCell className="text-right font-mono tabular-nums">
+                                            {editing && editing.id === l.id ? (
+                                                <form
+                                                    onSubmit={e => { e.preventDefault(); saveLimit(l); }}
+                                                    className="flex items-center justify-end gap-1"
+                                                >
+                                                    <Input
+                                                        autoFocus
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0.01"
+                                                        value={editing.value}
+                                                        onChange={e => setEditing({ id: l.id, value: e.target.value })}
+                                                        onKeyDown={e => { if (e.key === 'Escape') setEditing(null); }}
+                                                        className="h-8 w-24 text-right font-mono"
+                                                        aria-label={`Limite de lotes da conta ${l.client_mt5_login}`}
+                                                    />
+                                                    <Button size="icon" variant="ghost" className="size-8" loading={isBusy} aria-label="Salvar limite">
+                                                        {!isBusy && <Check />}
+                                                    </Button>
+                                                    <Button type="button" size="icon" variant="ghost" className="size-8" onClick={() => setEditing(null)} aria-label="Cancelar edição">
+                                                        <X />
+                                                    </Button>
+                                                </form>
+                                            ) : formatLots(l.max_lots)}
+                                        </TableCell>
                                         <TableCell className="text-muted-foreground">{formatDate(l.created_at)}</TableCell>
-                                        <TableCell className="text-right">
-                                            <Badge variant={l.is_active ? 'success' : 'muted'}>{l.is_active ? 'Ativa' : 'Inativa'}</Badge>
+                                        <TableCell>
+                                            <Badge variant={l.is_active ? 'success' : 'muted'}>{l.is_active ? 'Ativa' : 'Revogada'}</Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex justify-end gap-1">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => startEditing(l)}
+                                                    disabled={editing?.id === l.id}
+                                                    aria-label={`Editar limite da conta ${l.client_mt5_login}`}
+                                                >
+                                                    <Pencil /> Limite
+                                                </Button>
+                                                {!l.is_active ? (
+                                                    <Button variant="ghost" size="sm" loading={isBusy} onClick={() => reactivate(l)}>
+                                                        {!isBusy && <RotateCcw />} Reativar
+                                                    </Button>
+                                                ) : confirmRevoke === l.id ? (
+                                                    <>
+                                                        <Button variant="destructive" size="sm" loading={isBusy} onClick={() => revoke(l)}>
+                                                            {!isBusy && <Ban />} Confirmar
+                                                        </Button>
+                                                        <Button variant="ghost" size="sm" disabled={isBusy} onClick={() => setConfirmRevoke(null)}>
+                                                            Cancelar
+                                                        </Button>
+                                                    </>
+                                                ) : (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                        onClick={() => { setEditing(null); setConfirmRevoke(l.id); }}
+                                                        aria-label={`Revogar a conta ${l.client_mt5_login}`}
+                                                    >
+                                                        <Ban /> Revogar
+                                                    </Button>
+                                                )}
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 );

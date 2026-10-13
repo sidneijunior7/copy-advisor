@@ -18,7 +18,7 @@ import uvicorn
 import os
 import threading
 import zmq
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Internal Imports
 import database
@@ -279,8 +279,13 @@ class PortfolioCreate(BaseModel):
 # The hub only publishes portfolio topics (P_<id>): to sell one strategy, put it in its own portfolio
 class LicenseCreate(BaseModel):
     client_mt5_login: int
-    max_lots: float
+    max_lots: float = Field(gt=0)
     portfolio_id: int
+
+# The Slave EA rechecks its license hourly: changes reach it within an hour
+class LicenseUpdate(BaseModel):
+    max_lots: Optional[float] = Field(default=None, gt=0)
+    is_active: Optional[bool] = None
 
 class LicenseCheck(BaseModel):
     connection_key: str
@@ -533,15 +538,44 @@ async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current
     strategy = db.query(models.Strategy).filter(models.Strategy.id == strategy_id, models.Strategy.user_id == current_user.id).first()
     
     if not portfolio or not strategy: raise HTTPException(status_code=404)
+    if strategy in portfolio.strategies:
+        raise HTTPException(status_code=409, detail="A estratégia já está neste portfólio")
     portfolio.strategies.append(strategy)
     db.commit()
     return {"message": "Strategy added to Portfolio"}
+
+@app.delete("/portfolios/{portfolio_id}/strategies/{strategy_id}")
+async def remove_strategy_from_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == current_user.id).first()
+    strategy = next((s for s in portfolio.strategies if s.id == strategy_id), None) if portfolio else None
+    if not strategy: raise HTTPException(status_code=404)
+
+    # The next SNAP of this portfolio would no longer list these positions, and every Slave would close its copies
+    open_positions = db.query(models.MasterPosition).filter(
+        models.MasterPosition.strategy_id == strategy.id, models.MasterPosition.closed_at.is_(None)
+    ).count()
+    if open_positions:
+        raise HTTPException(status_code=409, detail=(
+            f"{strategy.name} tem {open_positions} {'posição aberta' if open_positions == 1 else 'posições abertas'}. "
+            "Remover agora fecharia as cópias dos clientes deste portfólio: espere o fechamento no master."
+        ))
+    portfolio.strategies.remove(strategy)
+    db.commit()
+    logger.info(f"Strategy {strategy.id} removed from portfolio {portfolio.id} by manager {current_user.id}")
+    return {"message": "Strategy removed from Portfolio"}
 
 @app.post("/licenses")
 async def create_license(license_data: LicenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     port = db.query(models.Portfolio).filter(models.Portfolio.id == license_data.portfolio_id, models.Portfolio.user_id == current_user.id).first()
     if not port: raise HTTPException(status_code=404, detail="Portfolio not found")
+    existing = db.query(models.License).filter(
+        models.License.portfolio_id == port.id, models.License.client_mt5_login == license_data.client_mt5_login
+    ).first()
+    if existing:
+        state = "ativa" if existing.is_active else "revogada: reative-a na lista"
+        raise HTTPException(status_code=409, detail=f"A conta {license_data.client_mt5_login} já tem licença neste portfólio ({state})")
 
     new_license = models.License(
         portfolio_id=license_data.portfolio_id,
@@ -550,7 +584,27 @@ async def create_license(license_data: LicenseCreate, current_user: models.User 
     )
     db.add(new_license)
     db.commit()
+    db.refresh(new_license)
     return new_license
+
+@app.patch("/licenses/{license_id}")
+async def update_license(license_id: int, changes: LicenseUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Edit the lot limit or revoke/reactivate. A revoked Slave stops opening positions but keeps managing open ones."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    lic = db.get(models.License, license_id)
+    owner = None
+    if lic is not None:
+        owner = lic.portfolio.user_id if lic.portfolio else (lic.strategy.user_id if lic.strategy else None)
+    if owner != current_user.id: raise HTTPException(status_code=404)
+
+    if changes.max_lots is not None:
+        lic.max_lots = changes.max_lots
+    if changes.is_active is not None:
+        lic.is_active = changes.is_active
+    db.commit()
+    db.refresh(lic)
+    logger.info(f"License {lic.id} updated by manager {current_user.id}: max_lots={lic.max_lots} is_active={lic.is_active}")
+    return lic
 
 @app.post("/api/license/check")
 async def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
