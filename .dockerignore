@@ -27,7 +27,6 @@ frontend/dist
 
 # Debug/test scripts
 check_users.py
-create_admin.py
 debug_auth.py
 diagnose_db.py
 test_link.py
