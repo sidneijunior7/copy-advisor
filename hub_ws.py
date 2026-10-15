@@ -217,6 +217,7 @@ class Edge:
             outcome = self._hello_master(ws, ip, hello) if ws.request.path == "/v1/master" else self._hello_slave(ws, ip, hello)
             if not isinstance(outcome, Session):
                 self._fail(ip)
+                self._warn(f"refused:{ip}:{outcome[0]}", f"{ws.request.path} from {ip} refused: {outcome[0]} ({outcome[1]})")
                 await self._refuse(ws, *outcome)
                 return
             session = outcome

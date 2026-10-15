@@ -982,6 +982,7 @@ async def amain(hub: Hub):
 
 def main():
     observability.setup("hub")
+    logging.getLogger("websockets").setLevel(logging.WARNING)  # One INFO line per connection otherwise; ours say more
     if sys.platform == "win32":  # zmq.asyncio needs a selector loop
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     hub = Hub()
