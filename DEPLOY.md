@@ -125,7 +125,17 @@ Faça isto antes de liberar para clientes. Use uma conta hedging, uma netting e 
 - [ ] Um Slave antigo ligado ao hub novo continua copiando OPEN/CLOSE.
 - [ ] Linhas aparecem em `master_positions`, `signals` e `executions`.
 
-Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um slave recebe e `master` simula um master.
+**EAs v4 (WSS)**, com "Allow DLL imports" desligado e `https://signals.trademetric.com.br` na lista de WebRequest:
+- [ ] O Master e o Slave conectam. O gráfico mostra "Hub: conectado", e a página Conexões do painel lista os dois.
+- [ ] Sem a URL na lista, o gráfico explica o que liberar (erro 4014).
+- [ ] O Master v4 recebe a chave nova do painel (Chaves do Master). Ao revogá-la, o Master cai e o gráfico avisa.
+- [ ] Revogar a licença com uma cópia aberta: o EA avisa, não abre posição nova e fecha a cópia quando o Master fechar. Reativar volta a copiar.
+- [ ] Validade no passado: mesmo comportamento da revogação. Remover a validade volta a copiar.
+- [ ] "Nova chave" da licença: o terminal cai, o EA avisa e tenta de novo a cada minuto. Com a chave nova no input, volta, e as cópias abertas continuam vinculadas.
+- [ ] O mesmo `.set` em dois terminais: o segundo assume e o primeiro para, com aviso no gráfico.
+- [ ] Hub reiniciado (Implantar no EasyPanel) com posição aberta: os EAs reconectam sozinhos e nada duplica.
+
+Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um slave recebe e `master` simula um master. Com `--ws wss://signals.trademetric.com.br`, ele usa a conexão WebSocket com a chave da licença ou do Master.
 
 ## Observabilidade
 
