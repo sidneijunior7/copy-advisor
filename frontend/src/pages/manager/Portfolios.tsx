@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { Briefcase, Check, Link as LinkIcon, Plus, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import api from '../../api';
+import api, { type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
 import CopyField from '../../components/CopyField';
 import EmptyState from '../../components/EmptyState';
@@ -12,15 +12,15 @@ import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Select } from '../../components/ui/Field';
-import { apiError } from '../../lib/utils';
+import { apiError, licenseIsValid } from '../../lib/utils';
 
 type PortfolioForm = { name: string };
 type LinkForm = { portfolio_id: string; strategy_id: string };
 
 export default function Portfolios() {
-    const [portfolios, setPortfolios] = useState<any[]>([]);
-    const [strategies, setStrategies] = useState<any[]>([]);
-    const [licenses, setLicenses] = useState<any[]>([]);
+    const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+    const [strategies, setStrategies] = useState<Strategy[]>([]);
+    const [licenses, setLicenses] = useState<License[]>([]);
     const [loading, setLoading] = useState(true);
     // "<portfolio_id>:<strategy_id>" of the link waiting for confirmation / being removed
     const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -30,7 +30,11 @@ export default function Portfolios() {
 
     const refresh = async () => {
         try {
-            const [p, s, l] = await Promise.all([api.get('/portfolios'), api.get('/strategies'), api.get('/licenses')]);
+            const [p, s, l] = await Promise.all([
+                api.get<Portfolio[]>('/portfolios'),
+                api.get<Strategy[]>('/strategies'),
+                api.get<License[]>('/licenses'),
+            ]);
             setPortfolios(p.data);
             setStrategies(s.data);
             setLicenses(l.data);
@@ -69,7 +73,7 @@ export default function Portfolios() {
     };
 
     // The API refuses while the strategy has open positions: removing it would close the clients' copies
-    const onRemove = async (portfolio: any, strategy: any) => {
+    const onRemove = async (portfolio: Portfolio, strategy: Portfolio['strategies'][number]) => {
         setRemoving(`${portfolio.id}:${strategy.id}`);
         try {
             await api.delete(`/portfolios/${portfolio.id}/strategies/${strategy.id}`);
@@ -86,7 +90,7 @@ export default function Portfolios() {
 
     // Strategies the chosen portfolio already has can't be linked twice
     const selectedPortfolio = portfolios.find(p => String(p.id) === linkForm.watch('portfolio_id'));
-    const linkedIds = new Set<number>(selectedPortfolio?.strategies.map((s: any) => s.id) ?? []);
+    const linkedIds = new Set<number>(selectedPortfolio?.strategies.map(s => s.id) ?? []);
     const canLink = portfolios.length > 0 && strategies.length > 0;
 
     return (
@@ -164,11 +168,11 @@ export default function Portfolios() {
                             <EmptyState
                                 icon={<Briefcase />}
                                 title="Nenhum portfólio criado"
-                                description="Crie um portfólio e vincule estratégias para liberar a chave de conexão dos clientes."
+                                description="Crie um portfólio e vincule estratégias para que seus clientes possam copiá-lo."
                             />
                         </div>
                     ) : portfolios.map(p => {
-                        const activeClients = licenses.filter(l => l.portfolio_id === p.id && l.is_active).length;
+                        const activeClients = licenses.filter(l => l.portfolio_id === p.id && licenseIsValid(l)).length;
                         return (
                             <Card key={p.id} className="transition-colors hover:border-primary/30">
                                 <div className="flex items-start justify-between gap-4">
@@ -186,7 +190,7 @@ export default function Portfolios() {
                                 </div>
 
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                    {p.strategies.length > 0 ? p.strategies.map((s: any) => {
+                                    {p.strategies.length > 0 ? p.strategies.map(s => {
                                         const key = `${p.id}:${s.id}`;
                                         return confirmRemove === key ? (
                                             <Badge key={s.id} variant="destructive" className="font-medium">
@@ -230,9 +234,19 @@ export default function Portfolios() {
 
                                 <div className="mt-5 border-t border-border pt-4">
                                     <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                                        Chave de conexão dos clientes
+                                        Chave de conexão (EA v3)
                                     </p>
                                     <CopyField value={p.public_key} label="Chave de conexão" />
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                        Só para o EA Slave v3 (ZMQ). No EA v4, cada cliente usa a chave da própria licença,
+                                        gerada em{' '}
+                                        <Link
+                                            to={`/manager/clients?portfolio=${p.id}`}
+                                            className="font-medium text-primary underline-offset-4 hover:underline"
+                                        >
+                                            Clientes
+                                        </Link>.
+                                    </p>
                                 </div>
                             </Card>
                         );

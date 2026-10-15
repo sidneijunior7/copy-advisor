@@ -1,12 +1,13 @@
 
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { KeyRound, Layers, Plus } from 'lucide-react';
+import { isAxiosError } from 'axios';
+import { Layers, Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import api from '../../api';
+import api, { type Strategy } from '../../api';
 import Card from '../../components/Card';
-import CopyField from '../../components/CopyField';
 import EmptyState from '../../components/EmptyState';
+import MasterKeys from '../../components/MasterKeys';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -16,16 +17,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 type StrategyForm = { name: string; magic_number: string };
 
 export default function Strategies() {
-    const [strategies, setStrategies] = useState<any[]>([]);
-    const [manager, setManager] = useState<any>(null);
+    const [strategies, setStrategies] = useState<Strategy[]>([]);
     const [loading, setLoading] = useState(true);
     const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } = useForm<StrategyForm>();
 
     const refresh = async () => {
         try {
-            const [list, me] = await Promise.all([api.get('/strategies'), api.get('/me/manager')]);
-            setStrategies(list.data);
-            setManager(me.data);
+            const res = await api.get<Strategy[]>('/strategies');
+            setStrategies(res.data);
         } catch (e) {
             console.error(e);
             toast.error('Não foi possível carregar as estratégias.');
@@ -40,8 +39,8 @@ export default function Strategies() {
             reset();
             toast.success(`Estratégia "${data.name}" criada`);
             refresh();
-        } catch (err: any) {
-            if (err.response?.status === 400) {
+        } catch (err) {
+            if (isAxiosError(err) && err.response?.status === 400) {
                 setError('magic_number', { message: 'Já existe uma estratégia com este Magic Number.' });
             } else {
                 toast.error('Não foi possível criar a estratégia.');
@@ -59,19 +58,7 @@ export default function Strategies() {
                 icon={<Layers />}
             />
 
-            {manager && (
-                <Card
-                    title="Chave mestra"
-                    description="Use esta chave no EA Master. O servidor direciona cada operação para a estratégia certa pelo Magic Number."
-                    icon={<KeyRound />}
-                    className="border-primary/20"
-                >
-                    <CopyField value={manager.master_key} label="Chave mestra" secret className="max-w-xl" />
-                    <p className="mt-3 text-xs text-muted-foreground">
-                        Trate como uma senha: quem tiver esta chave pode enviar sinais em seu nome.
-                    </p>
-                </Card>
-            )}
+            <MasterKeys />
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
                 <Card title="Nova estratégia" icon={<Plus />}>

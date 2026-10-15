@@ -15,6 +15,7 @@ import ManagerOverview from './pages/manager/ManagerOverview';
 import Strategies from './pages/manager/Strategies';
 import Portfolios from './pages/manager/Portfolios';
 import Clients from './pages/manager/Clients';
+import Connections from './pages/manager/Connections';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -58,6 +59,7 @@ function App() {
             <Route element={<ProtectedRoute allowedRoles={['MANAGER']} />}>
               <Route path="/manager" element={<AppLayout />}>
                 <Route index element={<ManagerOverview />} />
+                <Route path="connections" element={<Connections />} />
                 <Route path="strategies" element={<Strategies />} />
                 <Route path="portfolios" element={<Portfolios />} />
                 <Route path="clients" element={<Clients />} />

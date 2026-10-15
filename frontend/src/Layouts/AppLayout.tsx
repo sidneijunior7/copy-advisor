@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, Layers, LayoutDashboard, LogOut, Menu, Radio, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Layers, LayoutDashboard, LogOut, Menu, Plug, Radio, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -11,7 +11,13 @@ type NavSection = { title: string; items: NavItem[] };
 
 const navByRole: Record<string, NavSection[]> = {
     MANAGER: [
-        { title: 'Operação', items: [{ path: '/manager', label: 'Visão Geral', icon: LayoutDashboard, end: true }] },
+        {
+            title: 'Operação',
+            items: [
+                { path: '/manager', label: 'Visão Geral', icon: LayoutDashboard, end: true },
+                { path: '/manager/connections', label: 'Conexões', icon: Plug },
+            ],
+        },
         {
             title: 'Configuração',
             items: [
