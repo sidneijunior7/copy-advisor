@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "3.00"
+#property version   "3.01"
 
 #include <Zmq/Zmq.mqh>
 
@@ -17,6 +17,7 @@ input int    InpSyncSeconds = 10;                          // Full position refr
 // Protocol v2: every message carries the full state of one position (volume 0 = closed).
 //   KEY|V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
 //   KEY|V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
+//   KEY|V2HELLO|login|trade_mode|server|company   (trade_mode: demo, contest, real)
 // pos_id is POSITION_IDENTIFIER, never the ticket: on netting accounts a reversal changes the
 // ticket but keeps the identifier.
 
@@ -44,8 +45,10 @@ bool     seeded = false;   // sent[] initialised from the terminal
 bool     was_connected = false;
 ulong    ready_at = 0;     // GetTickCount64() after which positions are trusted
 ulong    next_sync = 0;
+ulong    next_hello = 0;
 
 const int WARMUP_MS = 10000; // Positions can read as empty right after start or a broker reconnect
+const int HELLO_MS  = 300000; // Account details are re-sent so a hub that restarted learns them again
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -100,6 +103,7 @@ void OnTimer()
       EnviarSync();
       next_sync = GetTickCount64() + (ulong)MathMax(InpSyncSeconds, 1) * 1000;
    }
+   if(seeded && Pronto() && GetTickCount64() >= next_hello) EnviarHello();
   }
 //+------------------------------------------------------------------+
 //| Terminal connected, logged in and past the warm-up window        |
@@ -128,6 +132,10 @@ void DiffEEnviar()
    LerPosicoes(cur);
 
    if(!seeded) {
+      // The hub learns the account before its first position
+      EnviarHello();
+      PrintFormat("Account %I64d: %s, %s (%s)", AccountInfoInteger(ACCOUNT_LOGIN), ModoConta(),
+                  AccountInfoString(ACCOUNT_SERVER), AccountInfoString(ACCOUNT_COMPANY));
       // Positions that already existed are announced by V2SYNC, not as live events:
       // slaves must not treat them as fresh entries.
       CopiarEstado(cur, sent);
@@ -239,5 +247,33 @@ void EnviarSync()
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    // Dropped when the queue is full: the next one carries the same information
    socket.send(StringFormat("%s|V2SYNC|%I64d|%s", InpSecretKey, login, body), true);
+  }
+//+------------------------------------------------------------------+
+string ModoConta()
+  {
+   switch((ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE)) {
+      case ACCOUNT_TRADE_MODE_DEMO:    return "demo";
+      case ACCOUNT_TRADE_MODE_CONTEST: return "contest";
+      case ACCOUNT_TRADE_MODE_REAL:    return "real";
+   }
+   return "unknown";
+  }
+//+------------------------------------------------------------------+
+string SemPipe(string s)
+  {
+   StringReplace(s, "|", "/");
+   return s;
+  }
+//+------------------------------------------------------------------+
+//| Trade mode, server and broker of the account                     |
+//+------------------------------------------------------------------+
+void EnviarHello()
+  {
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   string msg = StringFormat("%s|V2HELLO|%I64d|%s|%s|%s", InpSecretKey, login, ModoConta(),
+                             SemPipe(AccountInfoString(ACCOUNT_SERVER)), SemPipe(AccountInfoString(ACCOUNT_COMPANY)));
+   // Dropped when the queue is full: the next one carries the same information
+   if(!socket.send(msg, true)) Print("Erro ao enviar ZMQ (fila cheia?): HELLO");
+   next_hello = GetTickCount64() + HELLO_MS;
   }
 //+------------------------------------------------------------------+

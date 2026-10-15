@@ -101,6 +101,20 @@ class MasterPosition(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     closed_at = Column(DateTime, nullable=True)
 
+class MasterAccount(Base):
+    """Trading account a Master EA runs on, as reported by its V2HELLO."""
+    __tablename__ = "master_accounts"
+    __table_args__ = (UniqueConstraint("manager_id", "master_login", name="uq_master_accounts_identity"),)
+
+    id = Column(Integer, primary_key=True)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    master_login = Column(BigInteger, nullable=False)
+    trade_mode = Column(String(16), nullable=False) # demo, contest, real, unknown (ACCOUNT_TRADE_MODE)
+    server = Column(String(64))
+    company = Column(String(128))
+    first_seen_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Signal(Base):
     """Every state change the hub accepted and published."""
     __tablename__ = "signals"

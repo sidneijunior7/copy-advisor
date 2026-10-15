@@ -266,3 +266,31 @@ def test_exec_for_another_position_has_no_latency():
     h.core.handle_message("EXEC|12345|unknown-key|900_1|OPEN|555001|1|1.1001|10009|1")
     assert [j["latency_ms"] for j in h.jobs if j["kind"] == "execution"] == [None, None]
     assert h.core.latency_stats() == {"count": 0}
+
+
+# --- V2HELLO: trade mode, server and broker of the Master account ---
+
+def test_hello_records_the_account_without_publishing():
+    h = Harness()
+    h.core.handle_message(f"{KEY}|V2HELLO|900|demo|XPMT5-DEMO|XP Investimentos | CCTVM")
+    assert h.published == [] and h.web == []
+    job = h.jobs[-1]
+    assert (job["kind"], job["manager_id"], job["master_login"]) == ("master_account", 1, 900)
+    assert (job["trade_mode"], job["server"], job["company"]) == ("demo", "XPMT5-DEMO", "XP Investimentos | CCTVM")
+    assert h.core.masters[(1, 900)] == ("demo", "XPMT5-DEMO", "XP Investimentos | CCTVM")
+
+
+def test_hello_with_unexpected_mode_or_missing_fields():
+    h = Harness()
+    h.core.handle_message(f"{KEY}|V2HELLO|900|bogus|Srv|Co")
+    assert h.jobs[-1]["trade_mode"] == "unknown"
+    h.clear()
+    h.core.handle_message(f"{KEY}|V2HELLO|900|demo|Srv")
+    assert h.jobs == []
+
+
+def test_real_account_master_is_not_gated_yet():
+    h = Harness()
+    h.core.handle_message(f"{KEY}|V2HELLO|900|real|Srv|Co")
+    h.v2("OPEN", 1, 1.0)
+    assert len(h.payloads("POS")) == 1

@@ -65,3 +65,23 @@ def test_writer_records_execution_and_directory_loads():
         assert portfolio_id in directory.portfolio_ids
     finally:
         db.close()
+
+
+def test_writer_upserts_master_account():
+    manager_id, _, _ = seed()
+    w = Writer()
+    first = datetime.datetime(2026, 10, 14, 10, 0)
+    later = first + datetime.timedelta(minutes=5)
+    job = {"kind": "master_account", "manager_id": manager_id, "master_login": 5_000_000_000,
+           "trade_mode": "demo", "server": "XPMT5-DEMO", "company": "XP", "at": first}
+    w._write(job)
+    w._write(dict(job, trade_mode="real", server="XPMT5-PRD", at=later))
+    db = database.SessionLocal()
+    try:
+        rows = db.query(models.MasterAccount).filter_by(manager_id=manager_id).all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert (row.trade_mode, row.server, row.company) == ("real", "XPMT5-PRD", "XP")
+        assert row.first_seen_at == first and row.last_seen_at == later
+    finally:
+        db.close()

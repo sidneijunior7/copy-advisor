@@ -74,10 +74,10 @@ def test_migrate_from_every_origin(pg_url, origin):
 
     insp = inspect(engine)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004_execution_latency"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005_master_accounts"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
-    assert {"master_positions", "signals", "executions"} <= set(insp.get_table_names())
+    assert {"master_positions", "signals", "executions", "master_accounts"} <= set(insp.get_table_names())
     columns = {col["name"]: col for col in insp.get_columns("strategies")}
     assert str(columns["magic_number"]["type"]) == "BIGINT"
     login_type = {col["name"]: col for col in insp.get_columns("licenses")}["client_mt5_login"]["type"]
@@ -117,6 +117,6 @@ def test_concurrent_migrations_are_serialized(pg_url):
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004_execution_latency"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005_master_accounts"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0

@@ -47,6 +47,19 @@ A lista completa de variáveis está em `.env.example`.
 3. **Slaves:** distribuir o Slave v3 com a instrução de instalar **sem posição copiada aberta**. Posições do EA antigo (comentário `Copy ZMQ`) não são geridas pela v3, e o EA avisa no log quando encontra alguma.
 4. **Desligar o legado:** com todos os clientes atualizados, `HUB_LEGACY_PUBLISH=0`.
 
+### Master 3.01: tipo da conta
+
+O Master 3.01 envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.
+
+A ordem é: deploy da API, que roda a `0005`; depois o hub; por último o Master.
+- **Hub antigo:** recebendo um Master 3.01, loga `Malformed legacy message` no máximo uma vez por minuto. Fora isso, nada muda.
+- **Hub novo antes da migração:** as gravações do hub ficam na fila até a tabela existir. A publicação dos sinais segue normal.
+
+```sql
+SELECT u.email, a.master_login, a.trade_mode, a.server, a.company, a.last_seen_at
+FROM master_accounts a JOIN users u ON u.id = a.manager_id ORDER BY a.last_seen_at DESC;
+```
+
 ### Inputs novos do Slave
 
 | Input | Padrão | Uso |

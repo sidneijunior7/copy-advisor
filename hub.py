@@ -8,6 +8,7 @@ that missed messages converges by applying the periodic SNAP published on the sa
 Master -> hub (PUSH :5557)
     KEY|V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
     KEY|V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
+    KEY|V2HELLO|login|trade_mode|server|company                    (trade_mode: demo, contest, real)
     KEY|ACTION|POS_ID|TYPE|SYMBOL|VOL|PRICE|SL|TP|MAGIC           (legacy Master EA)
 Slave -> hub (PUSH :5557)
     EXEC|login|conn_key|uid|action|position_id|volume|price|retcode|seq
@@ -59,6 +60,7 @@ CLOSED_MEMORY = 10_000    # Recently closed positions remembered so a late messa
 SENT_MEMORY = 10_000      # Published POS remembered to match execution reports (latency)
 LATENCY_SAMPLES = 1_000   # Recent latencies behind the /health percentiles
 PRICE_EPS = 1e-9
+TRADE_MODES = ("demo", "contest", "real")
 
 
 def fmt(x: float) -> str:
@@ -187,6 +189,8 @@ class HubCore:
         # (portfolio_id, seq) -> (uid, clock) of each POS, so an EXEC carrying that seq yields a latency
         self.sent: "OrderedDict[Tuple[int, int], Tuple[str, float]]" = OrderedDict()
         self.latencies: "deque[int]" = deque(maxlen=LATENCY_SAMPLES)
+        # (manager_id, login) -> (trade_mode, server, company) from the last V2HELLO
+        self.masters: Dict[Tuple[int, int], Tuple[str, str, str]] = {}
 
         # Warm-up: no SNAP until open positions were loaded from the database and every
         # master login that had one sent a V2SYNC (or WARMUP_SECONDS passed since the load).
@@ -221,6 +225,8 @@ class HubCore:
         if rest.startswith("V2SYNC|"):
             _, login, entries = rest.split("|", 2)
             self._handle_sync(manager, int(login), entries, raw=msg)
+        elif rest.startswith("V2HELLO|"):
+            self._handle_hello(manager, rest, raw=msg)
         elif rest.startswith("V2|"):
             f = rest.split("|")
             if len(f) != 11:
@@ -281,6 +287,31 @@ class HubCore:
                 self.apply_state(manager, login, pos.pos_id, closed, reason="SYNC", live=False, raw=None)
 
         self.pending_logins.discard((manager.id, login))
+
+    def _handle_hello(self, manager: ManagerInfo, rest: str, raw: str):
+        """Recorded only: nothing is gated on the trade mode yet."""
+        f = rest.split("|", 4)  # The broker's company name is free text, so it takes the remainder
+        if len(f) != 5:
+            self._warn("hello-size", f"Malformed V2HELLO message: {raw[:120]}")
+            return
+        _, login, trade_mode, server, company = f
+        login = int(login)
+        account = (trade_mode if trade_mode in TRADE_MODES else "unknown", server[:64], company[:128])
+        previous = self.masters.get((manager.id, login))
+        self.masters[(manager.id, login)] = account
+        if previous is None:
+            logger.info(f"Master {login} (manager {manager.id}): {account[0]} account on {account[1]} ({account[2]})")
+        elif previous != account:
+            logger.warning(f"Master {login} (manager {manager.id}) changed from {previous} to {account}")
+        self.persist({
+            "kind": "master_account",
+            "manager_id": manager.id,
+            "master_login": login,
+            "trade_mode": account[0],
+            "server": account[1],
+            "company": account[2],
+            "at": datetime.datetime.utcnow(),
+        })
 
     def _handle_exec(self, msg: str):
         f = msg.split("|")
@@ -628,6 +659,8 @@ class Writer(threading.Thread):
             _statement_timeout(session)
             if job["kind"] == "execution":
                 session.add(models.Execution(**{k: v for k, v in job.items() if k not in ("kind", "at")}, created_at=job["at"]))
+            elif job["kind"] == "master_account":
+                self._write_master_account(session, job)
             else:
                 self._write_position(session, job)
             session.commit()
@@ -662,6 +695,17 @@ class Writer(threading.Thread):
         session.add(models.Signal(
             master_position_id=row.id, reason=job["reason"], type=job["type"], volume=job["volume"],
             price_open=job["price_open"], sl=job["sl"], tp=job["tp"], raw=job["raw"], received_at=at))
+
+    @staticmethod
+    def _write_master_account(session, job: dict):
+        at = job["at"]
+        row = session.query(models.MasterAccount).filter_by(
+            manager_id=job["manager_id"], master_login=job["master_login"]).one_or_none()
+        if row is None:
+            row = models.MasterAccount(manager_id=job["manager_id"], master_login=job["master_login"], first_seen_at=at)
+            session.add(row)
+        row.trade_mode, row.server, row.company = job["trade_mode"], job["server"], job["company"]
+        row.last_seen_at = at
 
     def stop(self, timeout: float):
         self.stopping = True
