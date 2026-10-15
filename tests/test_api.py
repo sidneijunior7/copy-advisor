@@ -27,6 +27,21 @@ def test_health_reports_hub_without_failing(client):
     assert body["status"] == "degraded" and body["hub"]["status"] == "unreachable"
 
 
+def test_dead_database_is_reported_without_details_and_liveness_stays_up(client):
+    class Broken:
+        def query(self, *_):
+            raise RuntimeError("could not connect to db.internal as user secret_user")
+
+    server.app.dependency_overrides[server.get_db] = lambda: Broken()
+    try:
+        r = client.get("/health")
+        assert r.status_code == 503
+        assert r.json()["database"] == "unavailable" and "secret_user" not in r.text
+        assert client.get("/health/live").json() == {"status": "alive"}
+    finally:
+        server.app.dependency_overrides.pop(server.get_db)
+
+
 def test_ws_state_comes_from_open_master_positions(client):
     db = database.SessionLocal()
     try:

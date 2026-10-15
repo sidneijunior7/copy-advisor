@@ -362,6 +362,12 @@ def fetch_hub_health() -> dict:
     except Exception as e:
         return {"status": "unreachable", "message": str(e)}
 
+@app.get("/health/live", include_in_schema=False)
+async def liveness():
+    """Container healthcheck: the process answers. A database outage must not make Docker restart the API
+    in a loop (migrate.py would fail on every boot); /health reports it instead."""
+    return {"status": "alive"}
+
 @app.get("/health")
 @app.get("/api/health")
 async def health_check(db: Session = Depends(get_db)):
@@ -371,8 +377,9 @@ async def health_check(db: Session = Depends(get_db)):
         user_count = db.query(models.User).count()
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        # Only a dead database makes the API itself unhealthy; hub problems are reported, not fatal
-        return JSONResponse(status_code=503, content={"status": "error", "database": str(e), "hub": hub})
+        # Only a dead database makes the API itself unhealthy; hub problems are reported, not fatal.
+        # The error stays in the log: it can name the database host and user.
+        return JSONResponse(status_code=503, content={"status": "error", "database": "unavailable", "hub": hub})
 
     return {
         "status": "healthy" if hub.get("status") == "healthy" and not hub.get("warming") else "degraded",
