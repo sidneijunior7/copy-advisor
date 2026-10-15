@@ -36,3 +36,14 @@ Thumbs.db
 # --- Documentos internos (auditoria, notas) ---
 AUDITORIA.md
 PLANO_TRANSPORTE.md
+
+# --- Hosted-terminal spike (tools/spike) ---
+tools/spike/ea/
+tools/spike/out/
+tools/spike/private/
+
+# Estimativa comercial (preços e margens)
+ESTIMATIVA_HOSPEDAGEM.md
+
+# Análise regulatória (Res. CVM 21)
+ANALISE_RES21.md

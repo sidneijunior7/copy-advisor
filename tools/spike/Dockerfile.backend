@@ -1,0 +1,14 @@
+# API and hub for the local spike: the same code as Dockerfile and Dockerfile.hub, without the frontend.
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y gcc libffi-dev && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY *.py alembic.ini ./
+COPY alembic/ ./alembic/
+COPY tools/spike/seed.py tools/spike/fake_master.py ./spike/

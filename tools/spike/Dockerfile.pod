@@ -1,0 +1,12 @@
+# Hosted-terminal spike pod: N MT5 terminals in one container (see pod.sh).
+# Reuses the Drawdown Guard worker image for its Wine prefix, warmed MT5 and Xvfb, so nothing heavy
+# is built here. tools/spike/ea/ holds the .ex5 files and the ZMQ DLLs (see tools/spike/README.md).
+ARG BASE=ghcr.io/sidneijunior7/mt5-worker:v1.72
+FROM ${BASE}
+
+HEALTHCHECK NONE
+COPY tools/spike/ea/ /opt/spike/ea/
+COPY tools/spike/pod.sh /opt/spike/pod.sh
+# A Windows checkout gives the script CRLF line endings
+RUN sed -i 's/\r$//' /opt/spike/pod.sh && chmod +x /opt/spike/pod.sh
+ENTRYPOINT ["/opt/spike/pod.sh"]

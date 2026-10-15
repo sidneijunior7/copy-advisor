@@ -1,0 +1,96 @@
+# Hosted-terminal spike, local only (Docker Desktop). Every container, volume and the network are
+# named tdm-spike-*; nothing else on the machine is touched. Run from this folder:
+#   docker compose up -d --build          SLOTS=3 EA=probe by default
+#   SLOTS=5 EA=slave docker compose up -d tdm-spike-pod
+#   docker compose down                   keeps the volumes; add -v to drop them
+name: tdm-spike
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://tdm:tdm@tdm-spike-db:5432/tdm
+  SECRET_KEY: spike-local-only-secret-key-0123456789abcdef
+
+x-backend: &backend
+  build:
+    context: ../..
+    dockerfile: tools/spike/Dockerfile.backend
+  image: tdm-spike-backend
+  volumes:
+    - ./private:/spike/private:ro
+
+services:
+  tdm-spike-db:
+    image: postgres:15-alpine
+    container_name: tdm-spike-db
+    environment:
+      POSTGRES_USER: tdm
+      POSTGRES_PASSWORD: tdm
+      POSTGRES_DB: tdm
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tdm"]
+      interval: 3s
+      retries: 20
+    volumes:
+      - tdm-spike-db:/var/lib/postgresql/data
+
+  tdm-spike-api:
+    <<: *backend
+    container_name: tdm-spike-api
+    environment:
+      <<: *backend-env
+      HUB_EVENTS_URL: tcp://tdm-spike-hub:5558
+      HUB_HEALTH_URL: http://tdm-spike-hub:8001/health
+    command: sh -c "python migrate.py && python spike/seed.py && exec uvicorn server:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      tdm-spike-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      retries: 30
+    ports:
+      - "127.0.0.1:18000:8000"
+    # MT5 refuses a hostname without a dot in the WebRequest allowed list
+    networks:
+      default:
+        aliases: [api.spike.test]
+
+  tdm-spike-hub:
+    <<: *backend
+    container_name: tdm-spike-hub
+    environment:
+      <<: *backend-env
+    command: python hub.py
+    depends_on:
+      tdm-spike-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18001:8001"
+      - "127.0.0.1:15557:5557"
+
+  tdm-spike-pod:
+    build:
+      context: ../..
+      dockerfile: tools/spike/Dockerfile.pod
+    image: tdm-spike-pod
+    container_name: tdm-spike-pod
+    environment:
+      SLOTS: ${SLOTS:-3}
+      EA: ${EA:-probe}
+      STAGGER_SECONDS: ${STAGGER_SECONDS:-45}
+      SYMBOL: ${SYMBOL:-EURUSD}
+      API_URL: http://api.spike.test:8000
+    volumes:
+      - tdm-spike-slots:/root/.wine64/drive_c/slots
+      - ./out:/spike/out
+      - ./private:/spike/private:ro
+    stop_grace_period: 90s
+    depends_on:
+      tdm-spike-api:
+        condition: service_healthy
+    # Keeps the PC usable while the spike runs; the measurement is per terminal, not against this cap
+    cpus: 4
+    mem_limit: ${POD_MEM_LIMIT:-3g}
+
+volumes:
+  tdm-spike-db:
+  tdm-spike-slots:
