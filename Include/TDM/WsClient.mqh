@@ -50,6 +50,7 @@ private:
   bool m_nova;
   int m_conexoes;
   string m_erro;
+  uint m_adiar_ms; // Espera mínima antes da próxima tentativa (pedida pelo EA)
 
   uchar m_rx[]; // Bytes recebidos ainda não consumidos, de m_rx_ini a m_rx_fim
   int m_rx_ini;
@@ -92,6 +93,9 @@ public:
   bool Aberto() { return m_estado == WS_ABERTO; }
   int Conexoes() { return m_conexoes; }
   string UltimoErro() { return m_erro; }
+  // O servidor recusou a conexão (chave inválida, limite...): a próxima
+  // tentativa espera pelo menos ms, venha o fechamento antes ou depois disto
+  void AdiarProxima(uint ms);
   ulong SemDadosMs() {
     return m_estado == WS_ABERTO ? GetTickCount64() - m_ultimo_rx : 0;
   }
@@ -111,6 +115,20 @@ CWsClient::CWsClient() {
   m_timeout_ms = 5000;
   m_idle_ms = 15000;
   m_max_msg = 4194304;
+  m_adiar_ms = 0;
+}
+
+void CWsClient::AdiarProxima(uint ms) {
+  if (m_estado == WS_ABERTO) {
+    m_adiar_ms = ms; // Vale no Fechar() que vem com o fechamento do servidor
+    return;
+  }
+  if (m_proxima_tentativa == ULONG_MAX)
+    return; // Desconectado de vez
+  ulong minimo = GetTickCount64() + ms;
+  if (m_proxima_tentativa < minimo)
+    m_proxima_tentativa = minimo;
+  PrintFormat("[ws] nova tentativa em %.0f s", ms / 1000.0);
 }
 
 void CWsClient::Configurar(string host, uint port, string path, bool tls,
@@ -347,6 +365,17 @@ bool CWsClient::LerFrames() {
         int code = n >= 2 ? ((int)m_rx[ini] << 8) | m_rx[ini + 1] : 1005;
         string motivo =
             n > 2 ? CharArrayToString(m_rx, ini + 2, n - 2, CP_UTF8) : "";
+        // Devolve o fechamento (RFC 6455, 5.5.1) direto no socket: pelo
+        // EnviarFrame, uma falha aqui cancelaria a reconexão
+        // (sem código no fechamento recebido, o eco vai vazio: 1005 não viaja)
+        uchar eco[8] = {0x88, 0x82, 0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < 4; i++)
+          eco[2 + i] = (uchar)(MathRand() & 0xFF);
+        eco[6] = (uchar)((code >> 8) ^ eco[2]);
+        eco[7] = (uchar)((code & 0xFF) ^ eco[3]);
+        if (n < 2)
+          eco[1] = 0x80;
+        EnviarBytes(eco, n < 2 ? 6 : 8);
         Fechar(StringFormat("servidor fechou (%d %s)", code, motivo), true);
         return false;
       }
@@ -532,6 +561,7 @@ void CWsClient::Fechar(const string motivo, bool reconectar) {
   m_msg_len = 0;
   if (!reconectar) {
     m_proxima_tentativa = ULONG_MAX;
+    m_adiar_ms = 0;
     return;
   }
   // Conexão que durou 30 s conta como estável: recomeça o backoff. Sem isso, um
@@ -542,6 +572,11 @@ void CWsClient::Fechar(const string motivo, bool reconectar) {
   uint jitter = (uint)(m_backoff_ms * (MathRand() / 32767.0) * 0.4);
   m_proxima_tentativa =
       GetTickCount64() + m_backoff_ms - m_backoff_ms / 5 + jitter; // ±20%
+  if (m_adiar_ms > 0) {
+    m_proxima_tentativa =
+        MathMax(m_proxima_tentativa, GetTickCount64() + m_adiar_ms);
+    m_adiar_ms = 0;
+  }
   PrintFormat("[ws] %s%s; nova tentativa em %.1f s",
               estava_aberto ? "conexão perdida: " : "falha ao conectar: ",
               motivo, (m_proxima_tentativa - GetTickCount64()) / 1000.0);

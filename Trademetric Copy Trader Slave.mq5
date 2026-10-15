@@ -5,17 +5,26 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "3.00"
+#property version   "4.00"
+#define VERSAO "4.00"
 
 #include <Trade\Trade.mqh>
-#include <Zmq/Zmq.mqh>
+#include "Include/TDM/WsClient.mqh"
 
-// Protocolo v2 (tópico P_<portfolio>), cada mensagem traz o estado completo de uma posição do master:
+// Protocolo v2, cada mensagem traz o estado completo de uma posição do master:
 //   POS|epoch|seq|uid|type|symbol|vol|price_open|sl|tp|magic|reason   (vol 0 = fechada)
-//   SNAP|epoch|seq|uid,type,symbol,vol,price_open,sl,tp,magic;...      (estado completo do tópico)
+//   SNAP|epoch|seq|uid,type,symbol,vol,price_open,sl,tp,magic;...      (estado completo do portfólio)
 //   HB|epoch|seq                                                        (heartbeat, repete o último seq)
 // A mesma função, AplicarEstado(), leva a posição local ao estado do master tanto para POS quanto
 // para SNAP. Um slave que perdeu mensagens converge no próximo SNAP.
+//
+// Transporte: wss://<inp_ws_host>/v1/slave, autenticado pela chave da licença (lic_...). Sem DLL e sem
+// WebRequest para a API: o hub valida a licença, informa o limite de lotes e manda o SNAP na conexão.
+// (O v3, por ZMQ, continua atendido pelo hub até o desligamento; um binário com #import de DLL só roda
+// com "Allow DLL imports", mesmo sem chamá-la, por isso o ZMQ não está aqui.)
+//   EA -> hub  HELLO|slave|v1|<chave>|<login>|<versão>|<epoch>|<seq> · ACK|epoch|seq (a cada HB) · EXEC|...
+//   hub -> EA  WELCOME|epoch|hb_s|portfolio|ativa|max_lots · LIC|ativa|max_lots · ERR|código|motivo
+//              SKIP|epoch|seq: seq consumido por uma posição que esta licença não acompanha
 
 enum ENUM_OPERATOR_LOTS
    {
@@ -30,11 +39,10 @@ enum ENUM_SIZING
       sizing_equity = 2   //Proportional to equity
    };
 
-sinput string inp_host = "mirror.trademetric.com.br"; // Server Address
-sinput int inp_port = 5556; // ZMQ Port (signals)
-sinput int inp_push_port = 5557; // ZMQ Port (execution reports)
-sinput string inp_api_url = "https://mirror.trademetric.com.br"; // API URL
-sinput string inp_connection_key = "YOUR_PORTFOLIO_KEY"; // Portfolio Public Key
+sinput string inp_connection_key = "YOUR_LICENSE_KEY"; // License key (lic_..., dashboard: Clients)
+sinput string inp_ws_host = "signals.trademetric.com.br"; // Server
+sinput int inp_ws_port = 443; // Port
+sinput bool inp_ws_tls = true; // TLS
 sinput int inp_timer = 100; // Timer (ms)
 sinput ulong inp_standard_magic_number = 5457873;
 sinput bool inp_keep_original_magic = true;
@@ -84,12 +92,15 @@ struct Traducao {
 };
 
 // Variáveis Globais
-Context context;
-Socket socket(context, ZMQ_SUB);
-Socket reports(context, ZMQ_PUSH);
-// Trocar os inputs roda o OnInit de novo sem recarregar o EA: sockets e globais sobrevivem.
-// O OnDeinit desfaz o que o OnInit montou; senão a assinatura e os endereços antigos continuam ativos
-string sub_endpoint = "", sub_topic = "", reports_endpoint = "";
+// Trocar os inputs roda o OnInit de novo sem recarregar o EA: o OnInit reinicia o estado da conexão
+CWsClient ws;
+bool   autenticado = false;   // WELCOME recebido nesta conexão
+bool   parado = false;        // Outro terminal assumiu a licença; este não reconecta
+int    portfolio_id = 0;      // Portfólio da licença, do WELCOME
+string adiadas[];             // Fluxo recebido enquanto o terminal não pode operar
+string estado_hub = "";       // Linha de estado no gráfico
+bool   erro_do_hub = false;   // estado_hub veio de um ERR: o erro genérico do fechamento não o substitui
+ulong  proximo_comentario = 0;
 CTrade trade;
 
 Copia    copias[];
@@ -106,9 +117,7 @@ double lots_factor;
 double max_lots_limit = 0; // Limit from License
 ulong  standard_magic_number;
 string s_magic_to_copy[];
-string topic = "";
 bool   licenca_ativa = true;
-ulong  next_license_check = 0;
 
 string last_epoch = "";
 long   last_seq = 0;
@@ -122,14 +131,17 @@ string lock_name;
 string comment_tag;
 
 const int   WARMUP_MS = 5000;           // Posições e histórico carregam depois do OnInit
-const ulong LICENSE_CHECK_MS = 3600000; // Revalida a licença a cada hora
 const ulong PENDING_TIMEOUT_MS = 60000;
+const int   MAX_ADIADAS = 20000;        // Acima disso descarta e espera o próximo SNAP
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit() {
-   if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {Print("Allow DLL imports in the EA settings: the ZMQ library needs them."); return(INIT_FAILED);}
+   if(StringFind(inp_connection_key, "lic_") != 0) {
+      Print("Informe a chave da licença (lic_...), gerada no painel em Clientes. A chave do portfólio era do EA v3.");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
    standard_magic_number = inp_standard_magic_number == 0 ? (ulong)MathRand() : inp_standard_magic_number;
    StringSplit(inp_magic_to_copy, ',', s_magic_to_copy);
 
@@ -147,67 +159,41 @@ int OnInit() {
       Print("Já existe outra instância deste EA com a mesma chave nesta conta. Remova a duplicada.");
       return(INIT_FAILED);
    }
-   comment_tag = TagDaChave(inp_connection_key);
    FolderCreate("TDM_Mirror");
-   map_file = StringFormat("TDM_Mirror\\%I64d_%s.csv", login, key8);
-   CarregarMapa();
    AvisarPosicoesAntigas();
-
-   // --- HTTP AUTHENTICATION ---
-   Print("Validating License...");
-   if(CheckLicense(topic, 5000) != 1) {
-      Print("License Validation Failed! Please check your Key and Whitelist status.");
-      LiberarTrava();
-      return(INIT_FAILED);
-   }
-   next_license_check = GetTickCount64() + LICENSE_CHECK_MS;
-   Print("License Valid! Subscribing to Topic: " + topic);
-
-   // --- ZMQ CONNECTION ---
-   // Numa re-inicialização as globais do fluxo ainda são da assinatura anterior: recomeça pelo snapshot
+   trade.SetExpertMagicNumber(standard_magic_number);
+   trade.SetDeviationInPoints(inp_slippage_points);
+   // Numa re-inicialização as globais do fluxo ainda são da conexão anterior: recomeça pelo snapshot
    last_epoch = "";
    last_seq = 0;
    need_snap = true;
-   socket.setLinger(0);
-   socket.setReceiveHighWaterMark(10000);
-   socket.setTcpKeepAlive(1);
-   socket.setTcpKeepAliveIdle(60);
-   socket.setTcpKeepAliveInterval(15);
-   string addr = StringFormat("tcp://%s:%d", inp_host, inp_port);
-   if(!socket.connect(addr)) {
-      Print("Erro ao conectar ao servidor ZMQ!");
-      LiberarTrava();
-      return(INIT_FAILED);
-   }
-   sub_endpoint = addr;
-   // Assina antes de qualquer outra coisa: mensagens chegam na fila enquanto o EA aquece
-   if(!socket.subscribe(topic + " ")) {
-       Print("Erro ao subscrever topicos!");
-       LiberarTrava();
-       return(INIT_FAILED);
-   }
-   sub_topic = topic + " ";
-   reports.setLinger(0);
-   reports.setSendHighWaterMark(1000);
-   reports_endpoint = StringFormat("tcp://%s:%d", inp_host, inp_push_port);
-   reports.connect(reports_endpoint);
+   licenca_ativa = true;
 
-   trade.SetExpertMagicNumber(standard_magic_number);
-   trade.SetDeviationInPoints(inp_slippage_points);
+   // O mapeamento e a tag dos comentários dependem do portfólio, que vem no WELCOME: trocar a chave da
+   // licença não perde as cópias abertas
+   ArrayResize(copias, 0);
+   ArrayResize(vinculos, 0);
+   ArrayResize(liquidos, 0);
+   ArrayResize(pendentes, 0);
+   ArrayResize(adiadas, 0);
+   portfolio_id = 0;
+   autenticado = false;
+   parado = false;
+   MathSrand((uint)(GetTickCount() ^ (uint)login));
+   ws.Configurar(inp_ws_host, inp_ws_port, "/v1/slave", inp_ws_tls);
+   estado_hub = "conectando...";
    EventSetMillisecondTimer(inp_timer <= 0 ? 100 : inp_timer);
-
-   PrintFormat("ZMQ Connected to %s | conta %s | %d cópias no mapeamento",
-               addr, hedging ? "hedging" : "netting", ArraySize(copias));
+   PrintFormat("Slave %s | %s | conta %I64d (%s)", VERSAO, inp_ws_host, login, hedging ? "hedging" : "netting");
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason) {
    EventKillTimer();
-   if(dirty) SalvarMapa();
+   if(dirty && map_file != "") SalvarMapa();
    LiberarTrava();
-   if(sub_topic != "") {socket.unsubscribe(sub_topic); sub_topic = "";}
-   if(sub_endpoint != "") {socket.disconnect(sub_endpoint); sub_endpoint = "";}
-   if(reports_endpoint != "") {reports.disconnect(reports_endpoint); reports_endpoint = "";}
+   ws.Desconectar();
+   map_file = "";
+   Comment("");
 }
 
 //+------------------------------------------------------------------+
@@ -232,84 +218,148 @@ bool Pronto() {
    return true;
 }
 
-void OnTimer() {
-   if(!Pronto()) return;
-
-   if(GetTickCount64() >= next_license_check) {
-      next_license_check = GetTickCount64() + LICENSE_CHECK_MS;
-      string t;
-      int status = CheckLicense(t, 3000);
-      if(status == 0 && licenca_ativa) Print("Licença revogada: novas posições não serão abertas; as abertas continuam sendo geridas.");
-      if(status == 1 && !licenca_ativa) Print("Licença reativada.");
-      if(status >= 0) licenca_ativa = (status == 1);
-   }
-
-   ResolverPendentes();
-
-   ZmqMsg msg;
-   for(int n = 0; n < 500 && socket.recv(msg, true); n++) {
-       string full_data = msg.getData();
-       // Format: TOPIC MESSAGE. Só o tópico desta licença: a fila pode ter linhas de uma assinatura anterior
-       int space = StringFind(full_data, " ");
-       if(space > 0 && StringSubstr(full_data, 0, space) == topic) Processar(StringSubstr(full_data, space+1));
-   }
-   if(dirty) SalvarMapa();
-}
-
 void OnTrade() {
-   if(Pronto()) AtualizarVinculos();
+   if(map_file != "" && Pronto()) AtualizarVinculos();
 }
 
 //+------------------------------------------------------------------+
-//| HTTP Check License: 1 = válida, 0 = recusada, -1 = erro de rede  |
+//| Conexão com o hub, licença e fluxo                               |
 //+------------------------------------------------------------------+
-int CheckLicense(string &out_topic, int timeout_ms) {
-   string headers = "Content-Type: application/json\r\n";
-   string url = inp_api_url + "/api/license/check";
-
-   // Create JSON Payload manually
-   string body = StringFormat("{\"connection_key\": \"%s\", \"mt5_login\": %I64d}", inp_connection_key, login);
-
-   char data[];
-   StringToCharArray(body, data, 0, StringLen(body));
-   char result[];
-   string result_headers;
-
-   int res = WebRequest("POST", url, headers, timeout_ms, data, result, result_headers);
-
-   if(res == 200) {
-      // Parse JSON (Simple parsing for one field)
-      string json_res = CharArrayToString(result);
-
-      // Extract "topic": "VALUE"
-      int topic_idx = StringFind(json_res, "\"topic\"");
-      if(topic_idx > 0) {
-         int start = StringFind(json_res, ":", topic_idx);
-         int q1 = StringFind(json_res, "\"", start);
-         int q2 = StringFind(json_res, "\"", q1+1);
-         if(q1 > 0 && q2 > 0) {
-             out_topic = StringSubstr(json_res, q1+1, q2-q1-1);
-
-             // Extract "max_lots": VALUE
-             int bw_idx = StringFind(json_res, "\"max_lots\"");
-             if(bw_idx > 0) {
-                int col = StringFind(json_res, ":", bw_idx);
-                int end = StringFind(json_res, "}", col);
-                int comma = StringFind(json_res, ",", col);
-                if(comma > 0 && (end < 0 || comma < end)) end = comma; // Handle if not last
-                if(col > 0 && end > 0) {
-                   max_lots_limit = StringToDouble(StringSubstr(json_res, col+1, end-col-1));
-                   PrintFormat("Max Lots Limit received: %.2f", max_lots_limit);
-                }
-             }
-             return 1;
-         }
-      }
-      return -1;
+void OnTimer() {
+   ws.Processar();
+   if(ws.NovaConexao()) {
+      autenticado = false;
+      ws.Enviar(StringFormat("HELLO|slave|v1|%s|%I64d|%s|%s|%I64d", inp_connection_key, login, VERSAO,
+                             last_epoch == "" ? "0" : last_epoch, last_seq));
+      estado_hub = "autenticando...";
    }
-   Print("HTTP Error: ", res, res == -1 ? StringFormat(" (erro %d; a URL da API está liberada em Ferramentas > Opções > Expert Advisors?)", GetLastError()) : "");
-   if(ArraySize(result) > 0) Print(CharArrayToString(result));
-   return (res == 401 || res == 403) ? 0 : -1;
+   bool pronto = Pronto();
+   if(pronto) {
+      ResolverPendentes();
+      // O que chegou enquanto o terminal não podia operar, na ordem
+      for(int i = 0; i < ArraySize(adiadas); i++) ProcessarWss(adiadas[i]);
+      ArrayResize(adiadas, 0);
+   }
+   string msg;
+   for(int n = 0; n < 2000 && ws.Receber(msg); n++) {
+      if(pronto || !Fluxo(msg)) ProcessarWss(msg);
+      else if(ArraySize(adiadas) < MAX_ADIADAS) Adicionar(adiadas, msg);
+      else {
+         ArrayResize(adiadas, 0);
+         MarcarLacuna();
+      }
+   }
+   if(!ws.Aberto() && !parado && !erro_do_hub && ws.UltimoErro() != "") estado_hub = ws.UltimoErro();
+   if(dirty && map_file != "") SalvarMapa();
+   MostrarEstado();
+}
+
+// POS, SNAP, HB e SKIP dependem do terminal pronto; WELCOME, LIC e ERR, não
+bool Fluxo(string msg) {
+   return StringFind(msg, "POS|") == 0 || StringFind(msg, "SNAP|") == 0 || StringFind(msg, "HB|") == 0 ||
+          StringFind(msg, "SKIP|") == 0;
+}
+
+void ProcessarWss(string msg) {
+   if(StringFind(msg, "WELCOME|") == 0) {Welcome(msg); return;}
+   if(StringFind(msg, "ERR|") == 0) {ErroDoHub(msg); return;}
+   if(!autenticado || map_file == "") return;  // Linhas de uma conexão anterior ao WELCOME
+   if(StringFind(msg, "LIC|") == 0) {
+      string f[];
+      if(StringSplit(msg, '|', f) == 3) AtualizarLicenca(f[1] == "1", StringToDouble(f[2]));
+      return;
+   }
+   if(StringFind(msg, "SKIP|") == 0) {
+      string f[];
+      if(StringSplit(msg, '|', f) != 3) return;
+      long seq = StringToInteger(f[2]);
+      if(f[1] != last_epoch) {last_epoch = f[1]; MarcarLacuna();}
+      else if(seq != last_seq + 1) MarcarLacuna();
+      last_seq = seq;
+      return;
+   }
+   Processar(msg);
+   if(StringFind(msg, "HB|") == 0) ws.Enviar(StringFormat("ACK|%s|%I64d", last_epoch, last_seq));
+}
+
+void Welcome(string msg) {
+   string f[];
+   if(StringSplit(msg, '|', f) != 6) {Print("WELCOME inesperado: ", msg); return;}
+   int pid = (int)StringToInteger(f[3]);
+   if(pid != portfolio_id) {
+      // Primeira conexão (ou licença de outro portfólio): mapeamento e tag passam a ser os deste portfólio
+      if(dirty && map_file != "") SalvarMapa();
+      portfolio_id = pid;
+      comment_tag = TagDaChave("P" + IntegerToString(pid));
+      map_file = StringFormat("TDM_Mirror\\%I64d_P%d.csv", login, pid);
+      CarregarMapa();
+      ArrayResize(pendentes, 0);
+      PrintFormat("Licença do portfólio %d | %d cópias no mapeamento", pid, ArraySize(copias));
+   }
+   autenticado = true;
+   erro_do_hub = false;
+   if(f[1] != last_epoch) MarcarLacuna();  // O hub manda o SNAP logo em seguida
+   AtualizarLicenca(f[4] == "1", StringToDouble(f[5]));
+   estado_hub = StringFormat("conectado, portfólio %d", portfolio_id);
+}
+
+void AtualizarLicenca(bool ativa, double max_lots) {
+   if(max_lots != max_lots_limit) PrintFormat("Limite de lotes da licença: %s", DoubleToString(max_lots, 2));
+   max_lots_limit = max_lots;
+   if(ativa == licenca_ativa) return;
+   licenca_ativa = ativa;
+   Print(ativa ? "Licença ativa: copiando." :
+                 "Licença revogada ou expirada: novas posições não são abertas; as abertas continuam sendo geridas.");
+}
+
+void ErroDoHub(string msg) {
+   string f[];
+   StringSplit(msg, '|', f);
+   string codigo = ArraySize(f) > 1 ? f[1] : "";
+   string motivo = ArraySize(f) > 2 ? f[2] : "";
+   erro_do_hub = true;
+   if(codigo == "replaced") {
+      parado = true;
+      ws.Desconectar();
+      estado_hub = "parado: outro terminal está usando esta licença";
+      Print("Outro terminal conectou com esta licença e este EA parou de copiar. Mantenha uma instância só por licença.");
+      return;
+   }
+   if(codigo == "auth") {
+      estado_hub = "chave de licença recusada";
+      Print("O hub recusou a chave da licença. Confira no painel (Clientes): ela pode ter sido trocada ou revogada.");
+      ws.AdiarProxima(60000);
+   }
+   else if(codigo == "login") {
+      estado_hub = "licença de outra conta";
+      PrintFormat("Esta chave não é desta conta (%I64d): %s", login, motivo);
+      ws.AdiarProxima(60000);
+   }
+   else if(codigo == "revoked") {
+      estado_hub = "chave trocada ou licença removida";
+      Print("A chave desta licença foi trocada ou a licença foi removida: informe a chave nova no EA.");
+      ws.AdiarProxima(60000);
+   }
+   else if(codigo == "rate" || codigo == "busy") {
+      estado_hub = "hub recusou a conexão: " + motivo;
+      ws.AdiarProxima(300000);
+   }
+   else {
+      estado_hub = "hub: " + motivo;
+      PrintFormat("Hub encerrou a conexão (%s): %s", codigo, motivo);
+   }
+}
+
+void MostrarEstado() {
+   if(GetTickCount64() < proximo_comentario) return;
+   proximo_comentario = GetTickCount64() + 1000;
+   int abertas = 0;
+   for(int i = 0; i < ArraySize(copias); i++) if(!copias[i].done) abertas++;
+   string licenca = !autenticado ? "-" :
+                    licenca_ativa ? StringFormat("ativa, limite %s lotes", DoubleToString(max_lots_limit, 2)) :
+                                    "revogada ou expirada (só gere as abertas)";
+   Comment(StringFormat("TDM Mirror Slave %s\nHub: %s\nLicença: %s\nCópias abertas: %d%s",
+                        VERSAO, estado_hub, licenca, abertas, need_snap && autenticado ? "\nSincronizando..." : ""));
 }
 
 //+------------------------------------------------------------------+
@@ -347,7 +397,7 @@ void MarcarLacuna() {
 }
 
 void AplicarSnapshot(string epoch, long seq, string entries) {
-   if(need_snap) PrintFormat("Snapshot aplicado (%s)", topic);
+   if(need_snap) PrintFormat("Snapshot aplicado (portfólio %d)", portfolio_id);
    last_epoch = epoch;
    last_seq = seq;
    need_snap = false;
@@ -716,8 +766,10 @@ bool TemMargem(string sym, ENUM_ORDER_TYPE ot, double vol) {
 }
 
 void Reportar(string uid, string action, long pos, double vol, double price, uint rc) {
-   reports.send(StringFormat("EXEC|%I64d|%s|%s|%s|%I64d|%s|%s|%u|%I64d", login, inp_connection_key, uid, action, pos,
-                             DoubleToString(vol, 8), DoubleToString(price, 8), rc, last_seq), true);
+   // A sessão já identifica conta e licença: a chave não vai na mensagem
+   if(autenticado)
+      ws.Enviar(StringFormat("EXEC|%I64d|-|%s|%s|%I64d|%s|%s|%u|%I64d", login, uid, action, pos,
+                             DoubleToString(vol, 8), DoubleToString(price, 8), rc, last_seq));
 }
 
 // Ordens aceitas cuja posição ainda não apareceu (execução em bolsa devolve PLACED)

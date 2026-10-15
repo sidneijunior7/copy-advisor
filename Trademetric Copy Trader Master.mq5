@@ -5,21 +5,28 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "3.01"
+#property version   "4.00"
+#define VERSAO "4.00"
 
-#include <Zmq/Zmq.mqh>
+#include "Include/TDM/WsClient.mqh"
 
 // Inputs
-input string InpSecretKey   = "YOUR_STRATEGY_SECRET_KEY"; // Master Key provided by Manager
-input string InpServer      = "tcp://mirror.trademetric.com.br:5557"; // Hub address (PUSH)
-input int    InpSyncSeconds = 10;                          // Full position refresh interval (seconds)
+input string InpSecretKey   = "YOUR_MASTER_KEY";             // Master key (dashboard: Master keys)
+input string InpWsHost      = "signals.trademetric.com.br";  // Server
+input int    InpWsPort      = 443;                           // Port
+input bool   InpWsTls       = true;                          // TLS
+input int    InpSyncSeconds = 10;                            // Full position refresh interval (seconds)
 
 // Protocol v2: every message carries the full state of one position (volume 0 = closed).
-//   KEY|V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
-//   KEY|V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
-//   KEY|V2HELLO|login|trade_mode|server|company   (trade_mode: demo, contest, real)
+//   V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
+//   V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
+//   V2HELLO|login|trade_mode|server|company   (trade_mode: demo, contest, real)
 // pos_id is POSITION_IDENTIFIER, never the ticket: on netting accounts a reversal changes the
 // ticket but keeps the identifier.
+// Transport: wss://<InpWsHost>/v1/master. The first message authenticates
+//   HELLO|master|v1|<key>|<login>|<version>   ->   WELCOME|epoch|hb_s   (or ERR|code|reason)
+// and the lines above follow. No DLL: a binary that #imports one only runs with "Allow DLL imports",
+// even if it never calls it, so the ZMQ transport stays with the v3 EA until the hub drops it.
 
 struct PosState {
    long   id;
@@ -33,12 +40,14 @@ struct PosState {
 };
 
 // Globals
-Context context;
-Socket socket(context, ZMQ_PUSH);
-// Changing the inputs re-runs OnInit without reloading the EA: the socket and every global survive.
-// A second connect() would leave PUSH round-robining between the old and the new address, so
-// OnDeinit disconnects what OnInit connected.
-string   hub_endpoint = "";
+// Changing the inputs re-runs OnInit without reloading the EA: OnInit resets the connection state
+CWsClient ws;
+bool     autenticado = false;  // WELCOME received on this connection
+bool     parado = false;       // Another terminal took over this key and account
+string   fila[];               // Live messages produced while disconnected...
+ulong    fila_em[];            // ...and when
+string   estado_hub = "";
+ulong    proximo_comentario = 0;
 
 PosState sent[];           // Last state sent to the hub
 bool     seeded = false;   // sent[] initialised from the terminal
@@ -49,33 +58,27 @@ ulong    next_hello = 0;
 
 const int WARMUP_MS = 10000; // Positions can read as empty right after start or a broker reconnect
 const int HELLO_MS  = 300000; // Account details are re-sent so a hub that restarted learns them again
+// A live event older than this when the connection comes back is not sent as live: the V2SYNC that
+// follows reports the position, and slaves apply their late-entry price guard to it
+const ulong FILA_MAX_MS = 10000;
+const int   FILA_MAX = 1000;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   if(!MQLInfoInteger(MQL_DLLS_ALLOWED)) {
-      Print("Allow DLL imports in the EA settings: the ZMQ library needs them.");
-      return(INIT_FAILED);
-   }
-   socket.setLinger(0);                // Never hang the terminal on removal
-   socket.setSendHighWaterMark(1000);  // Queue while the hub is down, then drop instead of blocking
-   socket.setTcpKeepAlive(1);
-   socket.setTcpKeepAliveIdle(60);
-   socket.setTcpKeepAliveInterval(15);
-
-   Print("Connecting to hub ", InpServer, "...");
-   if(!socket.connect(InpServer)) {
-      Print("Failed to connect to ZMQ Server!");
-      return(INIT_FAILED);
-   }
-   hub_endpoint = InpServer;
-   Print("ZMQ Connected (PUSH -> ", InpServer, ")");
-
    ArrayResize(sent, 0);
+   ArrayResize(fila, 0);
+   ArrayResize(fila_em, 0);
    seeded = false;
    was_connected = false;
+   autenticado = false;
+   parado = false;
+   MathSrand((uint)(GetTickCount() ^ (uint)AccountInfoInteger(ACCOUNT_LOGIN)));
+   ws.Configurar(InpWsHost, InpWsPort, "/v1/master", InpWsTls);
+   estado_hub = "connecting...";
+   Print("Master ", VERSAO, " | ", InpWsHost);
    EventSetMillisecondTimer(250);
    return(INIT_SUCCEEDED);
   }
@@ -85,10 +88,8 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   if(hub_endpoint != "") {
-      socket.disconnect(hub_endpoint);
-      hub_endpoint = "";
-   }
+   ws.Desconectar();
+   Comment("");
   }
 //+------------------------------------------------------------------+
 void OnTrade()
@@ -98,12 +99,14 @@ void OnTrade()
 //+------------------------------------------------------------------+
 void OnTimer()
   {
+   ProcessarHub();
    DiffEEnviar();
    if(seeded && Pronto() && GetTickCount64() >= next_sync) {
       EnviarSync();
       next_sync = GetTickCount64() + (ulong)MathMax(InpSyncSeconds, 1) * 1000;
    }
    if(seeded && Pronto() && GetTickCount64() >= next_hello) EnviarHello();
+   MostrarEstado();
   }
 //+------------------------------------------------------------------+
 //| Terminal connected, logged in and past the warm-up window        |
@@ -229,12 +232,28 @@ string Campos(const PosState &p, string sep)
                        p.magic);
   }
 //+------------------------------------------------------------------+
+//| One line to the hub. Live events wait for a reconnection; the    |
+//| others are periodic and the next one carries the same state.     |
+//+------------------------------------------------------------------+
+bool Transmitir(string body, bool ao_vivo)
+  {
+   if(autenticado && ws.Enviar(body)) return true;
+   if(ao_vivo && ArraySize(fila) < FILA_MAX) {
+      int n = ArraySize(fila);
+      ArrayResize(fila, n + 1);
+      ArrayResize(fila_em, n + 1);
+      fila[n] = body;
+      fila_em[n] = GetTickCount64();
+   }
+   return false;
+  }
+//+------------------------------------------------------------------+
 void Enviar(string reason, const PosState &p)
   {
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   string msg = StringFormat("%s|V2|%I64d|%s|%s", InpSecretKey, login, reason, Campos(p, "|"));
-   if(socket.send(msg, true)) Print("ZMQ Enviado: ", reason, " ", p.symbol, " #", p.id);
-   else                       Print("Erro ao enviar ZMQ (fila cheia?): ", reason, " #", p.id);
+   if(Transmitir(StringFormat("V2|%I64d|%s|%s", login, reason, Campos(p, "|")), true))
+      Print("Sent: ", reason, " ", p.symbol, " #", p.id);
+   else Print("Hub disconnected: ", reason, " #", p.id, " goes out on reconnection");
   }
 //+------------------------------------------------------------------+
 void EnviarSync()
@@ -245,8 +264,8 @@ void EnviarSync()
       body += Campos(sent[i], ",");
    }
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   // Dropped when the queue is full: the next one carries the same information
-   socket.send(StringFormat("%s|V2SYNC|%I64d|%s", InpSecretKey, login, body), true);
+   // Dropped when it can't go out: the next one carries the same information
+   Transmitir(StringFormat("V2SYNC|%I64d|%s", login, body), false);
   }
 //+------------------------------------------------------------------+
 string ModoConta()
@@ -270,10 +289,79 @@ string SemPipe(string s)
 void EnviarHello()
   {
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
-   string msg = StringFormat("%s|V2HELLO|%I64d|%s|%s|%s", InpSecretKey, login, ModoConta(),
-                             SemPipe(AccountInfoString(ACCOUNT_SERVER)), SemPipe(AccountInfoString(ACCOUNT_COMPANY)));
-   // Dropped when the queue is full: the next one carries the same information
-   if(!socket.send(msg, true)) Print("Erro ao enviar ZMQ (fila cheia?): HELLO");
+   string body = StringFormat("V2HELLO|%I64d|%s|%s|%s", login, ModoConta(),
+                              SemPipe(AccountInfoString(ACCOUNT_SERVER)), SemPipe(AccountInfoString(ACCOUNT_COMPANY)));
+   Transmitir(body, false);  // Dropped when it can't go out: the next one carries the same information
    next_hello = GetTickCount64() + HELLO_MS;
+  }
+//+------------------------------------------------------------------+
+//| Connection, authentication, hub messages                         |
+//+------------------------------------------------------------------+
+void ProcessarHub()
+  {
+   ws.Processar();
+   if(ws.NovaConexao()) {
+      autenticado = false;
+      ws.Enviar(StringFormat("HELLO|master|v1|%s|%I64d|%s", InpSecretKey, AccountInfoInteger(ACCOUNT_LOGIN), VERSAO));
+      estado_hub = "authenticating...";
+   }
+   string msg;
+   while(ws.Receber(msg)) {
+      if(StringFind(msg, "WELCOME|") == 0) Welcome();
+      else if(StringFind(msg, "ERR|") == 0) ErroDoHub(msg);
+      // HB only keeps the connection alive
+   }
+   if(!ws.Aberto() && !parado && ws.UltimoErro() != "" && StringFind(estado_hub, "refused") < 0)
+      estado_hub = ws.UltimoErro();
+  }
+//+------------------------------------------------------------------+
+void Welcome()
+  {
+   autenticado = true;
+   estado_hub = "connected";
+   Print("Hub: authenticated");
+   // OnTimer sends V2HELLO and V2SYNC right after, once the terminal is trusted (never an empty
+   // V2SYNC from a terminal still loading: it would close every position on the hub)
+   next_sync = 0;
+   next_hello = 0;
+   ulong now = GetTickCount64();
+   int enviadas = 0, velhas = 0;
+   for(int i = 0; i < ArraySize(fila); i++) {
+      if(now - fila_em[i] > FILA_MAX_MS) {velhas++; continue;}
+      if(ws.Enviar(fila[i])) enviadas++;
+   }
+   if(enviadas + velhas > 0) PrintFormat("Reconnected: %d live events sent, %d too old (left to the sync)", enviadas, velhas);
+   ArrayResize(fila, 0);
+   ArrayResize(fila_em, 0);
+  }
+//+------------------------------------------------------------------+
+void ErroDoHub(string msg)
+  {
+   string f[];
+   StringSplit(msg, '|', f);
+   string codigo = ArraySize(f) > 1 ? f[1] : "";
+   string motivo = ArraySize(f) > 2 ? f[2] : "";
+   if(codigo == "replaced") {
+      parado = true;
+      ws.Desconectar();
+      estado_hub = "stopped: another terminal uses this key on this account";
+      Print("Another terminal connected with this key and account: this EA stopped sending. Keep one Master per account.");
+      return;
+   }
+   estado_hub = "refused by the hub: " + motivo;
+   if(codigo == "auth" || codigo == "revoked") {
+      Print("The hub refused the master key (", motivo, "). Create or copy a key in the dashboard (Master keys).");
+      ws.AdiarProxima(60000);
+   }
+   else if(codigo == "rate" || codigo == "busy") ws.AdiarProxima(300000);
+   else Print("Hub closed the connection (", codigo, "): ", motivo);
+  }
+//+------------------------------------------------------------------+
+void MostrarEstado()
+  {
+   if(GetTickCount64() < proximo_comentario) return;
+   proximo_comentario = GetTickCount64() + 1000;
+   Comment(StringFormat("TDM Mirror Master %s\nHub: %s\nOpen positions: %d%s", VERSAO, estado_hub, ArraySize(sent),
+                        ArraySize(fila) > 0 ? StringFormat("\nWaiting to send: %d", ArraySize(fila)) : ""));
   }
 //+------------------------------------------------------------------+
