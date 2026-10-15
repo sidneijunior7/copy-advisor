@@ -9,12 +9,23 @@ set -uo pipefail
 
 SLOTS="${SLOTS:-3}"
 EA="${EA:-probe}"                         # probe: no account needed; slave: the copy EA, one account per slot
+# One role@account per slot (overrides SLOTS and EA), account = index in accounts.json:
+#   slave   Slave v4 on the spike portfolio (key lic_spike_<login>)
+#   echo    Slave v4 on the echo portfolio (key lic_echo_<login>), fed by a Master
+#   master  Master v4 (key spike-master-key): what the account trades goes to the hub
+#   probe   the spike probe
+# Chain test, all over WSS: PLAN=slave@0,master@0,echo@1 SLAVE_KEEP_MAGIC=false. The first Slave's copies
+# get its own magic, which is the echo strategy's, so the Master publishes them to the echo portfolio.
+PLAN="${PLAN:-}"
+SLAVE_KEEP_MAGIC="${SLAVE_KEEP_MAGIC:-true}"
 STAGGER_SECONDS="${STAGGER_SECONDS:-45}"  # A starting terminal pegs a CPU: never start them all at once
 METRICS_SECONDS="${METRICS_SECONDS:-30}"
 SYMBOL="${SYMBOL:-EURUSD}"
 API_URL="${API_URL:-http://api.spike.test:8000}"  # The WebRequest list refuses hostnames without a dot
 HUB_HOST="${HUB_HOST:-tdm-spike-hub}"
 PORTFOLIO_KEY="${PORTFOLIO_KEY:-spike-portfolio-key}"
+WS_HOST="${WS_HOST:-hub.spike.test}"      # Slave v4: the hub, listed without a port in the WebRequest list
+WS_PORT="${WS_PORT:-8002}"
 ACCOUNTS=/spike/private/accounts.json     # [{"login": 123, "password": "...", "server": "MetaQuotes-Demo"}, ...]
 
 BASE=/root/.wine64/drive_c/MT5
@@ -29,15 +40,19 @@ log() { echo "$(date -u +%FT%TZ) [pod] $*" | tee -a "$OUT/pod.log"; }
 utf16() { printf '\xff\xfe'; sed 's/$/\r/' | iconv -f UTF-8 -t UTF-16LE; }
 utf8() { iconv -f UTF-16LE -t UTF-8 "$1" 2>/dev/null | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r'; }
 
-case "$EA" in
-    probe) EA_NAME="Trademetric Spike Probe" ;;
-    slave) EA_NAME="Trademetric Copy Trader Slave" ;;
-    *) log "EA must be probe or slave, not $EA"; exit 1 ;;
-esac
-if [ "$EA" = "slave" ] && [ "$(jq length "$ACCOUNTS" 2>/dev/null || echo 0)" -lt "$SLOTS" ]; then
-    log "EA=slave needs $SLOTS accounts in $ACCOUNTS"
-    exit 1
+if [ -z "$PLAN" ]; then
+    case "$EA" in probe|slave) ;; *) log "EA must be probe or slave, not $EA"; exit 1 ;; esac
+    PLAN=$(for i in $(seq 0 $((SLOTS - 1))); do printf '%s@%s,' "$EA" "$i"; done)
 fi
+IFS=',' read -r -a ROLES <<< "${PLAN%,}"
+SLOTS=${#ROLES[@]}
+for r in "${ROLES[@]}"; do
+    case "${r%@*}" in probe|slave|echo|master) ;; *) log "unknown role in PLAN: $r"; exit 1 ;; esac
+    if [ "${r%@*}" != probe ] && [ "$(jq length "$ACCOUNTS" 2>/dev/null || echo 0)" -le "${r#*@}" ]; then
+        log "$r needs account #${r#*@} in $ACCOUNTS"
+        exit 1
+    fi
+done
 
 slot_name() { printf '%02d' "$1"; }
 
@@ -77,25 +92,43 @@ set_webrequest_list() {
 }
 
 write_config() {
-    local n="$1" i="$2" d="$SLOTS_DIR/$1" common=""
+    local n="$1" role="${2%@*}" i="${2#*@}" d="$SLOTS_DIR/$1" common="" login ea dll
     # Without a logged-in account the chart gets no data and MT5 never runs the EA's OnInit
     if [ "$(jq length "$ACCOUNTS" 2>/dev/null || echo 0)" -gt "$i" ]; then
         common=$(jq -r --argjson i "$i" '.[$i] | "Login=\(.login)\nPassword=\(.password)\nServer=\(.server)"' "$ACCOUNTS")
+        login=$(jq -r --argjson i "$i" '.[$i].login' "$ACCOUNTS")
     fi
-    if [ "$EA" = "slave" ]; then
-        utf16 > "$d/MQL5/Presets/spike.set" <<EOF
-inp_host=$HUB_HOST
-inp_port=5556
-inp_push_port=5557
-inp_api_url=$API_URL
-inp_connection_key=$PORTFOLIO_KEY
+    # Only the probe uses ZMQ (DLL); the v4 EAs have none and must run without the permission
+    dll="${DLL:-0}"
+    case "$role" in
+        slave|echo)
+            ea="Trademetric Copy Trader Slave"
+            utf16 > "$d/MQL5/Presets/spike.set" <<EOF
+inp_connection_key=lic_$([ "$role" = echo ] && echo echo || echo spike)_$login
+inp_ws_host=$WS_HOST
+inp_ws_port=$WS_PORT
+inp_ws_tls=false
+inp_keep_original_magic=$SLAVE_KEEP_MAGIC
 EOF
-    else
-        utf16 > "$d/MQL5/Presets/spike.set" <<EOF
+            ;;
+        master)
+            ea="Trademetric Copy Trader Master"
+            utf16 > "$d/MQL5/Presets/spike.set" <<EOF
+InpSecretKey=spike-master-key
+InpWsHost=$WS_HOST
+InpWsPort=$WS_PORT
+InpWsTls=false
+EOF
+            ;;
+        probe)
+            ea="Trademetric Spike Probe"
+            dll="${DLL:-1}"
+            utf16 > "$d/MQL5/Presets/spike.set" <<EOF
 InpUrl=$API_URL/health
 InpHub=tcp://$HUB_HOST:5556
 EOF
-    fi
+            ;;
+    esac
     # WebRequest=1 ticks "Allow WebRequest for listed URL", but the list itself is not read from here:
     # it lives encrypted in config/common.ini (WebRequestUrl=), filled through Tools > Options
     cat > "$d/start.ini" <<EOF
@@ -107,13 +140,13 @@ MaxBars=1000
 PreloadCharts=0
 [Experts]
 AllowLiveTrading=1
-AllowDllImport=1
+AllowDllImport=$dll
 Enabled=1
 Account=0
 Profile=0
 WebRequest=1
 [StartUp]
-Expert=TDM\\$EA_NAME
+Expert=TDM\\$ea
 ExpertParameters=spike.set
 Symbol=$SYMBOL
 Period=M15
@@ -192,7 +225,7 @@ stop() {
 }
 trap stop TERM INT
 
-log "pod: $SLOTS slots, EA=$EA, stagger ${STAGGER_SECONDS}s, symbol $SYMBOL"
+log "pod: $SLOTS slots (${ROLES[*]}), stagger ${STAGGER_SECONDS}s, symbol $SYMBOL"
 rm -f /tmp/.X99-lock
 Xvfb :99 -screen 0 1280x1024x24 -ac +extension GLX >/dev/null 2>&1 &
 sleep 2
@@ -206,9 +239,9 @@ metrics &
 for i in $(seq 1 "$SLOTS"); do
     n=$(slot_name "$i")
     make_slot "$n"
-    write_config "$n" "$((i - 1))"
+    write_config "$n" "${ROLES[$((i - 1))]}"
     wine "C:\\slots\\$n\\terminal64.exe" /portable "/config:C:\\slots\\$n\\start.ini" >/dev/null 2>&1 &
-    log "slot $n started"
+    log "slot $n started: ${ROLES[$((i - 1))]}"
     [ "$i" -lt "$SLOTS" ] && sleep "$STAGGER_SECONDS"
 done
 log "all $SLOTS slots started"

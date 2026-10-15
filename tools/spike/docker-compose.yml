@@ -3,6 +3,9 @@
 #   docker compose up -d --build          SLOTS=3 EA=probe by default
 #   SLOTS=5 EA=slave docker compose up -d tdm-spike-pod
 #   docker compose down                   keeps the volumes; add -v to drop them
+# The v4 EAs (WebSocket, no DLL) reach the hub as hub.spike.test, listed in the terminal's WebRequest list:
+#   SLOTS=1 EA=slave docker compose up -d
+#   PLAN=slave@0,master@0,echo@1 SLAVE_KEEP_MAGIC=false docker compose up -d     (Master chain, see pod.sh)
 name: tdm-spike
 
 x-backend-env: &backend-env
@@ -60,6 +63,10 @@ services:
     environment:
       <<: *backend-env
     command: python hub.py
+    # Socket connections need the host in the WebRequest list too (README)
+    networks:
+      default:
+        aliases: [hub.spike.test]
     depends_on:
       tdm-spike-api:
         condition: service_started
@@ -79,6 +86,11 @@ services:
       STAGGER_SECONDS: ${STAGGER_SECONDS:-45}
       SYMBOL: ${SYMBOL:-EURUSD}
       API_URL: http://api.spike.test:8000
+      PLAN: ${PLAN:-}
+      SLAVE_KEEP_MAGIC: ${SLAVE_KEEP_MAGIC:-true}
+      WS_HOST: ${WS_HOST:-hub.spike.test}
+      WS_PORT: ${WS_PORT:-8002}
+      DLL: ${DLL:-}
     volumes:
       - tdm-spike-slots:/root/.wine64/drive_c/slots
       - ./out:/spike/out
