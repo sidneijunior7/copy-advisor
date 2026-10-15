@@ -36,9 +36,9 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 EXPOSE 8000
 
-# Trust X-Forwarded-For from EasyPanel's proxy, so the login/license rate limit sees the real client IP.
-# Port 8000 is only reachable through that proxy.
-ENV FORWARDED_ALLOW_IPS="*"
+# Trust X-Forwarded-For only from EasyPanel's proxy (private overlay addresses), so the login/license
+# rate limit sees the real client IP. With "*" uvicorn takes the leftmost entry, which the client writes.
+ENV FORWARDED_ALLOW_IPS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1"
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"
