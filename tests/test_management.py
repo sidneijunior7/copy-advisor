@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
 import database  # noqa: E402
+import hub  # noqa: E402
+import keys  # noqa: E402
 import models  # noqa: E402
 import server  # noqa: E402
 
@@ -89,7 +91,74 @@ def check(client, key, login):
     return client.post("/api/license/check", json={"connection_key": key, "mt5_login": login})
 
 
+def load_directory():
+    db = database.SessionLocal()
+    try:
+        return hub.load_directory(db)
+    finally:
+        db.close()
+
+
 # --- Licenses ---
+
+def test_license_key_is_shown_once_and_a_new_one_replaces_it(client):
+    manager_id, headers = make_manager()
+    portfolio_id, _, _ = make_portfolio(manager_id)
+    created = create_license(client, headers, portfolio_id, 2001).json()
+    key = created["license_key"]
+    assert key.startswith("lic_") and created["key_prefix"] == key[:12] and created["has_key"] is True
+
+    listed = client.get("/licenses", headers=headers).json()
+    assert [(l["id"], l["key_prefix"]) for l in listed] == [(created["id"], key[:12])]
+    assert all("license_key" not in l and "key_hash" not in l for l in listed)
+    lic = load_directory().licenses_by_hash[keys.key_hash(key)]
+    assert (lic.id, lic.portfolio_id, lic.login, lic.max_lots) == (created["id"], portfolio_id, 2001, 1.0)
+
+    renewed = client.post(f"/licenses/{created['id']}/key", headers=headers).json()
+    assert renewed["license_key"] != key
+    directory = load_directory()
+    assert keys.key_hash(key) not in directory.licenses_by_hash
+    assert directory.licenses_by_hash[keys.key_hash(renewed["license_key"])].id == created["id"]
+
+    _, intruder = make_manager()
+    assert client.post(f"/licenses/{created['id']}/key", headers=intruder).status_code == 404
+
+
+def test_revocation_time_and_expiry_are_recorded(client):
+    manager_id, headers = make_manager()
+    portfolio_id, key, _ = make_portfolio(manager_id)
+    license_id = create_license(client, headers, portfolio_id, 2002).json()["id"]
+
+    revoked = client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": False}).json()
+    assert revoked["revoked_at"] is not None
+    assert client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": False}).json()["revoked_at"] == revoked["revoked_at"]
+    assert client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": True}).json()["revoked_at"] is None
+
+    expired = client.patch(f"/licenses/{license_id}", headers=headers, json={"expires_at": "2020-01-01T03:00:00-03:00"}).json()
+    assert expired["expires_at"].startswith("2020-01-01T06:00:00")  # Stored in UTC
+    assert check(client, key, 2002).status_code == 403              # The legacy check honours the expiry too
+    assert client.patch(f"/licenses/{license_id}", headers=headers, json={"max_lots": 2}).json()["expires_at"] is not None
+    assert client.patch(f"/licenses/{license_id}", headers=headers, json={"expires_at": None}).json()["expires_at"] is None
+    assert check(client, key, 2002).status_code == 200
+
+
+def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
+    manager_id, headers = make_manager()
+    portfolio_id, _, _ = make_portfolio(manager_id)
+    other_id, _ = make_manager()
+    other_portfolio, _, _ = make_portfolio(other_id)
+    assert client.get("/me/connections", headers=headers).json() == {"available": False, "masters": [], "slaves": []}
+
+    monkeypatch.setattr(server, "fetch_hub_sessions", lambda: [
+        {"kind": "slave", "portfolio_id": portfolio_id, "license_id": 1, "login": 1},
+        {"kind": "slave", "portfolio_id": other_portfolio, "license_id": 2, "login": 2},
+        {"kind": "master", "manager_id": manager_id, "key_id": 9, "login": 900},
+        {"kind": "master", "manager_id": other_id, "key_id": 8, "login": 901},
+    ])
+    body = client.get("/me/connections", headers=headers).json()
+    assert body["available"] is True
+    assert [s["login"] for s in body["slaves"]] == [1] and body["slaves"][0]["portfolio_name"] == "P"
+    assert [m["login"] for m in body["masters"]] == [900]
 
 def test_manager_edits_the_lot_limit_and_the_ea_receives_it(client):
     manager_id, headers = make_manager()

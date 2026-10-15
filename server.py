@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 # Internal Imports
 import database
+import keys
 import models
 import auth
 import observability
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 # Schema is managed by Alembic: run `python migrate.py` before starting (the Dockerfile CMD does).
 HUB_EVENTS_URL = os.getenv("HUB_EVENTS_URL", "tcp://127.0.0.1:5558")
 HUB_HEALTH_URL = os.getenv("HUB_HEALTH_URL", "http://127.0.0.1:8001/health")
+HUB_BASE_URL = HUB_HEALTH_URL.rsplit("/health", 1)[0]  # Same internal port: /sessions and /refresh
+MAX_MASTER_KEYS = 20  # Active keys per manager
 
 # Browser origins allowed to call the API from another host (e.g. the Vite dev server).
 # Empty in production: the dashboard is served by this same app.
@@ -281,11 +284,71 @@ class LicenseCreate(BaseModel):
     client_mt5_login: int
     max_lots: float = Field(gt=0)
     portfolio_id: int
+    expires_at: Optional[datetime.datetime] = None
 
-# The Slave EA rechecks its license hourly: changes reach it within an hour
+# A WSS Slave gets changes within seconds (the API asks the hub to refresh);
+# a ZMQ Slave rechecks its license hourly
 class LicenseUpdate(BaseModel):
     max_lots: Optional[float] = Field(default=None, gt=0)
     is_active: Optional[bool] = None
+    expires_at: Optional[datetime.datetime] = None  # Sent as null: no expiry. Left out: unchanged
+
+class MasterKeyCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+
+
+def utc_naive(dt: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    """The database keeps naive UTC."""
+    if dt is not None and dt.tzinfo is not None:
+        dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def license_out(lic: models.License, key: Optional[str] = None) -> dict:
+    """Never the key hash. The plain key only right after it is created, never again."""
+    out = {
+        "id": lic.id, "portfolio_id": lic.portfolio_id, "strategy_id": lic.strategy_id,
+        "client_mt5_login": lic.client_mt5_login, "max_lots": lic.max_lots, "is_active": lic.is_active,
+        "created_at": lic.created_at, "expires_at": lic.expires_at, "revoked_at": lic.revoked_at,
+        "key_prefix": lic.key_prefix, "has_key": lic.key_hash is not None,
+    }
+    if key is not None:
+        out["license_key"] = key
+    return out
+
+
+def master_key_out(mk: models.MasterKey, key: Optional[str] = None) -> dict:
+    out = {"id": mk.id, "label": mk.label, "key_prefix": mk.key_prefix, "created_at": mk.created_at,
+           "last_used_at": mk.last_used_at, "revoked_at": mk.revoked_at}
+    if key is not None:
+        out["key"] = key
+    return out
+
+
+def set_license_key(lic: models.License) -> str:
+    key = keys.new_key(keys.LICENSE)
+    lic.key_hash, lic.key_prefix = keys.key_hash(key), keys.key_prefix(key)
+    return key
+
+
+def notify_hub():
+    """Keys and licenses changed: the hub reloads its directory now instead of within 30 s, so a revoked
+    key or license is cut off at once. Best effort; never delays the response."""
+    def call():
+        try:
+            urllib.request.urlopen(f"{HUB_BASE_URL}/refresh", timeout=1).close()
+        except Exception as e:
+            logger.warning(f"Could not ask the hub to refresh: {e}")
+    threading.Thread(target=call, name="hub-refresh", daemon=True).start()
+
+
+def fetch_hub_sessions() -> Optional[list]:
+    try:
+        with urllib.request.urlopen(f"{HUB_BASE_URL}/sessions", timeout=1) as resp:
+            return json.loads(resp.read())["sessions"]
+    except Exception as e:
+        logger.warning(f"Could not read hub sessions: {e}")
+        return None
 
 class LicenseCheck(BaseModel):
     connection_key: str
@@ -514,19 +577,63 @@ async def get_manager_details(current_user: models.User = Depends(get_current_us
     return {
         "id": current_user.id,
         "email": current_user.email,
-        "master_key": current_user.master_key,
         "status": current_user.status
     }
 
-@app.post("/me/manager/rotate-key")
-async def rotate_master_key(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Revoke a leaked master_key. Every Master EA of this manager must be reconfigured with the new one;
-    the hub stops accepting the old key within HUB_DIRECTORY_TTL_SECONDS."""
+# --- Master keys (SEC-08): one per Master/VPS, shown once, revoked one by one ---
+
+@app.get("/me/master-keys")
+async def list_master_keys(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    current_user.master_key = models.generate_key()
+    rows = db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id).order_by(models.MasterKey.id).all()
+    return [master_key_out(mk) for mk in rows]
+
+@app.post("/me/master-keys")
+async def create_master_key(data: MasterKeyCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The key is in this response only: the database keeps its hash."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    active = db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id,
+                                               models.MasterKey.revoked_at.is_(None)).count()
+    if active >= MAX_MASTER_KEYS:
+        raise HTTPException(status_code=409, detail=f"Limite de {MAX_MASTER_KEYS} chaves ativas: revogue uma antes")
+    key = keys.new_key(keys.MASTER)
+    mk = models.MasterKey(user_id=current_user.id, label=data.label.strip(), key_hash=keys.key_hash(key),
+                          key_prefix=keys.key_prefix(key))
+    db.add(mk)
     db.commit()
-    logger.info(f"master_key rotated for manager {current_user.id}")
-    return {"master_key": current_user.master_key}
+    db.refresh(mk)
+    logger.info(f"Master key {mk.id} ({mk.key_prefix}) created by manager {current_user.id}")
+    notify_hub()
+    return master_key_out(mk, key)
+
+@app.delete("/me/master-keys/{key_id}")
+async def revoke_master_key(key_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The hub drops Masters connected with it at once (WSS) and ignores it on ZMQ."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    mk = db.get(models.MasterKey, key_id)
+    if mk is None or mk.user_id != current_user.id: raise HTTPException(status_code=404)
+    if mk.revoked_at is None:
+        mk.revoked_at = datetime.datetime.utcnow()
+        db.commit()
+        logger.info(f"Master key {mk.id} ({mk.key_prefix}) revoked by manager {current_user.id}")
+        notify_hub()
+    db.refresh(mk)
+    return master_key_out(mk)
+
+@app.get("/me/connections")
+async def list_connections(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Masters and Slaves connected to the hub over WSS right now (ZMQ clients can't be seen)."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    sessions = await asyncio.to_thread(fetch_hub_sessions)
+    if sessions is None:
+        return {"available": False, "masters": [], "slaves": []}
+    portfolios = {p.id: p.name for p in current_user.portfolios}
+    labels = {mk.id: mk.label for mk in db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id)}
+    masters = [{**s, "key_label": labels.get(s["key_id"])} for s in sessions
+               if s["kind"] == "master" and s["manager_id"] == current_user.id]
+    slaves = [{**s, "portfolio_name": portfolios[s["portfolio_id"]]} for s in sessions
+              if s["kind"] == "slave" and s["portfolio_id"] in portfolios]
+    return {"available": True, "masters": masters, "slaves": slaves}
 
 @app.get("/licenses")
 async def list_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -536,7 +643,7 @@ async def list_licenses(current_user: models.User = Depends(get_current_user), d
         (models.License.strategy_id.in_([s.id for s in current_user.strategies])) | 
         (models.License.portfolio_id.in_([p.id for p in current_user.portfolios]))
     ).all()
-    return licenses
+    return [license_out(lic) for lic in licenses]
 
 @app.post("/portfolios/{portfolio_id}/add_strategy/{strategy_id}")
 async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -587,31 +694,56 @@ async def create_license(license_data: LicenseCreate, current_user: models.User 
     new_license = models.License(
         portfolio_id=license_data.portfolio_id,
         client_mt5_login=license_data.client_mt5_login,
-        max_lots=license_data.max_lots
+        max_lots=license_data.max_lots,
+        expires_at=utc_naive(license_data.expires_at),
     )
+    key = set_license_key(new_license)
     db.add(new_license)
     db.commit()
     db.refresh(new_license)
-    return new_license
+    notify_hub()
+    return license_out(new_license, key)
 
-@app.patch("/licenses/{license_id}")
-async def update_license(license_id: int, changes: LicenseUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Edit the lot limit or revoke/reactivate. A revoked Slave stops opening positions but keeps managing open ones."""
-    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+def owned_license(license_id: int, user: models.User, db: Session) -> models.License:
+    if user.role != "MANAGER": raise HTTPException(status_code=403)
     lic = db.get(models.License, license_id)
     owner = None
     if lic is not None:
         owner = lic.portfolio.user_id if lic.portfolio else (lic.strategy.user_id if lic.strategy else None)
-    if owner != current_user.id: raise HTTPException(status_code=404)
+    if owner != user.id: raise HTTPException(status_code=404)
+    return lic
 
-    if changes.max_lots is not None:
-        lic.max_lots = changes.max_lots
-    if changes.is_active is not None:
-        lic.is_active = changes.is_active
+@app.post("/licenses/{license_id}/key")
+async def regenerate_license_key(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """New Slave key for this license; the previous one stops working at once (the hub drops its connection)."""
+    lic = owned_license(license_id, current_user, db)
+    if lic.portfolio_id is None:
+        raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
+    key = set_license_key(lic)
     db.commit()
     db.refresh(lic)
-    logger.info(f"License {lic.id} updated by manager {current_user.id}: max_lots={lic.max_lots} is_active={lic.is_active}")
-    return lic
+    logger.info(f"License {lic.id} got a new key ({lic.key_prefix}) from manager {current_user.id}")
+    notify_hub()
+    return license_out(lic, key)
+
+@app.patch("/licenses/{license_id}")
+async def update_license(license_id: int, changes: LicenseUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Edit the lot limit, the expiry, or revoke/reactivate. A revoked or expired Slave stops opening positions
+    but keeps managing the ones that were open when it stopped being valid."""
+    lic = owned_license(license_id, current_user, db)
+    if changes.max_lots is not None:
+        lic.max_lots = changes.max_lots
+    if changes.is_active is not None and changes.is_active != lic.is_active:
+        lic.is_active = changes.is_active
+        lic.revoked_at = None if changes.is_active else datetime.datetime.utcnow()
+    if "expires_at" in changes.model_fields_set:
+        lic.expires_at = utc_naive(changes.expires_at)
+    db.commit()
+    db.refresh(lic)
+    logger.info(f"License {lic.id} updated by manager {current_user.id}: max_lots={lic.max_lots} "
+                f"is_active={lic.is_active} expires_at={lic.expires_at}")
+    notify_hub()
+    return license_out(lic)
 
 @app.post("/api/license/check")
 async def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
@@ -624,7 +756,8 @@ async def check_license(check: LicenseCheck, request: Request, db: Session = Dep
         valid_license = db.query(models.License).filter(
             models.License.portfolio_id == portfolio.id,
             models.License.client_mt5_login == check.mt5_login,
-            models.License.is_active == True
+            models.License.is_active == True,
+            (models.License.expires_at.is_(None)) | (models.License.expires_at > datetime.datetime.utcnow()),
         ).first()
         zmq_topic = f"P_{portfolio.id}"
     

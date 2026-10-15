@@ -10,11 +10,12 @@ RUN apt-get update && apt-get install -y gcc libffi-dev && rm -rf /var/lib/apt/l
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY database.py models.py observability.py hub.py ./
+COPY database.py models.py observability.py keys.py hub_ws.py hub.py ./
 
-# 5557 Masters/Slaves PUSH and 5556 Slaves SUB: published on the host.
-# 5558 events for the API and 8001 health: internal network only.
-EXPOSE 5557 5556 5558 8001
+# 8002 WebSocket for Masters and Slaves: behind the proxy as wss://signals.trademetric.com.br (443).
+# 5557 Masters/Slaves PUSH and 5556 Slaves SUB (legacy ZMQ, until the cut): published on the host.
+# 5558 events for the API and 8001 health/sessions/refresh: internal network only.
+EXPOSE 8002 5557 5556 5558 8001
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"

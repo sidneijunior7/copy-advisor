@@ -6,7 +6,7 @@ import datetime
 import uuid
 
 def generate_key():
-    return str(uuid.uuid4())
+    return str(uuid.uuid4())  # Portfolio public_key, the legacy ZMQ Slave key
 
 # SQLite only autoincrements INTEGER PRIMARY KEY, so BigInteger PKs fall back to Integer there
 BigIntPK = BigInteger().with_variant(Integer, "sqlite")
@@ -27,7 +27,9 @@ class User(Base):
     password_hash = Column(String(255))
     role = Column(String(50), default="CLIENT") # MANAGER, CLIENT, TDM_DEV
     status = Column(String(20), default="active") # active, frozen, archived
-    master_key = Column(String(100), unique=True, default=generate_key) # Single Key for Master EA
+    # Legacy plain-text Master key: adopted into master_keys by migration 0006 and no longer read.
+    # Kept until the ZMQ cut so a rollback to an older hub still works; dropped then.
+    master_key = Column(String(100), unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -71,9 +73,28 @@ class License(Base):
     max_lots = Column(Float, default=1.0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Slave key of this license alone (keys.py): only its hash is stored. NULL until the manager generates one.
+    key_hash = Column(String(64), unique=True, index=True, nullable=True)
+    key_prefix = Column(String(16), nullable=True)
+    expires_at = Column(DateTime, nullable=True) # UTC; NULL = no expiry. Expired = revoked for the hub
+    revoked_at = Column(DateTime, nullable=True) # UTC, set when is_active goes false: positions opened after it are never sent
 
     portfolio = relationship("Portfolio", back_populates="licenses")
     strategy = relationship("Strategy", back_populates="licenses")
+
+class MasterKey(Base):
+    """Key a Master EA authenticates with. A manager can hold several (one per Master/VPS) and revoke each."""
+    __tablename__ = "master_keys"
+    __table_args__ = (UniqueConstraint("key_hash", name="uq_master_keys_key_hash"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    label = Column(String(64), nullable=False)
+    key_hash = Column(String(64), nullable=False)
+    key_prefix = Column(String(16), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True) # Updated by the hub at most hourly
+    revoked_at = Column(DateTime, nullable=True)
 
 # --- Signal history (written by hub.py) ---
 

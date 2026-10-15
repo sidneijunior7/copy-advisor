@@ -17,6 +17,8 @@ from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
 import auth  # noqa: E402
 import database  # noqa: E402
+import hub  # noqa: E402
+import keys  # noqa: E402
 import models  # noqa: E402
 import server  # noqa: E402
 
@@ -286,15 +288,39 @@ def test_frozen_manager_loses_access_with_a_valid_token(client):
     assert client.get("/me/manager", headers=bearer(token)).status_code == 403
 
 
-# --- SEC-08 (rotation only; the transport is still plaintext ZMQ) ---
+# --- SEC-08: master keys are hashed, shown once and revoked one by one ---
 
-def test_manager_can_rotate_master_key(client):
-    _, email = make_user()
+def test_master_keys_are_shown_once_and_revoked_one_by_one(client):
+    user_id, email = make_user()
     headers = bearer(token_for(email))
-    before = client.get("/me/manager", headers=headers).json()["master_key"]
-    after = client.post("/me/manager/rotate-key", headers=headers).json()["master_key"]
-    assert after != before
-    assert client.get("/me/manager", headers=headers).json()["master_key"] == after
+    first = client.post("/me/master-keys", headers=headers, json={"label": "VPS 1"}).json()
+    second = client.post("/me/master-keys", headers=headers, json={"label": "VPS 2"}).json()
+    assert first["key"].startswith("mst_") and first["key_prefix"] == first["key"][:12]
+
+    listed = client.get("/me/master-keys", headers=headers).json()
+    assert [k["label"] for k in listed] == ["VPS 1", "VPS 2"]
+    assert all("key" not in k and "key_hash" not in k for k in listed)
+    assert "master_key" not in client.get("/me/manager", headers=headers).json()
+
+    _, other_email = make_user()
+    assert client.delete(f"/me/master-keys/{second['id']}", headers=bearer(token_for(other_email))).status_code == 404
+    assert client.delete(f"/me/master-keys/{first['id']}", headers=headers).json()["revoked_at"] is not None
+
+    db = database.SessionLocal()
+    try:
+        row = db.get(models.MasterKey, second["id"])
+        assert row.key_hash == keys.key_hash(second["key"]) and second["key"] not in (row.key_prefix, row.label)
+        directory = hub.load_directory(db)
+    finally:
+        db.close()
+    assert directory.master_for_key(first["key"]) is None
+    manager, master_key = directory.master_for_key(second["key"])
+    assert (manager.id, master_key.id) == (user_id, second["id"])
+
+
+def test_master_key_label_is_required(client):
+    _, email = make_user()
+    assert client.post("/me/master-keys", headers=bearer(token_for(email)), json={"label": ""}).status_code == 422
 
 
 # --- SEC-06 ---

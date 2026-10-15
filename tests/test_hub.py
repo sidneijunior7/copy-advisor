@@ -1,7 +1,8 @@
 import pytest
 
 import hub
-from hub import Directory, HubCore, ManagerInfo, StrategyInfo
+import keys
+from hub import Directory, HubCore, ManagerInfo, MasterKeyInfo, StrategyInfo
 
 KEY = "master-key-1"
 MANAGER = ManagerInfo(id=1, status="active")
@@ -10,7 +11,8 @@ STRATEGY = StrategyInfo(id=10, manager_id=1, name="Trend", is_active=True)
 
 def make_directory(manager=MANAGER, strategy=STRATEGY, portfolios=(7, 8)):
     return Directory(
-        managers_by_key={KEY: manager},
+        managers_by_id={manager.id: manager},
+        master_keys_by_hash={keys.key_hash(KEY): MasterKeyInfo(id=50, manager_id=manager.id)},
         strategies_by_magic={(manager.id, 555): strategy},
         strategies_by_id={strategy.id: strategy},
         portfolios_by_strategy={strategy.id: tuple(portfolios)},
@@ -37,6 +39,7 @@ class Harness:
             epoch=42,
             clock=lambda: self.now,
         )
+        self.core.key_used_at[50] = self.now  # Tests below look at position jobs; key use has its own test
 
     def _refresh(self):
         self.refreshes += 1
@@ -294,3 +297,28 @@ def test_real_account_master_is_not_gated_yet():
     h.core.handle_message(f"{KEY}|V2HELLO|900|real|Srv|Co")
     h.v2("OPEN", 1, 1.0)
     assert len(h.payloads("POS")) == 1
+
+
+# --- Hashed master keys ---
+
+def test_master_key_use_is_recorded_hourly_and_the_key_stays_out_of_raw():
+    h = Harness()
+    h.core.key_used_at.clear()
+    h.v2("OPEN", 1, 1.0)
+    h.v2("MODIFY", 1, 1.0, sl=1.08)
+    used = [j for j in h.jobs if j["kind"] == "master_key_used"]
+    assert [j["id"] for j in used] == [50]
+    assert all(KEY not in (j.get("raw") or "") for j in h.jobs)
+    assert h.jobs[1]["raw"].startswith("V2|900|OPEN|1|")
+    h.now += hub.KEY_USED_EVERY
+    h.v2("MODIFY", 1, 1.0, sl=1.07)
+    assert len([j for j in h.jobs if j["kind"] == "master_key_used"]) == 2
+
+
+def test_unknown_or_revoked_master_key_is_ignored():
+    h = Harness()
+    h.core.handle_message("another-key|V2|900|OPEN|1|0|EURUSD|1|1.1|0|0|555")
+    assert h.published == [] and h.jobs == [] and h.refreshes == 1
+    h.dir = Directory(managers_by_id=h.dir.managers_by_id)  # Key revoked: not in master_keys_by_hash
+    h.v2("OPEN", 1, 1.0)
+    assert h.published == []

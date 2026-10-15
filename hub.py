@@ -1,7 +1,11 @@
 """
 TDM Mirror signal hub. Runs as its own process/container, separate from the API.
 
-Masters PUSH position state to :5557, slaves SUB to :5556 on topic P_<portfolio_id>.
+Two transports carry the same lines while clients migrate:
+- WebSocket (hub_ws.py, :8002 behind the proxy as wss://): every Master and Slave authenticates with
+  its own key, and a Slave only gets the portfolio of its license.
+- ZMQ (legacy, until the cut): Masters PUSH position state to :5557, slaves SUB to :5556 on topic
+  P_<portfolio_id>. Anyone can subscribe to the PUB.
 Every message carries the full state of one position (volume 0 = closed), so a slave
 that missed messages converges by applying the periodic SNAP published on the same stream.
 
@@ -20,6 +24,7 @@ Hub -> slaves (PUB :5556)
 Hub -> API (PUB :5558, internal)
     WEB <json>
 """
+import asyncio
 import datetime
 import json
 import logging
@@ -35,10 +40,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
+import zmq.asyncio
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError, DataError
+from websockets.asyncio.server import serve
 
 import database
+import hub_ws
+import keys
 import models
 import observability
 
@@ -48,6 +57,8 @@ PULL_BIND = os.getenv("HUB_PULL_BIND", "tcp://*:5557")
 PUB_BIND = os.getenv("HUB_PUB_BIND", "tcp://*:5556")
 EVENTS_BIND = os.getenv("HUB_EVENTS_BIND", "tcp://*:5558")
 HEALTH_PORT = int(os.getenv("HUB_HEALTH_PORT", "8001"))
+WS_PORT = int(os.getenv("HUB_WS_PORT", "8002"))
+WS_MAX_MESSAGE = 1_048_576  # A V2SYNC of a big Master fits; nothing a client sends needs more
 HEARTBEAT_SECONDS = float(os.getenv("HUB_HEARTBEAT_SECONDS", "5"))
 SNAPSHOT_SECONDS = float(os.getenv("HUB_SNAPSHOT_SECONDS", "15"))
 WARMUP_SECONDS = float(os.getenv("HUB_WARMUP_SECONDS", "20"))
@@ -61,6 +72,7 @@ SENT_MEMORY = 10_000      # Published POS remembered to match execution reports 
 LATENCY_SAMPLES = 1_000   # Recent latencies behind the /health percentiles
 PRICE_EPS = 1e-9
 TRADE_MODES = ("demo", "contest", "real")
+KEY_USED_EVERY = 3600     # master_keys.last_used_at is refreshed at most this often per key
 
 
 def fmt(x: float) -> str:
@@ -90,21 +102,50 @@ class StrategyInfo:
 
 
 @dataclass(frozen=True)
+class MasterKeyInfo:
+    id: int
+    manager_id: int
+
+
+@dataclass(frozen=True)
+class LicenseInfo:
+    id: int
+    portfolio_id: int
+    login: int
+    max_lots: float
+    is_active: bool
+    expires_at: Optional[float]  # Unix time; None = no expiry
+    key_hash: str
+    revoked_at: Optional[float] = None  # Unix time the license was deactivated
+
+
+@dataclass(frozen=True)
 class Directory:
-    managers_by_key: Dict[str, ManagerInfo] = field(default_factory=dict)
+    managers_by_id: Dict[int, ManagerInfo] = field(default_factory=dict)
+    master_keys_by_hash: Dict[str, MasterKeyInfo] = field(default_factory=dict)  # Revoked keys are left out
     strategies_by_magic: Dict[Tuple[int, int], StrategyInfo] = field(default_factory=dict)
     strategies_by_id: Dict[int, StrategyInfo] = field(default_factory=dict)
     portfolios_by_strategy: Dict[int, Tuple[int, ...]] = field(default_factory=dict)
-    portfolio_by_key: Dict[str, int] = field(default_factory=dict)
+    portfolio_by_key: Dict[str, int] = field(default_factory=dict)  # Legacy ZMQ Slaves: portfolio public_key
     portfolio_ids: Tuple[int, ...] = ()
+    licenses_by_hash: Dict[str, LicenseInfo] = field(default_factory=dict)  # Licenses with a key only
+    licenses_by_id: Dict[int, LicenseInfo] = field(default_factory=dict)
     loaded_at: float = 0.0
+
+    def master_for_key(self, key: str) -> Optional[Tuple[ManagerInfo, MasterKeyInfo]]:
+        mk = self.master_keys_by_hash.get(keys.key_hash(key))
+        manager = self.managers_by_id.get(mk.manager_id) if mk else None
+        return (manager, mk) if manager else None
+
+
+def _unix(dt: Optional[datetime.datetime]) -> Optional[float]:
+    return dt.replace(tzinfo=datetime.timezone.utc).timestamp() if dt else None  # Stored as naive UTC
 
 
 def load_directory(session) -> Directory:
-    managers = {}
-    for u in session.query(models.User).all():
-        if u.master_key:
-            managers[u.master_key] = ManagerInfo(u.id, u.status or "active")
+    managers = {u.id: ManagerInfo(u.id, u.status or "active") for u in session.query(models.User).all()}
+    master_keys = {k.key_hash: MasterKeyInfo(k.id, k.user_id)
+                   for k in session.query(models.MasterKey).filter(models.MasterKey.revoked_at.is_(None))}
     by_magic, by_id = {}, {}
     for s in session.query(models.Strategy).all():
         info = StrategyInfo(s.id, s.user_id, s.name or "", bool(s.is_active))
@@ -115,13 +156,22 @@ def load_directory(session) -> Directory:
     for portfolio_id, strategy_id in session.execute(models.portfolio_items.select()).fetchall():
         by_strategy.setdefault(strategy_id, []).append(portfolio_id)
     portfolios = session.query(models.Portfolio.id, models.Portfolio.public_key).all()
+    licenses = [
+        LicenseInfo(l.id, l.portfolio_id, int(l.client_mt5_login or 0), float(l.max_lots or 0), bool(l.is_active),
+                    _unix(l.expires_at), l.key_hash, _unix(l.revoked_at))
+        for l in session.query(models.License).filter(models.License.key_hash.isnot(None),
+                                                      models.License.portfolio_id.isnot(None))
+    ]
     return Directory(
-        managers_by_key=managers,
+        managers_by_id=managers,
+        master_keys_by_hash=master_keys,
         strategies_by_magic=by_magic,
         strategies_by_id=by_id,
         portfolios_by_strategy={k: tuple(sorted(v)) for k, v in by_strategy.items()},
         portfolio_by_key={key: pid for pid, key in portfolios if key},
         portfolio_ids=tuple(sorted(pid for pid, _ in portfolios)),
+        licenses_by_hash={l.key_hash: l for l in licenses},
+        licenses_by_id={l.id: l for l in licenses},
         loaded_at=time.time(),
     )
 
@@ -147,6 +197,7 @@ class Position:
     strategy_id: int
     state: PositionState
     missing_syncs: int = 0
+    opened_at: float = 0.0  # Unix time; what a revoked license may still follow is decided on it
 
     @property
     def uid(self) -> str:
@@ -191,6 +242,7 @@ class HubCore:
         self.latencies: "deque[int]" = deque(maxlen=LATENCY_SAMPLES)
         # (manager_id, login) -> (trade_mode, server, company) from the last V2HELLO
         self.masters: Dict[Tuple[int, int], Tuple[str, str, str]] = {}
+        self.key_used_at: Dict[int, float] = {}  # master key id -> clock of the last last_used_at write
 
         # Warm-up: no SNAP until open positions were loaded from the database and every
         # master login that had one sent a V2SYNC (or WARMUP_SECONDS passed since the load).
@@ -206,38 +258,47 @@ class HubCore:
     # --- inbound ---
 
     def handle_message(self, msg: str):
+        """ZMQ inbound: KEY|... from Masters, EXEC|... from Slaves."""
         self.stats["msgs"] += 1
         if msg.startswith("EXEC|"):
-            self._handle_exec(msg)
+            self.handle_exec(msg.split("|"))
             return
         parts = msg.split("|", 1)
         if len(parts) != 2:
             self._warn("malformed", f"Malformed message: {msg[:120]}")
             return
         key, rest = parts
-        manager = self.directory().managers_by_key.get(key)
-        if manager is None:
-            if self._warn(f"key:{key}", f"Unknown master key {key[:8]}…"):
+        found = self.directory().master_for_key(key)
+        if found is None:
+            # One warning key for all of them: random keys must not grow _last_warn
+            if self._warn("unknown-key", f"Unknown master key {key[:8]}…"):
                 self.request_refresh()
             return
-        self.stats["last_master_msg"] = time.time()
+        manager, master_key = found
+        self.master_key_used(master_key)
+        self.handle_master(manager, rest)
 
+    def handle_master(self, manager: ManagerInfo, rest: str):
+        """A message from an authenticated Master, without the key: V2, V2SYNC, V2HELLO or the legacy format.
+        It is also what signals.raw and the logs get, so the key never reaches either."""
+        raw = rest
+        self.stats["last_master_msg"] = time.time()
         if rest.startswith("V2SYNC|"):
             _, login, entries = rest.split("|", 2)
-            self._handle_sync(manager, int(login), entries, raw=msg)
+            self._handle_sync(manager, int(login), entries, raw=raw)
         elif rest.startswith("V2HELLO|"):
-            self._handle_hello(manager, rest, raw=msg)
+            self._handle_hello(manager, rest, raw=raw)
         elif rest.startswith("V2|"):
             f = rest.split("|")
             if len(f) != 11:
-                self._warn("v2-size", f"Malformed V2 message: {msg[:120]}")
+                self._warn("v2-size", f"Malformed V2 message: {raw[:120]}")
                 return
             _, login, reason, pos_id, type_, symbol, vol, price_open, sl, tp, magic = f
             self.apply_state(manager, int(login), int(pos_id),
                              parse_state(type_, symbol, vol, price_open, sl, tp, magic),
-                             reason=reason, live=True, raw=msg)
+                             reason=reason, live=True, raw=raw)
         else:
-            self._handle_legacy(manager, rest, raw=msg)
+            self._handle_legacy(manager, rest, raw=raw)
 
     def _handle_legacy(self, manager: ManagerInfo, rest: str, raw: str):
         f = rest.split("|")
@@ -313,13 +374,25 @@ class HubCore:
             "at": datetime.datetime.utcnow(),
         })
 
-    def _handle_exec(self, msg: str):
-        f = msg.split("|")
-        if len(f) != 10:
-            self._warn("exec-size", f"Malformed EXEC: {msg[:120]}")
+    def master_key_used(self, master_key: MasterKeyInfo):
+        now = self.clock()
+        last = self.key_used_at.get(master_key.id)
+        if last is not None and now - last < KEY_USED_EVERY:
             return
-        _, login, conn_key, uid, action, position_id, volume, price, retcode, seq = f
-        portfolio_id = self.directory().portfolio_by_key.get(conn_key)
+        self.key_used_at[master_key.id] = now
+        self.persist({"kind": "master_key_used", "id": master_key.id, "at": datetime.datetime.utcnow()})
+
+    def handle_exec(self, f: List[str], portfolio_id: Optional[int] = None, login: Optional[int] = None):
+        """EXEC|login|conn_key|uid|action|position_id|volume|price|retcode|seq. Over ZMQ the portfolio comes
+        from the portfolio key in the message; a WSS session passes the portfolio and login of its license."""
+        if len(f) != 10:
+            self._warn("exec-size", f"Malformed EXEC: {'|'.join(f)[:120]}")
+            return
+        _, msg_login, conn_key, uid, action, position_id, volume, price, retcode, seq = f
+        if portfolio_id is None:
+            portfolio_id = self.directory().portfolio_by_key.get(conn_key)
+        if login is None:
+            login = int(msg_login)
         # The slave reports the last seq it applied. It only measures this execution when that POS was
         # about the same position; a late entry through SNAP still counts, from the POS it missed.
         latency_ms = None
@@ -331,7 +404,7 @@ class HubCore:
             "kind": "execution",
             "uid": uid,
             "portfolio_id": portfolio_id,
-            "mt5_login": int(login),
+            "mt5_login": login,
             "action": action,
             "position_id": int(position_id),
             "volume": float(volume),
@@ -376,7 +449,7 @@ class HubCore:
             if not strategy.is_active:
                 self._reject(f"inactive:{strategy.id}", f"Strategy {strategy.id} inactive; not opening {login}_{pos_id}")
                 return
-            pos = Position(manager.id, login, pos_id, strategy.id, new)
+            pos = Position(manager.id, login, pos_id, strategy.id, new, opened_at=time.time())
             self.positions[key] = pos
             self._emit(pos, prev_volume=0.0, reason=reason, live=live, raw=raw)
             return
@@ -475,6 +548,18 @@ class HubCore:
             "at": datetime.datetime.utcnow(),
         })
 
+    def snapshot(self, portfolio_id: int) -> str:
+        """Full state of one portfolio, as published every SNAPSHOT_SECONDS (a WSS Slave gets one on connect)."""
+        directory = self.directory()
+        entries = [self._entry(p) for p in self.positions.values()
+                   if portfolio_id in directory.portfolios_by_strategy.get(p.strategy_id, ())]
+        return f"SNAP|{self.epoch}|{self.seq.get(portfolio_id, 0)}|{';'.join(entries)}"
+
+    def open_uids(self, portfolio_id: int, opened_before: float = float("inf")) -> set:
+        directory = self.directory()
+        return {p.uid for p in self.positions.values()
+                if p.opened_at < opened_before and portfolio_id in directory.portfolios_by_strategy.get(p.strategy_id, ())}
+
     def publish_snapshots(self):
         directory = self.directory()
         by_portfolio: Dict[int, List[str]] = {pid: [] for pid in directory.portfolio_ids}
@@ -499,7 +584,8 @@ class HubCore:
                 continue
             state = PositionState(r["type"], r["symbol"], r["volume"], r["price_open"] or 0.0,
                                   r["sl"] or 0.0, r["tp"] or 0.0, r["magic"] or 0)
-            self.positions[key] = Position(r["manager_id"], r["master_login"], r["pos_id"], r["strategy_id"], state)
+            self.positions[key] = Position(r["manager_id"], r["master_login"], r["pos_id"], r["strategy_id"], state,
+                                           opened_at=r.get("opened_at") or 0.0)
             if r["master_login"] != 0:  # Legacy Masters never send V2SYNC
                 self.pending_logins.add((r["manager_id"], r["master_login"]))
         self.loaded_at = self.clock()
@@ -599,6 +685,7 @@ class PositionLoader(threading.Thread):
                     "manager_id": r.manager_id, "master_login": int(r.master_login), "pos_id": int(r.pos_id),
                     "strategy_id": r.strategy_id, "type": r.type, "symbol": r.symbol, "volume": r.volume,
                     "price_open": r.price_open, "sl": r.sl, "tp": r.tp, "magic": int(r.magic or 0),
+                    "opened_at": _unix(r.opened_at) or 0.0,
                 } for r in rows])
                 return
             except Exception as e:
@@ -661,6 +748,8 @@ class Writer(threading.Thread):
                 session.add(models.Execution(**{k: v for k, v in job.items() if k not in ("kind", "at")}, created_at=job["at"]))
             elif job["kind"] == "master_account":
                 self._write_master_account(session, job)
+            elif job["kind"] == "master_key_used":
+                session.query(models.MasterKey).filter_by(id=job["id"]).update({"last_used_at": job["at"]})
             else:
                 self._write_position(session, job)
             session.commit()
@@ -721,11 +810,15 @@ class Writer(threading.Thread):
 # --- Runtime ---
 
 class Hub:
+    """One asyncio loop runs everything that touches HubCore: the ZMQ PULL, the WebSocket edge and the timers.
+    Database work stays in threads (DirectoryLoader, Writer, PositionLoader)."""
+
     def __init__(self):
-        self.ctx = zmq.Context()
-        self.pull = self._socket(zmq.PULL, PULL_BIND)
-        self.pub = self._socket(zmq.PUB, PUB_BIND)
-        self.events = self._socket(zmq.PUB, EVENTS_BIND)
+        self.ctx = zmq.Context()             # PUB sockets: send never blocks
+        self.actx = zmq.asyncio.Context()    # PULL, awaited in the loop
+        self.pull = self._socket(self.actx, zmq.PULL, PULL_BIND)
+        self.pub = self._socket(self.ctx, zmq.PUB, PUB_BIND)
+        self.events = self._socket(self.ctx, zmq.PUB, EVENTS_BIND)
 
         self.directory = DirectoryLoader()
         self.writer = Writer()
@@ -737,12 +830,15 @@ class Hub:
             persist=self.writer.submit,
             request_refresh=self.directory.request_refresh,
         )
-        self.running = True
+        self.edge = hub_ws.Edge(self.core, directory=lambda: self.directory.current,
+                                request_refresh=self.directory.request_refresh, heartbeat_seconds=HEARTBEAT_SECONDS)
+        self.stop_event: Optional[asyncio.Event] = None
         self.started_at = time.time()
         self.last_loop = time.time()
 
-    def _socket(self, kind: int, endpoint: str):
-        s = self.ctx.socket(kind)
+    @staticmethod
+    def _socket(ctx, kind: int, endpoint: str):
+        s = ctx.socket(kind)
         s.setsockopt(zmq.LINGER, 0)
         # Swarm's ingress drops idle TCP after ~15 min; keepalive keeps idle subscribers attached
         s.setsockopt(zmq.TCP_KEEPALIVE, 1)
@@ -753,6 +849,7 @@ class Hub:
 
     def _publish(self, topic: str, payload: str):
         self.pub.send_string(f"{topic} {payload}")
+        self.edge.fanout(topic, payload)
 
     def _web(self, event: dict):
         self.events.send_string("WEB " + json.dumps(event))
@@ -778,6 +875,7 @@ class Hub:
             "db_dropped": self.writer.dropped,
             "db_failed": self.writer.failed,
             "directory_age_seconds": round(now - self.directory.current.loaded_at) if self.directory.current.loaded_at else None,
+            "ws": {k: v for k, v in self.edge.public.items() if k != "sessions"},
         }
         return (200 if loop_age < STALE_LOOP_SECONDS else 503), body
 
@@ -785,8 +883,16 @@ class Hub:
         hub = self
 
         class Handler(BaseHTTPRequestHandler):
+            # Internal network only (8001 is not published): the API reads /health and /sessions and
+            # calls /refresh after changing keys or licenses, so revocations apply at once
             def do_GET(self):
-                code, body = hub.health()
+                if self.path == "/sessions":
+                    code, body = 200, {"epoch": hub.core.epoch, "sessions": hub.edge.public.get("sessions", [])}
+                elif self.path == "/refresh":
+                    hub.directory.request_refresh()
+                    code, body = 202, {"status": "refreshing"}
+                else:
+                    code, body = hub.health()
                 data = json.dumps(body).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")
@@ -800,53 +906,87 @@ class Hub:
         server = ThreadingHTTPServer(("0.0.0.0", HEALTH_PORT), Handler)
         threading.Thread(target=server.serve_forever, name="health", daemon=True).start()
 
-    def run(self):
+    def stop(self):
+        if self.stop_event is not None:
+            self.stop_event.set()
+
+    async def run(self):
+        self.stop_event = asyncio.Event()
         self.directory.refresh()
         self.directory.start()
         self.writer.start()
         PositionLoader(self.loaded).start()
         self.serve_health()
-        logger.info(f"Hub up: PULL {PULL_BIND}, PUB {PUB_BIND}, events {EVENTS_BIND}, health :{HEALTH_PORT}, "
-                    f"epoch {self.core.epoch}, legacy publish {'on' if self.core.legacy_publish else 'off'}")
+        server = await serve(self.edge.handler, "0.0.0.0", WS_PORT, process_request=self.edge.process_request,
+                             compression=None, max_size=WS_MAX_MESSAGE, server_header=None,
+                             ping_interval=20, ping_timeout=20)  # The MQL5 client answers pings
+        logger.info(f"Hub up: ws :{WS_PORT}, PULL {PULL_BIND}, PUB {PUB_BIND}, events {EVENTS_BIND}, "
+                    f"health :{HEALTH_PORT}, epoch {self.core.epoch}, "
+                    f"legacy publish {'on' if self.core.legacy_publish else 'off'}")
+        tasks = [asyncio.create_task(self._zmq_reader()), asyncio.create_task(self._ticker())]
+        try:
+            stopped = asyncio.create_task(self.stop_event.wait())
+            done, _ = await asyncio.wait([stopped, *tasks], return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                if t is not stopped and t.exception():
+                    raise t.exception()  # A dead reader or ticker is fatal: the orchestrator restarts us
+        finally:
+            for t in tasks:
+                t.cancel()
+            server.close()  # Clients get 1001 (going away) and reconnect with backoff
+            try:
+                await asyncio.wait_for(server.wait_closed(), 3)
+            except asyncio.TimeoutError:
+                pass
 
-        poller = zmq.Poller()
-        poller.register(self.pull, zmq.POLLIN)
-        while self.running:
-            if dict(poller.poll(250)).get(self.pull):
-                for _ in range(1000):  # Drain, but keep heartbeats flowing under load
-                    try:
-                        msg = self.pull.recv_string(zmq.NOBLOCK)
-                    except zmq.Again:
-                        break
-                    try:
-                        self.core.handle_message(msg)
-                    except Exception as e:
-                        self.core.stats["errors"] += 1
-                        logger.exception(f"Error handling message {msg[:120]!r}: {e}")
+    async def _zmq_reader(self):
+        handled = 0
+        while True:
+            msg = await self.pull.recv_string()
+            try:
+                self.core.handle_message(msg)
+            except Exception as e:
+                self.core.stats["errors"] += 1
+                logger.exception(f"Error handling message {msg[:120]!r}: {e}")
+            handled += 1
+            if handled % 100 == 0:
+                await asyncio.sleep(0)  # A queued message completes recv without yielding: keep timers flowing
+
+    async def _ticker(self):
+        while True:
             try:
                 self.core.load_positions(self.loaded.get_nowait())
             except queue.Empty:
                 pass
             self.core.tick()
+            self.edge.tick()
             self.last_loop = time.time()
+            await asyncio.sleep(0.1)
 
     def shutdown(self):
         logger.info("Shutting down: flushing database writes")
         self.writer.stop(timeout=8)  # Swarm sends SIGKILL ~10s after SIGTERM
         self.ctx.destroy(linger=0)
+        self.actx.destroy(linger=0)
+
+
+async def amain(hub: Hub):
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, hub.stop)
+        except NotImplementedError:  # Windows
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(hub.stop))
+    await hub.run()
 
 
 def main():
     observability.setup("hub")
+    if sys.platform == "win32":  # zmq.asyncio needs a selector loop
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     hub = Hub()
-
-    def stop(signum, frame):
-        hub.running = False
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
     try:
-        hub.run()
+        asyncio.run(amain(hub))
     except Exception as e:
         # Anything outside per-message handling is fatal: exit so the orchestrator restarts us
         logger.exception(f"Hub crashed: {e}")

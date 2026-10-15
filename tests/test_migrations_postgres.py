@@ -2,6 +2,7 @@
 migrate.py against real Postgres, starting from each possible origin of the production database.
 Uses TEST_POSTGRES_URL (CI service container) or, locally, the pgserver package if installed.
 """
+import hashlib
 import os
 import subprocess
 import sys
@@ -74,10 +75,13 @@ def test_migrate_from_every_origin(pg_url, origin):
 
     insp = inspect(engine)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005_master_accounts"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0006_access_keys"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
-    assert {"master_positions", "signals", "executions", "master_accounts"} <= set(insp.get_table_names())
+            # The plain-text master key was adopted as a hashed master key, exactly once
+            adopted = c.execute(text("SELECT user_id, key_hash, key_prefix FROM master_keys")).fetchall()
+            assert [tuple(r) for r in adopted] == [(1, hashlib.sha256(b"k1").hexdigest(), "k1")]
+    assert {"master_positions", "signals", "executions", "master_accounts", "master_keys"} <= set(insp.get_table_names())
     columns = {col["name"]: col for col in insp.get_columns("strategies")}
     assert str(columns["magic_number"]["type"]) == "BIGINT"
     login_type = {col["name"]: col for col in insp.get_columns("licenses")}["client_mt5_login"]["type"]
@@ -117,6 +121,24 @@ def test_concurrent_migrations_are_serialized(pg_url):
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005_master_accounts"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0006_access_keys"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0
+
+
+def test_access_keys_strip_master_keys_from_signal_history(pg_url):
+    engine = create_engine(pg_url)
+    reset(engine)
+    run(pg_url, "-m", "alembic", "upgrade", "0005_master_accounts")
+    seed(engine)
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO master_positions (manager_id, strategy_id, master_login, pos_id, symbol, type, volume) "
+                       "VALUES (1, 1, 900, 55, 'EURUSD', 0, 1.0)"))
+        c.execute(text("INSERT INTO signals (master_position_id, reason, raw) VALUES "
+                       "(1, 'OPEN', 'k1|V2|900|OPEN|55|0|EURUSD|1|1.1|0|0|42'), (1, 'SYNC', NULL)"))
+
+    run(pg_url, "migrate.py")
+
+    with engine.connect() as c:
+        raws = [r[0] for r in c.execute(text("SELECT raw FROM signals ORDER BY id"))]
+        assert raws == ["V2|900|OPEN|55|0|EURUSD|1|1.1|0|0|42", None]

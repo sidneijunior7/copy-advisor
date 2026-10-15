@@ -12,6 +12,7 @@ import zmq
 
 import auth
 import database
+import keys
 import models
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,13 +34,18 @@ def setup():
         strategy = models.Strategy(user_id=manager.id, name="E2E", magic_number=4242)
         portfolio = models.Portfolio(user_id=manager.id, name="P")
         portfolio.strategies.append(strategy)
-        db.add_all([strategy, portfolio])
+        master_key, license_key = keys.new_key(keys.MASTER), keys.new_key(keys.LICENSE)
+        db.add_all([strategy, portfolio, models.MasterKey(user_id=manager.id, label="e2e", key_hash=keys.key_hash(master_key),
+                                                          key_prefix=keys.key_prefix(master_key))])
+        db.flush()
+        db.add(models.License(portfolio_id=portfolio.id, client_mt5_login=31337, max_lots=2.5,
+                              key_hash=keys.key_hash(license_key), key_prefix=keys.key_prefix(license_key)))
         db.commit()
-        info = {"key": manager.master_key, "portfolio": portfolio.id, "manager": manager.id,
+        info = {"key": master_key, "license_key": license_key, "portfolio": portfolio.id, "manager": manager.id,
                 "token": auth.create_access_token({"sub": manager.email, "role": "MANAGER"})}
     finally:
         db.close()
-    ports = {name: free_port() for name in ("pull", "pub", "events", "health")}
+    ports = {name: free_port() for name in ("pull", "pub", "events", "health", "ws")}
     return info, ports
 
 
@@ -49,6 +55,7 @@ def start_hub(ports):
                HUB_PUB_BIND=f"tcp://127.0.0.1:{ports['pub']}",
                HUB_EVENTS_BIND=f"tcp://127.0.0.1:{ports['events']}",
                HUB_HEALTH_PORT=str(ports["health"]),
+               HUB_WS_PORT=str(ports["ws"]),
                HUB_HEARTBEAT_SECONDS="0.5", HUB_SNAPSHOT_SECONDS="1", HUB_WARMUP_SECONDS="3")
     proc = subprocess.Popen([sys.executable, "hub.py"], cwd=ROOT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -190,3 +197,75 @@ def test_api_relays_hub_events_to_dashboard(setup):
         api.wait(10)
         stop_hub(proc)
         print(api.stdout.read().decode(errors="replace"))  # Shown by pytest when the test fails
+
+
+def ws_wait_for(ws, prefix, timeout=8):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        msg = ws.recv(timeout=max(0.1, deadline - time.time()))
+        if msg.startswith(prefix):
+            return msg
+    raise AssertionError(f"no {prefix!r} within {timeout}s")
+
+
+def get_json(ports, path):
+    with urllib.request.urlopen(f"http://127.0.0.1:{ports['health']}{path}", timeout=2) as r:
+        return json.loads(r.read())
+
+
+def test_hub_process_over_websocket(setup):
+    from websockets.sync.client import connect
+
+    info, ports = setup
+    url = f"ws://127.0.0.1:{ports['ws']}"
+    proc, _ = start_hub(ports)
+    try:
+        with connect(url + "/v1/slave") as slave, connect(url + "/v1/master") as master:
+            slave.send(f"HELLO|slave|v1|{info['license_key']}|31337|4.00|0|0")
+            welcome = slave.recv(timeout=5).split("|")
+            assert welcome[0] == "WELCOME" and welcome[3:] == [str(info["portfolio"]), "1", "2.5"]
+            master.send(f"HELLO|master|v1|{info['key']}|900|4.00")
+            assert master.recv(timeout=5).startswith("WELCOME|")
+
+            master.send("V2|900|OPEN|77|0|EURUSD|1|1.10000|0|0|4242")
+            pos = ws_wait_for(slave, "POS|").split("|")
+            assert pos[3] == "900_77"
+            slave.send(f"EXEC|0|forged|900_77|OPEN|1|2.5|1.1|10009|{pos[2]}")
+            slave.send(f"ACK|{pos[1]}|{pos[2]}")
+            time.sleep(1.5)  # Write-behind and the next stats refresh
+            assert {k: health(ports)["ws"][k] for k in ("masters", "slaves")} == {"masters": 1, "slaves": 1}
+            sessions = get_json(ports, "/sessions")["sessions"]
+            assert {s["kind"] for s in sessions} == {"master", "slave"}
+
+        # A license created while the hub runs is usable once the API asks the hub to refresh
+        late_key = keys.new_key(keys.LICENSE)
+        db = database.SessionLocal()
+        try:
+            db.add(models.License(portfolio_id=info["portfolio"], client_mt5_login=4242, max_lots=1,
+                                  key_hash=keys.key_hash(late_key), key_prefix=keys.key_prefix(late_key)))
+            db.commit()
+        finally:
+            db.close()
+        assert get_json(ports, "/refresh")["status"] == "refreshing"
+        deadline = time.time() + 10
+        while True:
+            with connect(url + "/v1/slave") as late:
+                late.send(f"HELLO|slave|v1|{late_key}|4242|4.00|0|0")
+                if late.recv(timeout=5).startswith("WELCOME|"):
+                    break
+            assert time.time() < deadline, "the new license never got through"
+            time.sleep(1.1)  # Each refused HELLO counts against this address
+    finally:
+        stop_hub(proc)
+
+    db = database.SessionLocal()
+    try:
+        execution = db.query(models.Execution).filter_by(uid="900_77").one()
+        assert (execution.portfolio_id, execution.mt5_login) == (info["portfolio"], 31337)
+        assert execution.latency_ms is not None
+        key = db.query(models.MasterKey).filter_by(user_id=info["manager"]).one()
+        assert key.last_used_at is not None
+        assert db.query(models.Signal).join(models.MasterPosition).filter(
+            models.MasterPosition.manager_id == info["manager"]).one().raw.startswith("V2|900|OPEN|77|")
+    finally:
+        db.close()
