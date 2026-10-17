@@ -27,9 +27,10 @@ RUN apt-get update && apt-get install -y gcc libffi-dev && rm -rf /var/lib/apt/l
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy Backend Code + migrations
+# Copy Backend Code + migrations, and the compiled EAs the dashboard offers for download
 COPY *.py alembic.ini ./
 COPY alembic/ ./alembic/
+COPY downloads/ ./downloads/
 
 # Copy Built Frontend from Stage 1
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist

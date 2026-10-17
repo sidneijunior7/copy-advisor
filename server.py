@@ -38,6 +38,9 @@ HUB_EVENTS_URL = os.getenv("HUB_EVENTS_URL", "tcp://127.0.0.1:5558")
 HUB_HEALTH_URL = os.getenv("HUB_HEALTH_URL", "http://127.0.0.1:8001/health")
 HUB_BASE_URL = HUB_HEALTH_URL.rsplit("/health", 1)[0]  # Same internal port: /sessions and /refresh
 MAX_MASTER_KEYS = 20  # Active keys per manager
+# The compiled EAs the dashboard offers: tools/compile_eas.ps1 -Publish writes them with manifest.json
+EA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
+EA_KINDS = ("master", "slave")
 
 # Browser origins allowed to call the API from another host (e.g. the Vite dev server).
 # Empty in production: the dashboard is served by this same app.
@@ -435,6 +438,24 @@ def notify_hub():
     threading.Thread(target=call, name="hub-refresh", daemon=True).start()
 
 
+def ea_releases() -> Dict[str, dict]:
+    """downloads/manifest.json: version, file, size, SHA-256 and build time of each EA. An entry whose file is
+    missing, or that names anything but a file in that folder, is left out."""
+    try:
+        with open(os.path.join(EA_DIR, "manifest.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError) as e:
+        logger.warning(f"No EA manifest in {EA_DIR}: {e}")
+        return {}
+    releases = {}
+    for kind in EA_KINDS:
+        info = manifest.get(kind) if isinstance(manifest, dict) else None
+        name = info.get("file") if isinstance(info, dict) else None
+        if isinstance(name, str) and os.path.basename(name) == name and os.path.isfile(os.path.join(EA_DIR, name)):
+            releases[kind] = {k: info.get(k) for k in ("version", "file", "size", "sha256", "built_at")}
+    return releases
+
+
 def fetch_hub_sessions() -> Optional[list]:
     try:
         with urllib.request.urlopen(f"{HUB_BASE_URL}/sessions", timeout=1) as resp:
@@ -726,16 +747,32 @@ def revoke_master_key(key_id: int, current_user: models.User = Depends(get_curre
 def list_connections(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Masters and Slaves connected to the hub right now."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    latest = {kind: release["version"] for kind, release in ea_releases().items()}  # Flags terminals to update
     sessions = fetch_hub_sessions()
     if sessions is None:
-        return {"available": False, "masters": [], "slaves": []}
+        return {"available": False, "masters": [], "slaves": [], "latest": latest}
     portfolios = {p.id: p.name for p in current_user.portfolios}
     labels = {mk.id: mk.label for mk in db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id)}
     masters = [{**s, "key_label": labels.get(s["key_id"])} for s in sessions
                if s["kind"] == "master" and s["manager_id"] == current_user.id]
     slaves = [{**s, "portfolio_name": portfolios[s["portfolio_id"]]} for s in sessions
               if s["kind"] == "slave" and s["portfolio_id"] in portfolios]
-    return {"available": True, "masters": masters, "slaves": slaves}
+    return {"available": True, "masters": masters, "slaves": slaves, "latest": latest}
+
+@app.get("/ea/releases")
+def list_ea_releases(current_user: models.User = Depends(get_current_user)):
+    """The Master and Slave EAs a manager installs, and hands to clients with their license key."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    return ea_releases()
+
+@app.get("/ea/releases/{kind}")
+def download_ea(kind: str, current_user: models.User = Depends(get_current_user)):
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    release = ea_releases().get(kind)
+    if release is None: raise HTTPException(status_code=404)
+    # no-store: a browser would otherwise hand the cached file to a later request without the token
+    return FileResponse(os.path.join(EA_DIR, release["file"]), media_type="application/octet-stream",
+                        filename=release["file"], headers={"Cache-Control": "no-store"})
 
 @app.get("/me/copy-issues")
 def list_copy_issues(days: int = 7, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

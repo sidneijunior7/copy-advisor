@@ -38,7 +38,8 @@ const ACTIONS: Record<string, string> = {
     MODIFY: 'SL/TP',
 };
 
-const formatVolume = (value: number) => Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 8 });
+const formatVolume = (value: number) =>
+    Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
 
 export default function CopyIssues() {
     const [issues, setIssues] = useState<CopyIssue[] | null>(null);

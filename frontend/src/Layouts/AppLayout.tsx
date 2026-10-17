@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, Layers, LayoutDashboard, LogOut, Menu, Plug, Radio, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Download, Layers, LayoutDashboard, LogOut, Menu, Plug, Radio, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -24,6 +24,7 @@ const navByRole: Record<string, NavSection[]> = {
                 { path: '/manager/strategies', label: 'Estratégias', icon: Layers },
                 { path: '/manager/portfolios', label: 'Portfólios', icon: Briefcase },
                 { path: '/manager/clients', label: 'Clientes', icon: Users },
+                { path: '/manager/install', label: 'Instalação', icon: Download },
             ],
         },
     ],

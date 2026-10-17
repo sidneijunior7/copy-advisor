@@ -38,6 +38,15 @@ O hub atende WebSocket na porta 8002, em `/v1/master` e `/v1/slave`, atrás do p
 - **No terminal do cliente,** libere `https://signals.trademetric.com.br` em *Ferramentas › Opções › Expert Advisors › Permitir WebRequest*. "Allow DLL imports" deixa de ser necessário. O gráfico mostra o estado da conexão e da licença.
 - **Quem ainda tiver o v3 instalado** troca pelo v4 sem posição copiada aberta. O v4 grava o mapeamento por portfólio (`MQL5\Files\TDM_Mirror\<login>_P<id>.csv`) e usa outra tag nos comentários, então não reconhece cópias abertas pelo v3. Em troca, trocar a chave da licença no v4 não perde as cópias abertas.
 
+### Distribuição dos EAs
+O painel tem a página **Instalação**, com o Master e o Slave da versão atual para baixar e o passo a passo no MetaTrader 5. Os arquivos vêm de `downloads/`, que entra na imagem da API: `downloads/manifest.json` traz a versão, o tamanho e o SHA-256 de cada um. Só gestores baixam (`GET /ea/releases` e `GET /ea/releases/{master|slave}`); o gestor entrega o Slave ao cliente com a chave da licença.
+
+**Para publicar uma versão nova**, depois de mudar um EA e o `#define VERSAO` dele:
+```
+powershell -File tools\compile_eas.ps1 -Publish
+```
+O script compila, copia os `.ex5` para `downloads/` e atualiza o manifesto. Faça o commit de `downloads/` junto com o código e o deploy da API. Em **Conexões**, os terminais numa versão anterior à publicada ganham o aviso "Atualizar para …".
+
 ### Revogação, validade e chaves trocadas
 - **Licença revogada ou expirada:** o terminal fica conectado em modo só-gestão. Ele recebe só as posições que já estavam abertas quando a licença deixou de valer, acompanha o Master até fechá-las e não abre nada novo. Posições abertas depois chegam como `SKIP`, sem conteúdo. Revogar não abre nem fecha nada por conta própria.
 - **Chave nova da licença ou licença removida:** o terminal conectado cai na hora (`ERR|revoked`) e o EA tenta de novo a cada minuto, até receber a chave nova.

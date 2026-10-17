@@ -99,7 +99,19 @@ export type SlaveSession = {
     last_ack_age_s: number | null;
 };
 
-export type Connections = { available: boolean; masters: MasterSession[]; slaves: SlaveSession[] };
+export type EaKind = 'master' | 'slave';
+
+// The current version of each EA, to flag terminals that run an older one
+export type Connections = {
+    available: boolean;
+    masters: MasterSession[];
+    slaves: SlaveSession[];
+    latest: Partial<Record<EaKind, string>>;
+};
+
+// A compiled EA the dashboard offers for download; built_at in UTC with a Z
+export type EaRelease = { version: string; file: string; size: number; sha256: string; built_at: string };
+export type EaReleases = Partial<Record<EaKind, EaRelease>>;
 
 // A copy a Slave could not make, or made smaller: retcode is MT5's TRADE_RETCODE_*. For 10034 (the license's
 // lot limit) volume is what was left out; otherwise it is the volume the order tried

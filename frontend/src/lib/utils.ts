@@ -22,6 +22,18 @@ export const formatDateTime = (value: string | number | Date) =>
 
 export const isPast = (value: string) => parseUtc(value).getTime() <= Date.now();
 
+// "4.01" is older than "4.02". A version that isn't dotted numbers (a test probe) is never called older
+export const isOlderVersion = (version: string, latest?: string) => {
+    if (!latest || !/^\d+(\.\d+)*$/.test(version) || !/^\d+(\.\d+)*$/.test(latest)) return false;
+    const a = version.split('.').map(Number);
+    const b = latest.split('.').map(Number);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const diff = (a[i] ?? 0) - (b[i] ?? 0);
+        if (diff !== 0) return diff < 0;
+    }
+    return false;
+};
+
 // As the hub sees it: a revoked or expired license opens nothing new and keeps managing what was open
 export const licenseIsValid = (license: { is_active: boolean; expires_at: string | null }) =>
     license.is_active && (license.expires_at == null || !isPast(license.expires_at));

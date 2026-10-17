@@ -1,5 +1,7 @@
 """Managers editing licenses (limit, revoke, reactivate) and portfolio composition."""
 import datetime
+import hashlib
+import json
 import os
 import uuid
 
@@ -135,7 +137,8 @@ def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
     portfolio_id, _ = make_portfolio(manager_id)
     other_id, _ = make_manager()
     other_portfolio, _ = make_portfolio(other_id)
-    assert client.get("/me/connections", headers=headers).json() == {"available": False, "masters": [], "slaves": []}
+    down = client.get("/me/connections", headers=headers).json()
+    assert {k: down[k] for k in ("available", "masters", "slaves")} == {"available": False, "masters": [], "slaves": []}
 
     monkeypatch.setattr(server, "fetch_hub_sessions", lambda: [
         {"kind": "slave", "portfolio_id": portfolio_id, "license_id": 1, "login": 1},
@@ -147,6 +150,61 @@ def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
     assert body["available"] is True
     assert [s["login"] for s in body["slaves"]] == [1] and body["slaves"][0]["portfolio_name"] == "P"
     assert [m["login"] for m in body["masters"]] == [900]
+
+def publish_eas(folder, **versions):
+    manifest = {}
+    for kind, version in versions.items():
+        name = f"Trademetric Copy Trader {kind.title()}.ex5"
+        (folder / name).write_bytes(f"{kind} {version}".encode())
+        manifest[kind] = {"version": version, "file": name, "size": 10, "sha256": "ab" * 32, "built_at": "2026-10-17T23:00:00Z"}
+    return manifest
+
+
+def test_managers_download_the_published_eas(client, monkeypatch, tmp_path):
+    manager_id, headers = make_manager()
+    monkeypatch.setattr(server, "EA_DIR", str(tmp_path))
+    assert client.get("/ea/releases", headers=headers).json() == {}  # No manifest yet
+
+    manifest = publish_eas(tmp_path, master="4.00", slave="4.02")
+    manifest["probe"] = {"version": "1", "file": "../server.py"}  # Not an EA kind, and outside the folder
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    releases = client.get("/ea/releases", headers=headers).json()
+    assert {kind: r["version"] for kind, r in releases.items()} == {"master": "4.00", "slave": "4.02"}
+
+    r = client.get("/ea/releases/slave", headers=headers)
+    assert r.status_code == 200 and r.content == b"slave 4.02" and r.headers["cache-control"] == "no-store"
+    assert r.headers["content-disposition"] == "attachment; filename*=utf-8''Trademetric%20Copy%20Trader%20Slave.ex5"
+    assert client.get("/ea/releases/probe", headers=headers).status_code == 404
+
+    monkeypatch.setattr(server, "fetch_hub_sessions", lambda: [
+        {"kind": "master", "manager_id": manager_id, "key_id": 9, "login": 900, "ea_version": "4.00"}])
+    assert client.get("/me/connections", headers=headers).json()["latest"] == {"master": "4.00", "slave": "4.02"}
+
+    _, dev_headers = make_manager(role="TDM_DEV")
+    assert client.get("/ea/releases", headers=dev_headers).status_code == 403
+    assert client.get("/ea/releases/slave", headers=dev_headers).status_code == 403
+    assert client.get("/ea/releases/slave").status_code == 401
+
+
+def test_a_manifest_entry_without_its_file_is_not_offered(client, monkeypatch, tmp_path):
+    _, headers = make_manager()
+    monkeypatch.setattr(server, "EA_DIR", str(tmp_path))
+    manifest = publish_eas(tmp_path, master="4.00", slave="4.02")
+    (tmp_path / manifest["slave"]["file"]).unlink()
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    assert list(client.get("/ea/releases", headers=headers).json()) == ["master"]
+    assert client.get("/ea/releases/slave", headers=headers).status_code == 404
+
+
+def test_the_repository_publishes_both_eas():
+    """downloads/ goes into the API image: tools/compile_eas.ps1 -Publish keeps it current."""
+    releases = server.ea_releases()
+    assert set(releases) == {"master", "slave"}
+    for release in releases.values():
+        path = os.path.join(server.EA_DIR, release["file"])
+        assert os.path.getsize(path) == release["size"]
+        assert hashlib.sha256(open(path, "rb").read()).hexdigest() == release["sha256"]
+
 
 def add_execution(portfolio_id, login, retcode, uid="900_1", action="OPEN", volume=0.1, days_ago=0.0):
     db = database.SessionLocal()

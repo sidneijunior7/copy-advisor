@@ -16,6 +16,7 @@ import Strategies from './pages/manager/Strategies';
 import Portfolios from './pages/manager/Portfolios';
 import Clients from './pages/manager/Clients';
 import Connections from './pages/manager/Connections';
+import Install from './pages/manager/Install';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -63,6 +64,7 @@ function App() {
                 <Route path="strategies" element={<Strategies />} />
                 <Route path="portfolios" element={<Portfolios />} />
                 <Route path="clients" element={<Clients />} />
+                <Route path="install" element={<Install />} />
               </Route>
             </Route>
 

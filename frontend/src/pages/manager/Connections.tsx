@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Plug, RadioTower, ServerOff, Unplug, Users } from 'lucide-react';
 import api, { type Connections as HubConnections } from '../../api';
 import Card from '../../components/Card';
@@ -8,9 +9,23 @@ import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
-import { formatAgo, formatDateTime, formatTime } from '../../lib/utils';
+import { formatAgo, formatDateTime, formatTime, isOlderVersion } from '../../lib/utils';
 
 const POLL_MS = 10_000;
+
+// The EA version of a terminal, with a link to the download page when a newer one is published
+function EaVersion({ version, latest }: { version: string; latest?: string }) {
+    return (
+        <span className="inline-flex items-center gap-2">
+            <span className="font-mono text-xs text-muted-foreground">{version || '—'}</span>
+            {isOlderVersion(version, latest) && (
+                <Link to="/manager/install" title="Baixe a versão nova em Instalação">
+                    <Badge variant="warning">Atualizar para {latest}</Badge>
+                </Link>
+            )}
+        </span>
+    );
+}
 
 export default function Connections() {
     const [data, setData] = useState<HubConnections | null>(null);
@@ -121,7 +136,7 @@ export default function Connections() {
                                         <TableRow key={`${m.key_id}:${m.login}`}>
                                             <TableCell className="font-medium">{m.key_label ?? `Chave #${m.key_id}`}</TableCell>
                                             <TableCell className="font-mono font-semibold">{m.login}</TableCell>
-                                            <TableCell className="font-mono text-xs text-muted-foreground">{m.ea_version || '—'}</TableCell>
+                                            <TableCell><EaVersion version={m.ea_version} latest={data.latest?.master} /></TableCell>
                                             <TableCell>
                                                 {formatDateTime(m.connected_at * 1000)}{' '}
                                                 <span className="text-muted-foreground">({connectedFor(m.connected_at)})</span>
@@ -159,7 +174,7 @@ export default function Connections() {
                                         <TableRow key={s.license_id}>
                                             <TableCell className="font-medium">{s.portfolio_name}</TableCell>
                                             <TableCell className="font-mono font-semibold">{s.login}</TableCell>
-                                            <TableCell className="font-mono text-xs text-muted-foreground">{s.ea_version || '—'}</TableCell>
+                                            <TableCell><EaVersion version={s.ea_version} latest={data.latest?.slave} /></TableCell>
                                             <TableCell>
                                                 {s.active ? (
                                                     <Badge variant="success">Ativo</Badge>
