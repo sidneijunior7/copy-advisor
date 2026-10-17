@@ -260,6 +260,15 @@ def test_exec_latency_matches_the_pos_it_answers():
     assert h.core.latency_stats() == {"count": 1, "p50": 250, "p95": 250, "max": 250}
 
 
+@pytest.mark.parametrize("retcode", [10019, 10034, 10018])  # No margin, lot limit, market closed
+def test_a_copy_that_did_not_happen_has_no_latency(retcode):
+    h = Harness(directory=make_directory(portfolios=(7,)))
+    h.v2("OPEN", 1, 1.0)
+    h.exec("900_1", 1, retcode=retcode)
+    assert h.jobs[-1]["latency_ms"] is None and h.jobs[-1]["retcode"] == retcode
+    assert h.core.latency_stats() == {"count": 0}
+
+
 def test_exec_for_another_position_or_portfolio_has_no_latency():
     h = Harness(directory=make_directory(portfolios=(7,)))
     h.v2("OPEN", 1, 1.0)

@@ -737,6 +737,26 @@ def list_connections(current_user: models.User = Depends(get_current_user), db: 
               if s["kind"] == "slave" and s["portfolio_id"] in portfolios]
     return {"available": True, "masters": masters, "slaves": slaves}
 
+@app.get("/me/copy-issues")
+def list_copy_issues(days: int = 7, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Copies the Slaves of this manager's portfolios could not make, or made smaller, in the last `days` days:
+    the broker refused the order, there was not enough margin, or the license's lot limit held part of it back
+    (the volume is what was left out). Each Slave reports a given failure once. Newest first, at most 200."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolios = {p.id: p.name for p in current_user.portfolios}
+    if not portfolios:
+        return []
+    since = datetime.datetime.utcnow() - datetime.timedelta(days=max(1, min(days, 90)))
+    rows = (db.query(models.Execution)
+            .filter(models.Execution.portfolio_id.in_(portfolios), models.Execution.created_at >= since,
+                    models.Execution.retcode.notin_(models.EXECUTION_DONE))
+            .order_by(models.Execution.created_at.desc(), models.Execution.id.desc()).limit(200).all())
+    licenses = {(l.portfolio_id, l.client_mt5_login): l.id
+                for l in db.query(models.License).filter(models.License.portfolio_id.in_(portfolios))}
+    return [{"at": r.created_at, "portfolio_id": r.portfolio_id, "portfolio_name": portfolios[r.portfolio_id],
+             "login": r.mt5_login, "license_id": licenses.get((r.portfolio_id, r.mt5_login)), "uid": r.uid,
+             "action": r.action, "volume": r.volume, "retcode": r.retcode} for r in rows]
+
 @app.get("/licenses")
 def list_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)

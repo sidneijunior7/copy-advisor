@@ -100,3 +100,17 @@ export type SlaveSession = {
 };
 
 export type Connections = { available: boolean; masters: MasterSession[]; slaves: SlaveSession[] };
+
+// A copy a Slave could not make, or made smaller: retcode is MT5's TRADE_RETCODE_*. For 10034 (the license's
+// lot limit) volume is what was left out; otherwise it is the volume the order tried
+export type CopyIssue = {
+    at: string;
+    portfolio_id: number;
+    portfolio_name: string;
+    login: number;
+    license_id: number | null;
+    uid: string; // <master login>_<position id>
+    action: string;
+    volume: number | null;
+    retcode: number;
+};

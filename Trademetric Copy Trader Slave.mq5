@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "4.01"
-#define VERSAO "4.01"
+#property version   "4.02"
+#define VERSAO "4.02"
 
 #include <Trade\Trade.mqh>
 #include "Include/TDM/WsClient.mqh"
@@ -442,10 +442,13 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
    double alvo = AlvoNoLimite(c, uid, sym, cheio);
    if(cheio - alvo > 1e-9) {
       int vd = VolumeDigits(sym);
-      AvisarUmaVez("limite:" + uid + ":" + DoubleToString(cheio, vd),
-                   alvo > 0 ? StringFormat("Limite de %s lotes da licença: cópia %s com %s em vez de %s", DoubleToString(max_lots_limit, 2),
-                                           uid, DoubleToString(alvo, vd), DoubleToString(cheio, vd))
-                            : StringFormat("Limite de %s lotes da licença atingido: posição %s não copiada", DoubleToString(max_lots_limit, 2), uid));
+      if(AvisarUmaVez("limite:" + uid + ":" + DoubleToString(cheio, vd),
+                      alvo > 0 ? StringFormat("Limite de %s lotes da licença: cópia %s com %s em vez de %s", DoubleToString(max_lots_limit, 2),
+                                              uid, DoubleToString(alvo, vd), DoubleToString(cheio, vd))
+                               : StringFormat("Limite de %s lotes da licença atingido: posição %s não copiada", DoubleToString(max_lots_limit, 2), uid))
+         && (c >= 0 || licenca_ativa))
+         // O painel mostra o volume que ficou de fora, uma vez por volume do master
+         Reportar(uid, c < 0 ? "OPEN" : "ADD", 0, NormalizeDouble(cheio - alvo, vd), 0, TRADE_RETCODE_LIMIT_VOLUME);
       // A cópia passa a seguir o master na proporção que de fato recebeu: parciais continuam proporcionais
       if(alvo > 0) escala = alvo / vol;
    }
@@ -559,8 +562,8 @@ bool Abrir(int c, int type, double vol, double sl, double tp, string action) {
    string sym = copias[c].symbol;
    ENUM_ORDER_TYPE ot = type == 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    if(!TemMargem(sym, ot, vol)) {
-      AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s %s", action, sym, DoubleToString(vol, 2)));
-      Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
+      if(AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s %s", action, sym, DoubleToString(vol, 2))))
+         Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
       return false;
    }
    trade.SetExpertMagicNumber(inp_keep_original_magic ? (ulong)copias[c].magic : standard_magic_number);
@@ -601,8 +604,8 @@ bool AjustarNetting(int c, int type, double alvo, bool pode_abrir) {
    if(vol <= 0) return true;
    ENUM_ORDER_TYPE ot = delta > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    if(MathAbs(alvo_liq) > MathAbs(atual) && !TemMargem(sym, ot, vol)) {
-      AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s", sym, DoubleToString(vol, 2)));
-      Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
+      if(AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s", sym, DoubleToString(vol, 2))))
+         Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
       copias[c].type = tipo_antigo;
       copias[c].alvo = alvo_antigo;
       return false;
@@ -732,8 +735,12 @@ bool Executar(string uid, string sym, ENUM_ORDER_TYPE ot, double vol, double sl,
       }
       break;
    }
-   PrintFormat("Falha em %s %s %s: %u %s", action, sym, DoubleToString(vol, VolumeDigits(sym)), rc, trade.ResultRetcodeDescription());
-   Reportar(uid, action, 0, vol, 0, rc);
+   // Uma entrada atrasada é tentada de novo a cada snapshot: a mesma recusa (mercado fechado, por exemplo) sai
+   // no log e vai ao painel uma vez só
+   if(PrimeiraVez(StringFormat("falha:%s|%s|%u", uid, action, rc))) {
+      PrintFormat("Falha em %s %s %s: %u %s", action, sym, DoubleToString(vol, VolumeDigits(sym)), rc, trade.ResultRetcodeDescription());
+      Reportar(uid, action, 0, vol, 0, rc);
+   }
    return false;
 }
 
@@ -754,8 +761,10 @@ bool FecharTicket(string uid, ulong ticket, double vol, string action) {
       }
       break;
    }
-   PrintFormat("Falha ao fechar #%I64u (%s): %u %s", ticket, uid, rc, trade.ResultRetcodeDescription());
-   Reportar(uid, action, (long)ticket, vol, 0, rc);
+   if(PrimeiraVez(StringFormat("falha:%s|%s|%u", uid, action, rc))) {
+      PrintFormat("Falha ao fechar #%I64u (%s): %u %s", ticket, uid, rc, trade.ResultRetcodeDescription());
+      Reportar(uid, action, (long)ticket, vol, 0, rc);
+   }
    return false;
 }
 
@@ -1176,10 +1185,17 @@ void Adicionar(string &list[], string value) {
    list[n] = value;
 }
 
-void AvisarUmaVez(string key, string message) {
-   if(Contem(avisados, key)) return;
+// true só na primeira vez que a chave aparece (a lista recomeça depois de 1000 chaves)
+bool PrimeiraVez(string key) {
+   if(Contem(avisados, key)) return false;
    if(ArraySize(avisados) > 1000) ArrayResize(avisados, 0);
    Adicionar(avisados, key);
+   return true;
+}
+
+bool AvisarUmaVez(string key, string message) {
+   if(!PrimeiraVez(key)) return false;
    Print(message);
+   return true;
 }
 //+------------------------------------------------------------------+

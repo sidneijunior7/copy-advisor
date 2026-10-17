@@ -341,10 +341,11 @@ class HubCore:
             return
         _, _, _, uid, action, position_id, volume, price, retcode, seq = f
         # The slave reports the last seq it applied. It only measures this execution when that POS was
-        # about the same position; a late entry through SNAP still counts, from the POS it missed.
+        # about the same position; a late entry through SNAP still counts, from the POS it missed. A refused
+        # order or a copy held back by the lot limit is no execution: it has no latency.
         latency_ms = None
         sent = self.sent.get((portfolio_id, int(seq)))
-        if sent is not None and sent[0] == uid:
+        if sent is not None and sent[0] == uid and int(retcode) in models.EXECUTION_DONE:
             latency_ms = max(0, round((self.clock() - sent[1]) * 1000))
             self.latencies.append(latency_ms)
         self.persist({

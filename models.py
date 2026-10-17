@@ -142,6 +142,12 @@ class Signal(Base):
     raw = Column(Text)
     received_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
+# MT5 TRADE_RETCODE_PLACED, DONE and DONE_PARTIAL: the order went through. Anything else in executions.retcode
+# is a copy the Slave could not make, or made smaller: the broker's refusal, NO_MONEY (10019) from the Slave's
+# own margin check, or LIMIT_VOLUME (10034) for the volume the license's lot limit held back.
+EXECUTION_DONE = (10008, 10009, 10010)
+
+
 class Execution(Base):
     """Execution reports sent by Slave EAs."""
     __tablename__ = "executions"

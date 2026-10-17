@@ -148,6 +148,41 @@ def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
     assert [s["login"] for s in body["slaves"]] == [1] and body["slaves"][0]["portfolio_name"] == "P"
     assert [m["login"] for m in body["masters"]] == [900]
 
+def add_execution(portfolio_id, login, retcode, uid="900_1", action="OPEN", volume=0.1, days_ago=0.0):
+    db = database.SessionLocal()
+    try:
+        db.add(models.Execution(uid=uid, portfolio_id=portfolio_id, mt5_login=login, action=action, position_id=0,
+                                volume=volume, price=0, retcode=retcode, seq=1,
+                                created_at=datetime.datetime.utcnow() - datetime.timedelta(days=days_ago)))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_copy_issues_list_what_the_slaves_could_not_copy(client):
+    manager_id, headers = make_manager()
+    portfolio_id, _ = make_portfolio(manager_id)
+    license_id = create_license(client, headers, portfolio_id, 3001).json()["id"]
+    other_id, _ = make_manager()
+    other_portfolio, _ = make_portfolio(other_id)
+
+    add_execution(portfolio_id, 3001, 10009)                                            # Copied: not an issue
+    add_execution(portfolio_id, 3001, 10034, uid="900_2", volume=0.15)                   # Lot limit held 0.15 back
+    add_execution(portfolio_id, 3001, 10018, uid="900_3", action="CLOSE")                # Market closed
+    add_execution(portfolio_id, 4040, 10019, uid="900_4")                                # A login without a license
+    add_execution(portfolio_id, 3001, 10019, uid="900_5", days_ago=10)                   # Too old
+    add_execution(other_portfolio, 3001, 10019, uid="900_6")                             # Another manager's
+
+    issues = client.get("/me/copy-issues", headers=headers).json()
+    assert [(i["uid"], i["retcode"]) for i in issues] == [("900_4", 10019), ("900_3", 10018), ("900_2", 10034)]
+    assert issues[2]["volume"] == 0.15 and issues[2]["license_id"] == license_id and issues[2]["portfolio_name"] == "P"
+    assert issues[0]["license_id"] is None
+    assert [i["uid"] for i in client.get("/me/copy-issues?days=30", headers=headers).json()][-1] == "900_5"
+
+    _, dev_headers = make_manager(role="TDM_DEV")
+    assert client.get("/me/copy-issues", headers=dev_headers).status_code == 403
+
+
 def test_manager_edits_the_lot_limit_and_the_ea_receives_it(client):
     manager_id, headers = make_manager()
     portfolio_id, _ = make_portfolio(manager_id)

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Plug, RadioTower, ServerOff, Unplug, Users } from 'lucide-react';
 import api, { type Connections as HubConnections } from '../../api';
 import Card from '../../components/Card';
+import CopyIssues from '../../components/CopyIssues';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
@@ -195,6 +196,8 @@ export default function Connections() {
                     </Card>
                 </>
             )}
+
+            <CopyIssues />
         </div>
     );
 }
