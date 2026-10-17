@@ -46,10 +46,15 @@ def _build_connect_args():
     return connect_args
 
 
+# A request waits at most DB_POOL_TIMEOUT seconds for a free connection (SQLAlchemy's default is 30), so a
+# stalled database turns into quick 503s instead of a pile of waiting threads
+_pool_args = {"pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "10"))} if SQLALCHEMY_DATABASE_URL.startswith("postgresql") else {}
+
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, 
     connect_args=_build_connect_args(),
     pool_pre_ping=True,
+    **_pool_args,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -42,6 +42,14 @@ const actionLabels: Record<string, string> = {
 // Close codes set by the server (server.py)
 const CLOSE_UNAUTHORIZED = 4401; // Token invalid or expired: log out
 const CLOSE_FORBIDDEN = 4403; // This account has no live view: don't retry
+const CLOSE_TRY_LATER = 1013; // Database unavailable or the API still starting: retry with backoff
+
+// Reconnect after 1 s, doubling up to 30 s (±20%), so open tabs don't hammer an API whose database is down.
+// A STATE message (a full round trip through the database) resets it.
+const RECONNECT_MIN_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+const reconnectDelay = (attempt: number) =>
+    Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** Math.min(attempt, 5)) * (0.8 + Math.random() * 0.4);
 
 export type LogEntry = {
     id: number;
@@ -70,6 +78,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
     const socketRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutRef = useRef<number | null>(null);
+    const reconnectAttemptRef = useRef(0);
 
     const logIdRef = useRef(0);
 
@@ -111,6 +120,7 @@ export function useWebSocket(): UseWebSocketReturn {
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'STATE') {
+                    reconnectAttemptRef.current = 0;
                     const state: Record<string, Trade> = {};
                     for (const [key, data] of Object.entries(msg.trades)) state[key] = toTrade(data);
                     setTrades(state);
@@ -147,9 +157,10 @@ export function useWebSocket(): UseWebSocketReturn {
                 return;
             }
             setStatus('DISCONNECTED');
-            addLog('Conexão perdida. Reconectando...', 'error');
-            // Reconnect
-            reconnectTimeoutRef.current = window.setTimeout(connect, 3000);
+            const delay = reconnectDelay(reconnectAttemptRef.current++);
+            const reason = event.code === CLOSE_TRY_LATER ? 'Servidor temporariamente indisponível' : 'Conexão perdida';
+            addLog(`${reason}. Nova tentativa em ${Math.round(delay / 1000)} s...`, 'error');
+            reconnectTimeoutRef.current = window.setTimeout(connect, delay);
         };
 
         ws.onerror = () => {

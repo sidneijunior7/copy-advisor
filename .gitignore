@@ -47,3 +47,7 @@ ESTIMATIVA_HOSPEDAGEM.md
 
 # Análise regulatória (Res. CVM 21)
 ANALISE_RES21.md
+
+# Auditoria de performance (descreve vetores de abuso ainda abertos) e o laboratório de carga
+AUDITORIA_PERFORMANCE.md
+tools/perf/

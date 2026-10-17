@@ -6,7 +6,7 @@ O monólito passa a ser dois serviços, construídos a partir do mesmo repositó
 
 | Serviço | Dockerfile | O que faz | Portas |
 |---|---|---|---|
-| `mirror-api` | `Dockerfile` | API, dashboard e `/ws`; roda `migrate.py` ao subir | 8000 (domínio `mirror.trademetric.com.br`) |
+| `mirror-api` | `Dockerfile` | API, dashboard e `/ws`; migra o banco ao subir, em segundo plano | 8000 (domínio `mirror.trademetric.com.br`) |
 | `mirror-hub` | `Dockerfile.hub` | Recebe os Masters, publica para os Slaves, grava sinais | 8002 (WebSocket, domínio `signals.trademetric.com.br`); 5557 e 5556 publicadas no host até o corte do ZMQ; 5558 e 8001 só na rede interna |
 
 Um deploy da API não derruba mais os sinais. O hub roda sozinho, com o próprio `/health` na porta 8001.
@@ -59,6 +59,13 @@ Faça o corte depois de 7 dias com todos os EAs no v4: o `/health` do hub não p
 3. **Opcional:** rode `DATABASE_URL=<cópia do banco> python -m alembic check` depois de migrar uma cópia. Se o banco foi criado pelo `supabase_schema.sql`, vão aparecer diferenças de `NOT NULL`. Elas são esperadas e inofensivas.
 
 O `migrate.py` reconhece sozinho um banco criado antes do Alembic: marca a revisão `0001_baseline` e aplica a `0002`. No Postgres a migração é transacional, então se falhar não sobra nada pela metade.
+
+**A API sobe mesmo com o banco fora.** Ela migra numa thread (`MIGRATE_ON_START=1`, definido no `Dockerfile`):
+- Enquanto a migração não termina, as rotas de dados respondem 503, o `/ws` fecha com 1013 e o `/health` mostra `"schema": "pending"`. O `/health/live` (o healthcheck do container) responde normalmente.
+- Se o banco estiver fora, a API tenta de novo com espera crescente, até 30 s entre tentativas, e registra uma linha de log por minuto.
+- Se a migração falhar por outro motivo, o `/health` mostra `"schema": "failed"` e o erro fica no log. As rotas de dados continuam em 503 até um deploy corrigido.
+
+Antes, o `python migrate.py` rodava antes do uvicorn: com o banco fora no boot, o container saía com erro e o Swarm o reiniciava em loop.
 
 ## EasyPanel
 

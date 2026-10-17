@@ -1,5 +1,6 @@
 """
-Apply database migrations. Runs before the API starts (see Dockerfile CMD).
+Apply database migrations. The API container runs main() in a thread at startup (server.py,
+MIGRATE_ON_START=1); locally run `python migrate.py` before starting the API.
 
 Databases created before Alembic (by Base.metadata.create_all or supabase_schema.sql)
 have tables but no alembic_version: they are stamped at the baseline and then upgraded.
@@ -23,22 +24,22 @@ ADVISORY_LOCK_ID = 727001  # Arbitrary, just has to be the same for every migrat
 MAX_DB_RETRIES = 5
 
 
-def connect():
-    for attempt in range(1, MAX_DB_RETRIES + 1):
+def connect(retries: int = MAX_DB_RETRIES):
+    for attempt in range(1, retries + 1):
         try:
             return database.engine.connect()
         except Exception as e:
-            if attempt == MAX_DB_RETRIES:
+            if attempt == retries:
                 raise
-            logger.warning(f"DB connection attempt {attempt}/{MAX_DB_RETRIES} failed: {e}. Retrying in {attempt * 2}s...")
+            logger.warning(f"DB connection attempt {attempt}/{retries} failed: {e}. Retrying in {attempt * 2}s...")
             time.sleep(attempt * 2)
 
 
-def main():
+def main(retries: int = MAX_DB_RETRIES):
     cfg = Config(os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini"))
     cfg.attributes["configure_logger"] = False
 
-    conn = connect()
+    conn = connect(retries)
     try:
         if database.IS_POSTGRES:
             # Two API containers starting together must not migrate at the same time.

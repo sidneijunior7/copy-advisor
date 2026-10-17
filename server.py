@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, H
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 import uvicorn
 import os
@@ -31,7 +32,8 @@ observability.setup("api")
 logger = logging.getLogger(__name__)
 
 # The signal hub (hub.py) runs as a separate service; the API only relays its events to the dashboard.
-# Schema is managed by Alembic: run `python migrate.py` before starting (the Dockerfile CMD does).
+# Schema is managed by Alembic: the container migrates in the background at startup (MIGRATE_ON_START=1,
+# see SchemaState); elsewhere run `python migrate.py` before starting.
 HUB_EVENTS_URL = os.getenv("HUB_EVENTS_URL", "tcp://127.0.0.1:5558")
 HUB_HEALTH_URL = os.getenv("HUB_HEALTH_URL", "http://127.0.0.1:8001/health")
 HUB_BASE_URL = HUB_HEALTH_URL.rsplit("/health", 1)[0]  # Same internal port: /sessions and /refresh
@@ -44,6 +46,7 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o
 WS_AUTH_TIMEOUT = 5  # Seconds a dashboard has to send its token after connecting
 WS_CLOSE_UNAUTHORIZED = 4401  # The client should log out instead of reconnecting
 WS_CLOSE_FORBIDDEN = 4403
+WS_CLOSE_TRY_LATER = 1013  # Database unavailable or still migrating
 
 # Failed logins and license checks allowed per client IP inside the window, then 429 until it slides
 AUTH_MAX_FAILURES = int(os.getenv("AUTH_MAX_FAILURES", "10"))
@@ -88,6 +91,76 @@ class FailureLimiter:
 
 
 failure_limiter = FailureLimiter(AUTH_MAX_FAILURES, AUTH_FAILURE_WINDOW_SECONDS)
+
+# The database is unreachable or saturated (not a bug): 503 and a log line, instead of a 500 and a traceback
+DATABASE_DOWN = (OperationalError, InterfaceError, PoolTimeoutError)
+
+
+class OutageLog:
+    """Logs a failure that repeats for as long as an outage lasts at most once per `every` seconds, with how
+    many happened in between. A dashboard reconnecting every few seconds otherwise wrote ~170 MB of
+    tracebacks a day while the database was down."""
+
+    def __init__(self, every: float = 60.0, clock=time.monotonic):
+        self.every = every
+        self.clock = clock
+        self.last: Optional[float] = None
+        self.folded = 0
+        self.lock = threading.Lock()
+
+    def __call__(self, where: str, e: Exception) -> bool:
+        with self.lock:
+            now = self.clock()
+            if self.last is not None and now - self.last < self.every:
+                self.folded += 1
+                return False
+            folded, self.folded, self.last = self.folded, 0, now
+        detail = (str(e).strip().splitlines() or [""])[0][:200]
+        more = f" ({folded} more since the last report)" if folded else ""
+        logger.error(f"Database unavailable in {where}: {type(e).__name__}: {detail}{more}")
+        return True
+
+
+database_outage = OutageLog()
+
+
+class SchemaState:
+    """Whether the database is at the code's migration head. The container migrates in a thread
+    (MIGRATE_ON_START=1), so the API comes up and answers /health/live with the database away: running
+    migrate.py before uvicorn made a database outage at boot restart the container in a loop. Data routes
+    answer 503 until it is done. Without MIGRATE_ON_START (tests, `python server.py`) the schema was
+    migrated beforehand."""
+
+    def __init__(self):
+        self.state = "ready"  # pending, ready or failed
+
+    @property
+    def ready(self) -> bool:
+        return self.state == "ready"
+
+
+schema = SchemaState()
+MIGRATE_RETRY_MAX_SECONDS = 30.0
+
+
+def migrate_in_background(sleep=time.sleep):
+    import migrate  # Alembic only loads when this process migrates
+
+    delay = 2.0
+    while True:
+        try:
+            migrate.main(retries=1)
+            schema.state = "ready"
+            logger.info("Database schema is current: data routes enabled")
+            return
+        except DATABASE_DOWN as e:  # Unreachable, or lost mid-migration (Postgres rolled it back): try again
+            database_outage("migration", e)
+            sleep(delay)
+            delay = min(delay * 2, MIGRATE_RETRY_MAX_SECONDS)
+        except Exception as e:  # A broken migration doesn't fix itself: data routes stay at 503 until a new deploy
+            schema.state = "failed"
+            logger.exception(f"Migration failed: {e}")
+            return
 
 
 def client_ip(request: Request) -> str:
@@ -213,6 +286,9 @@ trade_manager = TradeManager()
 # --- FastAPI App ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if os.getenv("MIGRATE_ON_START") == "1":
+        schema.state = "pending"
+        threading.Thread(target=migrate_in_background, name="migrate", daemon=True).start()
     stop = threading.Event()
     relay = threading.Thread(target=trade_manager.relay_hub_events, args=(asyncio.get_running_loop(), stop),
                              name="hub-relay", daemon=True)
@@ -222,6 +298,15 @@ async def lifespan(app: FastAPI):
     relay.join(2)
 
 app = FastAPI(lifespan=lifespan)
+
+
+async def database_unavailable(request: Request, exc: Exception):
+    database_outage(request.url.path, exc)
+    return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        content={"detail": "Database unavailable, try again shortly"})
+
+for _error in DATABASE_DOWN:
+    app.add_exception_handler(_error, database_unavailable)
 if CORS_ORIGINS:
     from fastapi.middleware.cors import CORSMiddleware
     # The token travels in the Authorization header, not in cookies: no credentials needed
@@ -234,12 +319,21 @@ if CORS_ORIGINS:
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- Dependencies ---
-def get_db():
+# Routes that touch the database are plain `def`: FastAPI runs them in its thread pool. The SQLAlchemy calls
+# block, and inside `async def` a slow or unreachable database stalled every request, /health/live included,
+# until Docker restarted the API.
+def get_session():
     db = database.SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+def get_db(db: Session = Depends(get_session)):
+    """The session of a data route: 503 until the schema is current (see SchemaState)."""
+    if not schema.ready:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Starting up, try again shortly")
+    return db
 
 def user_from_token(token: str, db: Session) -> Optional[models.User]:
     """The account behind a valid, unexpired token, or None."""
@@ -249,7 +343,7 @@ def user_from_token(token: str, db: Session) -> Optional[models.User]:
         return None
     return db.query(models.User).filter(models.User.email == email).first()
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     user = user_from_token(token, db)
     if user is None:
         raise HTTPException(
@@ -387,6 +481,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # the first message carries it instead.
     await websocket.accept()
     try:
+        if not schema.ready:
+            await websocket.close(code=WS_CLOSE_TRY_LATER)
+            return
         session, close_code = await asyncio.to_thread(ws_session, await receive_auth(websocket, WS_AUTH_TIMEOUT))
         if session is None:
             await websocket.close(code=close_code)
@@ -410,6 +507,12 @@ async def websocket_endpoint(websocket: WebSocket):
             expires_at = renewed[2]
     except WebSocketDisconnect:
         pass
+    except DATABASE_DOWN as e:
+        database_outage("/ws", e)
+        try:
+            await websocket.close(code=WS_CLOSE_TRY_LATER)  # The dashboard retries with backoff
+        except RuntimeError:  # Already closed by the client
+            pass
     finally:
         trade_manager.disconnect_web(websocket)
 
@@ -433,27 +536,32 @@ async def liveness():
 
 @app.get("/health")
 @app.get("/api/health")
-async def health_check(db: Session = Depends(get_db)):
+def health_check(db: Session = Depends(get_session)):
     db_type = "PostgreSQL (Supabase)" if database.IS_POSTGRES else "SQLite (Local)"
-    hub = await asyncio.to_thread(fetch_hub_health)
+    hub = fetch_hub_health()
     try:
         user_count = db.query(models.User).count()
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        database_outage("/health", e)
         # Only a dead database makes the API itself unhealthy; hub problems are reported, not fatal.
         # The error stays in the log: it can name the database host and user.
-        return JSONResponse(status_code=503, content={"status": "error", "database": "unavailable", "hub": hub})
+        return JSONResponse(status_code=503, content={"status": "error", "database": "unavailable",
+                                                      "schema": schema.state, "hub": hub})
+    if not schema.ready:  # Migrating at startup, or the migration failed: data routes answer 503
+        return JSONResponse(status_code=503, content={"status": "starting" if schema.state == "pending" else "error",
+                                                      "schema": schema.state, "hub": hub})
 
     return {
         "status": "healthy" if hub.get("status") == "healthy" and not hub.get("warming") else "degraded",
         "version": "v2026.09.15",
         "database_type": db_type,
         "user_count": user_count,
+        "schema": schema.state,
         "hub": hub,
     }
 
 @app.post("/token", response_model=Token)
-async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     check_not_limited("login", request)
     logger.info(f"Login attempt for user: {form_data.username}")
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
@@ -484,7 +592,7 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/token/refresh", response_model=Token)
-async def refresh_access_token(token: str = Depends(oauth2_scheme), current_user: models.User = Depends(get_current_user)):
+def refresh_access_token(token: str = Depends(oauth2_scheme), current_user: models.User = Depends(get_current_user)):
     """A new token for a still-valid one. The session still ends SESSION_MAX_HOURS after the login."""
     auth_time = auth.decode_token(token).get("auth_time")
     access_token = auth.create_access_token(data={"sub": current_user.email, "role": current_user.role},
@@ -492,7 +600,7 @@ async def refresh_access_token(token: str = Depends(oauth2_scheme), current_user
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/admin/managers")
-async def list_managers(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_managers(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
     managers = db.query(models.User).filter(models.User.role == "MANAGER").all()
     # Mask passwords
@@ -500,7 +608,7 @@ async def list_managers(current_user: models.User = Depends(get_current_user), d
     return managers
 
 @app.post("/admin/managers")
-async def create_manager(user: UserCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_manager(user: UserCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -516,7 +624,7 @@ async def create_manager(user: UserCreate, current_user: models.User = Depends(g
     return {"message": "Manager created successfully"}
 
 @app.patch("/admin/managers/{user_id}/status")
-async def update_manager_status(user_id: int, status: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_manager_status(user_id: int, status: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
     if status not in ["active", "frozen", "archived"]: raise HTTPException(status_code=400, detail="Invalid status")
     
@@ -527,7 +635,7 @@ async def update_manager_status(user_id: int, status: str, current_user: models.
     return {"message": f"Manager status updated to {status}"}
 
 @app.post("/strategies")
-async def create_strategy(strategy: StrategyCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_strategy(strategy: StrategyCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     
     # Check if Magic Number already exists for this user
@@ -542,12 +650,12 @@ async def create_strategy(strategy: StrategyCreate, current_user: models.User = 
     return new_strategy
 
 @app.get("/strategies")
-async def list_strategies(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_strategies(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     return current_user.strategies
 
 @app.post("/portfolios")
-async def create_portfolio(portfolio: PortfolioCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_portfolio(portfolio: PortfolioCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     new_portfolio = models.Portfolio(user_id=current_user.id, name=portfolio.name)
     db.add(new_portfolio)
@@ -556,7 +664,7 @@ async def create_portfolio(portfolio: PortfolioCreate, current_user: models.User
     return new_portfolio
 
 @app.get("/portfolios")
-async def list_portfolios(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_portfolios(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     result = []
     for p in current_user.portfolios:
@@ -572,7 +680,7 @@ async def list_portfolios(current_user: models.User = Depends(get_current_user),
     return result
 
 @app.get("/me/manager")
-async def get_manager_details(current_user: models.User = Depends(get_current_user)):
+def get_manager_details(current_user: models.User = Depends(get_current_user)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     return {
         "id": current_user.id,
@@ -583,13 +691,13 @@ async def get_manager_details(current_user: models.User = Depends(get_current_us
 # --- Master keys (SEC-08): one per Master/VPS, shown once, revoked one by one ---
 
 @app.get("/me/master-keys")
-async def list_master_keys(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_master_keys(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     rows = db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id).order_by(models.MasterKey.id).all()
     return [master_key_out(mk) for mk in rows]
 
 @app.post("/me/master-keys")
-async def create_master_key(data: MasterKeyCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_master_key(data: MasterKeyCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The key is in this response only: the database keeps its hash."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     active = db.query(models.MasterKey).filter(models.MasterKey.user_id == current_user.id,
@@ -607,7 +715,7 @@ async def create_master_key(data: MasterKeyCreate, current_user: models.User = D
     return master_key_out(mk, key)
 
 @app.delete("/me/master-keys/{key_id}")
-async def revoke_master_key(key_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def revoke_master_key(key_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The hub drops Masters connected with it at once (WSS) and ignores it on ZMQ."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     mk = db.get(models.MasterKey, key_id)
@@ -621,10 +729,10 @@ async def revoke_master_key(key_id: int, current_user: models.User = Depends(get
     return master_key_out(mk)
 
 @app.get("/me/connections")
-async def list_connections(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_connections(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Masters and Slaves connected to the hub over WSS right now (ZMQ clients can't be seen)."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    sessions = await asyncio.to_thread(fetch_hub_sessions)
+    sessions = fetch_hub_sessions()
     if sessions is None:
         return {"available": False, "masters": [], "slaves": []}
     portfolios = {p.id: p.name for p in current_user.portfolios}
@@ -636,7 +744,7 @@ async def list_connections(current_user: models.User = Depends(get_current_user)
     return {"available": True, "masters": masters, "slaves": slaves}
 
 @app.get("/licenses")
-async def list_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     # Join nicely to show context
     licenses = db.query(models.License).filter(
@@ -646,7 +754,7 @@ async def list_licenses(current_user: models.User = Depends(get_current_user), d
     return [license_out(lic) for lic in licenses]
 
 @app.post("/portfolios/{portfolio_id}/add_strategy/{strategy_id}")
-async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == current_user.id).first()
     strategy = db.query(models.Strategy).filter(models.Strategy.id == strategy_id, models.Strategy.user_id == current_user.id).first()
@@ -659,7 +767,7 @@ async def add_strategy_to_portfolio(portfolio_id: int, strategy_id: int, current
     return {"message": "Strategy added to Portfolio"}
 
 @app.delete("/portfolios/{portfolio_id}/strategies/{strategy_id}")
-async def remove_strategy_from_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def remove_strategy_from_portfolio(portfolio_id: int, strategy_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == current_user.id).first()
     strategy = next((s for s in portfolio.strategies if s.id == strategy_id), None) if portfolio else None
@@ -680,7 +788,7 @@ async def remove_strategy_from_portfolio(portfolio_id: int, strategy_id: int, cu
     return {"message": "Strategy removed from Portfolio"}
 
 @app.post("/licenses")
-async def create_license(license_data: LicenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_license(license_data: LicenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     port = db.query(models.Portfolio).filter(models.Portfolio.id == license_data.portfolio_id, models.Portfolio.user_id == current_user.id).first()
     if not port: raise HTTPException(status_code=404, detail="Portfolio not found")
@@ -714,7 +822,7 @@ def owned_license(license_id: int, user: models.User, db: Session) -> models.Lic
     return lic
 
 @app.post("/licenses/{license_id}/key")
-async def regenerate_license_key(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def regenerate_license_key(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """New Slave key for this license; the previous one stops working at once (the hub drops its connection)."""
     lic = owned_license(license_id, current_user, db)
     if lic.portfolio_id is None:
@@ -727,7 +835,7 @@ async def regenerate_license_key(license_id: int, current_user: models.User = De
     return license_out(lic, key)
 
 @app.patch("/licenses/{license_id}")
-async def update_license(license_id: int, changes: LicenseUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_license(license_id: int, changes: LicenseUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Edit the lot limit, the expiry, or revoke/reactivate. A revoked or expired Slave stops opening positions
     but keeps managing the ones that were open when it stopped being valid."""
     lic = owned_license(license_id, current_user, db)
@@ -746,7 +854,7 @@ async def update_license(license_id: int, changes: LicenseUpdate, current_user: 
     return license_out(lic)
 
 @app.post("/api/license/check")
-async def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
+def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
     """Anonymous (the Slave EA calls it); failures are rate limited per IP against key enumeration."""
     check_not_limited("license", request)
     valid_license = None
