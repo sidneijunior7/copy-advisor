@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "4.00"
-#define VERSAO "4.00"
+#property version   "4.01"
+#define VERSAO "4.01"
 
 #include <Trade\Trade.mqh>
 #include "Include/TDM/WsClient.mqh"
@@ -407,15 +407,19 @@ void AplicarSnapshot(string epoch, long seq, string entries) {
    int k = StringSplit(entries, ';', items);
    for(int i = 0; i < k; i++) {
       string p[];
-      if(StringSplit(items[i], ',', p) != 8) continue;
-      Adicionar(vistos, p[0]);
-      AplicarEstado(p[0], (int)StringToInteger(p[1]), p[2], StringToDouble(p[3]), StringToDouble(p[4]),
-                    StringToDouble(p[5]), StringToDouble(p[6]), StringToInteger(p[7]), false);
+      if(StringSplit(items[i], ',', p) == 8) Adicionar(vistos, p[0]);
    }
-   // O que não veio no snapshot foi fechado no master
+   // O que não veio no snapshot foi fechado no master. Fecha antes de abrir: o limite de lotes conta o que
+   // está aberto
    for(int i = ArraySize(copias) - 1; i >= 0; i--) {
       if(i < ArraySize(copias) && !Contem(vistos, copias[i].uid))
          AplicarEstado(copias[i].uid, copias[i].type, "", 0, 0, 0, 0, copias[i].magic, false);
+   }
+   for(int i = 0; i < k; i++) {
+      string p[];
+      if(StringSplit(items[i], ',', p) != 8) continue;
+      AplicarEstado(p[0], (int)StringToInteger(p[1]), p[2], StringToDouble(p[3]), StringToDouble(p[4]),
+                    StringToDouble(p[5]), StringToDouble(p[6]), StringToInteger(p[7]), false);
    }
 }
 
@@ -436,13 +440,24 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
    string sym = c >= 0 ? copias[c].symbol : TraduzirSimbolo(master_symbol);
    if(sym == "") return;
    double escala = c >= 0 ? copias[c].escala : EscalaAtual();
-   double alvo = vol > 0 ? CalcularVolume(sym, vol, escala) : 0;
+   double cheio = vol > 0 ? CalcularVolume(sym, vol, escala) : 0;
+   double alvo = AlvoNoLimite(c, uid, sym, cheio);
+   if(cheio - alvo > 1e-9) {
+      int vd = VolumeDigits(sym);
+      AvisarUmaVez("limite:" + uid + ":" + DoubleToString(cheio, vd),
+                   alvo > 0 ? StringFormat("Limite de %s lotes da licença: cópia %s com %s em vez de %s", DoubleToString(max_lots_limit, 2),
+                                           uid, DoubleToString(alvo, vd), DoubleToString(cheio, vd))
+                            : StringFormat("Limite de %s lotes da licença atingido: posição %s não copiada", DoubleToString(max_lots_limit, 2), uid));
+      // A cópia passa a seguir o master na proporção que de fato recebeu: parciais continuam proporcionais
+      if(alvo > 0) escala = alvo / vol;
+   }
 
    if(c < 0) {
       if(alvo <= 0) return;
       if(!licenca_ativa) {AvisarUmaVez("lic:" + uid, "Licença inativa: posição " + uid + " não copiada"); return;}
       c = NovaCopia(uid, sym, type, magic, escala);
    }
+   copias[c].escala = escala;
 
    bool pode_abrir = licenca_ativa && (ao_vivo || PrecoPerto(sym, type, price_open));
    bool ok = hedging ? AjustarHedging(c, type, alvo, pode_abrir, sl, tp) : AjustarNetting(c, type, alvo, pode_abrir);
@@ -985,9 +1000,27 @@ double EscalaAtual() {
 }
 
 double CalcularVolume(string sym, double master_volume, double escala) {
-   double volume = master_volume * escala;
-   if(max_lots_limit > 0 && volume > max_lots_limit) volume = max_lots_limit;
-   return NormalizarVolume(sym, volume, true);
+   return NormalizarVolume(sym, master_volume * escala, true);
+}
+
+// O limite de lotes da licença vale para a soma das cópias abertas, em todos os símbolos. Uma cópia nova ou
+// um ADD ocupa no máximo o que sobra; abaixo do volume mínimo, não abre. Reduções seguem sempre o master, e
+// o que já está aberto não é reduzido por causa do limite: baixá-lo só barra o que vem depois.
+double AlvoNoLimite(int c, string uid, string sym, double alvo) {
+   if(max_lots_limit <= 0 || alvo <= 0) return alvo;
+   double antes = c >= 0 ? copias[c].alvo : 0;
+   double half_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP) / 2.0;
+   if(alvo <= antes + half_step) return alvo;
+   double livre = max_lots_limit - VolumeDasOutrasCopias(uid);
+   if(alvo <= livre + half_step) return alvo;
+   return MathMax(NormalizarVolume(sym, livre, false), antes);
+}
+
+double VolumeDasOutrasCopias(string uid) {
+   double total = 0;
+   for(int i = 0; i < ArraySize(copias); i++)
+      if(copias[i].uid != uid && !copias[i].done) total += copias[i].alvo;
+   return total;
 }
 
 bool PrecoPerto(string sym, int type, double price_open) {

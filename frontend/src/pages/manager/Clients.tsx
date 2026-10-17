@@ -232,7 +232,12 @@ export default function Clients() {
                                 placeholder="Ex.: 5002441"
                             />
                         </Field>
-                        <Field label="Limite de lotes" htmlFor="license-lots" error={errors.max_lots?.message}>
+                        <Field
+                            label="Limite de lotes"
+                            htmlFor="license-lots"
+                            hint="Soma das cópias abertas na conta. Baixar o limite não fecha posições já abertas."
+                            error={errors.max_lots?.message}
+                        >
                             <Input
                                 {...register('max_lots', {
                                     required: 'Informe o limite',
