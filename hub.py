@@ -37,8 +37,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
-from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError, IntegrityError, DataError
+from sqlalchemy import delete, insert, select, text
+from sqlalchemy.exc import DBAPIError, DataError, IntegrityError, InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from websockets.asyncio.server import serve
 
 import database
@@ -59,7 +60,14 @@ HEARTBEAT_SECONDS = float(os.getenv("HUB_HEARTBEAT_SECONDS", "5"))
 SNAPSHOT_SECONDS = float(os.getenv("HUB_SNAPSHOT_SECONDS", "15"))
 WARMUP_SECONDS = float(os.getenv("HUB_WARMUP_SECONDS", "20"))
 DIRECTORY_TTL_SECONDS = float(os.getenv("HUB_DIRECTORY_TTL_SECONDS", "30"))
-WRITE_QUEUE_SIZE = 10_000
+WRITE_QUEUE_SIZE = 10_000  # Position state, Master accounts, key use
+EXEC_QUEUE_SIZE = 20_000   # Execution reports: dropped first when the database falls behind
+BATCH_MAX = 500            # Jobs per transaction
+SCHEMA_WAIT_SECONDS = 600  # How long writes wait for a schema the hub expects (deployed before its migration)
+# Signals and execution reports older than this many days are deleted daily; 0 keeps everything
+RETENTION_DAYS = int(os.getenv("HUB_RETENTION_DAYS", "0"))
+RETENTION_CHUNK = 5_000
+RETENTION_FIRST_RUN_SECONDS = 600
 STALE_LOOP_SECONDS = 15
 SYNC_MISSES_TO_CLOSE = 2  # A position must be absent from this many V2SYNCs in a row before it is closed
 CLOSED_MEMORY = 10_000    # Recently closed positions remembered so a late message can't reopen them
@@ -565,7 +573,8 @@ def _statement_timeout(session):
 
 
 def _is_connection_error(e: Exception) -> bool:
-    return isinstance(e, DBAPIError) and not isinstance(e, (IntegrityError, DataError))
+    """The database is unreachable or saturated: worth waiting for, however long it lasts."""
+    return isinstance(e, (OperationalError, InterfaceError, PoolTimeoutError))
 
 
 class DirectoryLoader(threading.Thread):
@@ -628,62 +637,124 @@ class PositionLoader(threading.Thread):
 
 
 class Writer(threading.Thread):
-    """Write-behind persistence. Keeps order; retries while the database is unreachable."""
+    """Write-behind persistence, in batches. Each transaction takes what queued up meanwhile (up to BATCH_MAX
+    jobs), so a burst of execution reports costs a few round trips instead of ~5 per report, and writing no
+    longer falls behind a busy Master. State jobs (positions, Master accounts, key use) keep their order and
+    their own queue: when the database can't keep up, execution reports are what gets dropped, never the
+    position state load_positions reads at the next start."""
 
-    def __init__(self):
+    def __init__(self, sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
         super().__init__(name="writer", daemon=True)
-        self.q: "queue.Queue[dict]" = queue.Queue(maxsize=WRITE_QUEUE_SIZE)
+        self.sleep = sleep
+        self.clock = clock
+        self.cond = threading.Condition()
+        self.state_jobs: "deque[dict]" = deque()
+        self.exec_jobs: "deque[dict]" = deque()
         self.dropped = 0
         self.failed = 0
         self.db_ok = True
         self.stopping = False
+        self.schema_error_since: Optional[float] = None
 
     def submit(self, job: dict):
-        try:
-            self.q.put_nowait(job)
-        except queue.Full:
+        with self.cond:
+            if job["kind"] == "execution":
+                q, limit = self.exec_jobs, EXEC_QUEUE_SIZE
+            else:
+                q, limit = self.state_jobs, WRITE_QUEUE_SIZE
+            if len(q) < limit:
+                q.append(job)
+                self.cond.notify()
+                return
             self.dropped += 1
-            if self.dropped % 1000 == 1:
-                logger.error(f"Write queue full; dropped {self.dropped} jobs so far")
+            dropped = self.dropped
+        if dropped % 1000 == 1:
+            logger.error(f"Write queue full; dropped {dropped} jobs so far (this one: {job['kind']})")
+
+    def qsize(self) -> int:
+        with self.cond:
+            return len(self.state_jobs) + len(self.exec_jobs)
+
+    def _take(self) -> Optional[List[dict]]:
+        """The next batch, state jobs first; None once stopping with nothing left."""
+        with self.cond:
+            while not self.state_jobs and not self.exec_jobs:
+                if self.stopping:
+                    return None
+                self.cond.wait()
+            batch = []
+            while self.state_jobs and len(batch) < BATCH_MAX:
+                batch.append(self.state_jobs.popleft())
+            while self.exec_jobs and len(batch) < BATCH_MAX:
+                batch.append(self.exec_jobs.popleft())
+            return batch
 
     def run(self):
         while True:
-            job = self.q.get()
-            if job is None:
+            batch = self._take()
+            if batch is None:
                 return
-            attempts = 0
-            while True:
-                try:
-                    self._write(job)
-                    self.db_ok = True
-                    break
-                except Exception as e:
-                    attempts += 1
-                    if _is_connection_error(e) and not self.stopping:
-                        self.db_ok = False
-                        if attempts == 1:
-                            logger.error(f"Database write failed, retrying: {e}")
-                        time.sleep(min(5.0, 0.5 * attempts))
-                        continue
-                    if attempts < 3 and not self.stopping:
-                        time.sleep(0.5)
-                        continue
-                    self.failed += 1
-                    logger.error(f"Dropping {job.get('kind')} job after {attempts} attempts: {e}")
-                    break
+            self.write(batch)
 
-    def _write(self, job: dict):
+    def write(self, batch: List[dict]):
+        """Writes a batch in one transaction. While the database is unreachable it retries for as long as
+        that lasts. Any other error splits the batch, so only the job at fault is retried and dropped."""
+        attempts = 0
+        while True:
+            try:
+                self._write_batch(batch)
+                self.db_ok = True
+                self.schema_error_since = None
+                return
+            except Exception as e:
+                attempts += 1
+                if _is_connection_error(e) and not self.stopping:
+                    self.db_ok = False
+                    if attempts == 1:
+                        logger.error(f"Database write failed, retrying: {e}")
+                    self.sleep(min(5.0, 0.5 * attempts))
+                    continue
+                if len(batch) > 1:
+                    for job in batch:
+                        self.write([job])
+                    return
+                if self._schema_not_ready(e) or (attempts < 3 and not self.stopping):
+                    self.sleep(0.5 if attempts < 3 else 5.0)
+                    continue
+                self.failed += 1
+                logger.error(f"Dropping {batch[0].get('kind')} job after {attempts} attempts: {e}")
+                return
+
+    def _schema_not_ready(self, e: Exception) -> bool:
+        """A hub deployed before its migration fails on missing tables or columns: those jobs wait for the
+        schema, but only for SCHEMA_WAIT_SECONDS of failures in a row. An error that never goes away must not
+        hold the queue forever."""
+        if self.stopping or not isinstance(e, DBAPIError) or isinstance(e, (IntegrityError, DataError)):
+            return False
+        now = self.clock()
+        if self.schema_error_since is None:
+            self.schema_error_since = now
+            logger.error(f"Database rejected a write, waiting up to {SCHEMA_WAIT_SECONDS:.0f}s for its schema: {e}")
+        return now - self.schema_error_since < SCHEMA_WAIT_SECONDS
+
+    def _write_batch(self, batch: List[dict]):
         session = database.SessionLocal()
         try:
             _statement_timeout(session)
-            if job["kind"] == "execution":
-                session.add(models.Execution(**{k: v for k, v in job.items() if k not in ("kind", "at")}, created_at=job["at"]))
-            elif job["kind"] == "master_account":
-                self._write_master_account(session, job)
-            elif job["kind"] == "master_key_used":
-                session.query(models.MasterKey).filter_by(id=job["id"]).update({"last_used_at": job["at"]})
-            else:
-                self._write_position(session, job)
+            rows: Dict[Tuple[int, int, int], models.MasterPosition] = {}  # Read once per batch
+            executions = []
+            for job in batch:
+                kind = job["kind"]
+                if kind == "execution":
+                    executions.append({**{k: v for k, v in job.items() if k not in ("kind", "at")}, "created_at": job["at"]})
+                elif kind == "master_account":
+                    self._write_master_account(session, job)
+                elif kind == "master_key_used":
+                    session.query(models.MasterKey).filter_by(id=job["id"]).update({"last_used_at": job["at"]})
+                else:
+                    self._write_position(session, job, rows)
+            if executions:
+                session.execute(insert(models.Execution), executions)  # One executemany for the whole batch
             session.commit()
         except Exception:
             session.rollback()
@@ -692,10 +763,13 @@ class Writer(threading.Thread):
             session.close()
 
     @staticmethod
-    def _write_position(session, job: dict):
+    def _write_position(session, job: dict, rows: Dict[Tuple[int, int, int], models.MasterPosition]):
         at = job["at"]
-        row = session.query(models.MasterPosition).filter_by(
-            manager_id=job["manager_id"], master_login=job["master_login"], pos_id=job["pos_id"]).one_or_none()
+        key = (job["manager_id"], job["master_login"], job["pos_id"])
+        row = rows.get(key)
+        if row is None:
+            row = session.query(models.MasterPosition).filter_by(
+                manager_id=job["manager_id"], master_login=job["master_login"], pos_id=job["pos_id"]).one_or_none()
         if row is None:
             row = models.MasterPosition(
                 manager_id=job["manager_id"], strategy_id=job["strategy_id"], master_login=job["master_login"],
@@ -707,6 +781,7 @@ class Writer(threading.Thread):
         elif row.closed_at is not None:
             logger.warning(f"Skipping write for closed position {job['master_login']}_{job['pos_id']}")
             return
+        rows[key] = row
         if job["closed"]:
             row.closed_at = at  # Keep the last open volume on the row for history
         else:
@@ -729,14 +804,55 @@ class Writer(threading.Thread):
         row.last_seen_at = at
 
     def stop(self, timeout: float):
-        self.stopping = True
-        try:
-            self.q.put(None, timeout=timeout / 2)
-        except queue.Full:
-            pass
-        self.join(timeout / 2)
+        """Writes what is queued (without retrying an unreachable database) and returns within timeout."""
+        with self.cond:
+            self.stopping = True
+            self.cond.notify()
+        self.join(timeout)
         if self.is_alive():
-            logger.error(f"Shutdown with {self.q.qsize()} database writes still queued")
+            logger.error(f"Shutdown with {self.qsize()} database writes still queued")
+
+
+class Retention(threading.Thread):
+    """Deletes signals and execution reports older than HUB_RETENTION_DAYS, once a day, in chunks that each
+    stay well under the statement timeout. master_positions (one row per position) is kept."""
+
+    def __init__(self, days: int):
+        super().__init__(name="retention", daemon=True)
+        self.days = days
+
+    def run(self):
+        time.sleep(RETENTION_FIRST_RUN_SECONDS)  # Not while the hub is starting
+        while True:
+            try:
+                self.purge(datetime.datetime.utcnow() - datetime.timedelta(days=self.days))
+            except Exception as e:
+                logger.error(f"Retention run failed, next one in 24 h: {e}")
+            time.sleep(86_400)
+
+    @staticmethod
+    def purge(cutoff: datetime.datetime, pause: float = 0.2) -> Dict[str, int]:
+        deleted = {}
+        for table, column in ((models.Signal, models.Signal.received_at), (models.Execution, models.Execution.created_at)):
+            total = 0
+            while True:
+                session = database.SessionLocal()
+                try:
+                    _statement_timeout(session)
+                    oldest = select(table.id).where(column < cutoff).order_by(table.id).limit(RETENTION_CHUNK)
+                    n = session.execute(delete(table).where(table.id.in_(oldest.scalar_subquery()))
+                                        .execution_options(synchronize_session=False)).rowcount
+                    session.commit()
+                finally:
+                    session.close()
+                total += n
+                if n < RETENTION_CHUNK:
+                    break
+                time.sleep(pause)  # The writer gets the database in between chunks
+            deleted[table.__tablename__] = total
+        logger.info(f"Retention: deleted {deleted['signals']} signals and {deleted['executions']} execution reports "
+                    f"older than {cutoff:%Y-%m-%d %H:%M} UTC")
+        return deleted
 
 
 # --- Runtime ---
@@ -800,7 +916,7 @@ class Hub:
             "rejected": self.core.stats["rejected"],
             "exec_latency_ms": self.core.latency_stats(),
             "db_ok": self.writer.db_ok,
-            "db_queue": self.writer.q.qsize(),
+            "db_queue": self.writer.qsize(),
             "db_dropped": self.writer.dropped,
             "db_failed": self.writer.failed,
             "directory_age_seconds": round(now - self.directory.current.loaded_at) if self.directory.current.loaded_at else None,
@@ -845,11 +961,14 @@ class Hub:
         self.directory.start()
         self.writer.start()
         PositionLoader(self.loaded).start()
+        if RETENTION_DAYS > 0:
+            Retention(RETENTION_DAYS).start()
         self.serve_health()
         server = await serve(self.edge.handler, "0.0.0.0", WS_PORT, process_request=self.edge.process_request,
                              compression=None, max_size=WS_MAX_MESSAGE, server_header=None,
                              ping_interval=20, ping_timeout=20)  # The MQL5 client answers pings
-        logger.info(f"Hub up: ws :{WS_PORT}, events {EVENTS_BIND}, health :{HEALTH_PORT}, epoch {self.core.epoch}")
+        logger.info(f"Hub up: ws :{WS_PORT}, events {EVENTS_BIND}, health :{HEALTH_PORT}, epoch {self.core.epoch}, "
+                    f"retention {f'{RETENTION_DAYS} days' if RETENTION_DAYS else 'off'}")
         tasks = [asyncio.create_task(self._ticker())]
         try:
             stopped = asyncio.create_task(self.stop_event.wait())

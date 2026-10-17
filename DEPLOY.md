@@ -141,6 +141,8 @@ Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen --key lic_... --log
 ## Observabilidade
 
 - **Latência de cópia:** o hub guarda o instante em que publicou cada `POS` e, quando o `EXEC` do slave chega com o mesmo `uid` e `seq`, grava a diferença em `executions.latency_ms` (migração `0004`). O `/health` do hub mostra `exec_latency_ms` com p50, p95 e máximo das últimas 1000 execuções. A medida começa no hub: o trecho master → hub não entra, porque o Master não envia horário confiável.
+- **Gravação do hub:** em lotes de até 500 jobs por transação, com o que acumulou desde a anterior: uma rajada de `EXEC` custa poucas idas ao banco, e não cerca de 5 por relatório. O estado das posições tem fila própria (10 mil) e os `EXEC` outra (20 mil): se o banco não acompanhar, são os `EXEC` que se perdem, nunca o estado que o hub relê ao reiniciar. Com o banco fora, o hub espera o tempo que for; um erro de schema (hub publicado antes da migração) espera até 10 min e depois descarta. O `/health` do hub mostra `db_queue`, `db_dropped` e `db_failed`.
+- **Retenção:** com `HUB_RETENTION_DAYS=N` no `mirror-hub`, o hub apaga uma vez por dia, em blocos de 5 mil linhas, os `signals` e `executions` com mais de N dias. A primeira rodada é 10 min depois de subir. `master_positions` fica inteiro (uma linha por posição). O padrão é 0, que guarda tudo.
 - **Logs:** `LOG_FORMAT=json` nos dois serviços produz uma linha JSON por evento, com os campos passados em `extra=`. Os logs de acesso do uvicorn continuam em texto.
 - **Erros:** com `SENTRY_DSN` definido, exceções não tratadas e logs `ERROR` vão para o Sentry.
 
