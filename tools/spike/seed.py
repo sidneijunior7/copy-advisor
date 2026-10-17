@@ -18,9 +18,7 @@ import models  # noqa: E402
 
 EMAIL = "spike-manager@local"
 MASTER_KEY = "spike-master-key"
-PORTFOLIO_KEY = "spike-portfolio-key"
 MAGIC = 777001
-ECHO_KEY = "spike-echo-key"
 ECHO_MAGIC = 5457873
 ACCOUNTS = "/spike/private/accounts.json"
 
@@ -33,20 +31,22 @@ def main():
             manager = models.User(email=EMAIL, password_hash="!", role="MANAGER")
             db.add(manager)
             db.flush()
-        if not db.query(models.MasterKey).filter_by(key_hash=keys.key_hash(MASTER_KEY)).first():
+        master_key = db.query(models.MasterKey).filter_by(key_hash=keys.key_hash(MASTER_KEY)).first()
+        if master_key is None:
             db.add(models.MasterKey(user_id=manager.id, label="spike", key_hash=keys.key_hash(MASTER_KEY),
                                     key_prefix=keys.key_prefix(MASTER_KEY)))
+        else:
+            master_key.revoked_at = None  # The ZMQ cut (migration 0007) revoked every key that existed then
         logins = [int(a["login"]) for a in json.load(open(ACCOUNTS))] if os.path.exists(ACCOUNTS) else []
-        for name, magic, public_key, prefix in (("Spike", MAGIC, PORTFOLIO_KEY, "lic_spike"),
-                                                ("Echo", ECHO_MAGIC, ECHO_KEY, "lic_echo")):
+        for name, magic, prefix in (("Spike", MAGIC, "lic_spike"), ("Echo", ECHO_MAGIC, "lic_echo")):
             strategy = db.query(models.Strategy).filter_by(user_id=manager.id, magic_number=magic).one_or_none()
             if strategy is None:
                 strategy = models.Strategy(user_id=manager.id, name=name, magic_number=magic)
                 db.add(strategy)
                 db.flush()
-            portfolio = db.query(models.Portfolio).filter_by(public_key=public_key).one_or_none()
+            portfolio = db.query(models.Portfolio).filter_by(user_id=manager.id, name=name).first()
             if portfolio is None:
-                portfolio = models.Portfolio(user_id=manager.id, name=name, public_key=public_key)
+                portfolio = models.Portfolio(user_id=manager.id, name=name)
                 portfolio.strategies.append(strategy)
                 db.add(portfolio)
                 db.flush()

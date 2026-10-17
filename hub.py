@@ -1,28 +1,25 @@
 """
 TDM Mirror signal hub. Runs as its own process/container, separate from the API.
 
-Two transports carry the same lines while clients migrate:
-- WebSocket (hub_ws.py, :8002 behind the proxy as wss://): every Master and Slave authenticates with
-  its own key, and a Slave only gets the portfolio of its license.
-- ZMQ (legacy, until the cut): Masters PUSH position state to :5557, slaves SUB to :5556 on topic
-  P_<portfolio_id>. Anyone can subscribe to the PUB.
-Every message carries the full state of one position (volume 0 = closed), so a slave
-that missed messages converges by applying the periodic SNAP published on the same stream.
+Masters and Slaves connect over WebSocket (hub_ws.py, :8002 behind the proxy as wss://). Each one
+authenticates with its own key, and a Slave only gets the portfolio of its license. Every message carries
+the full state of one position (volume 0 = closed), so a slave that missed messages converges by applying
+the periodic SNAP of its portfolio.
 
-Master -> hub (PUSH :5557)
-    KEY|V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
-    KEY|V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
-    KEY|V2HELLO|login|trade_mode|server|company                    (trade_mode: demo, contest, real)
-    KEY|ACTION|POS_ID|TYPE|SYMBOL|VOL|PRICE|SL|TP|MAGIC           (legacy Master EA)
-Slave -> hub (PUSH :5557)
-    EXEC|login|conn_key|uid|action|position_id|volume|price|retcode|seq
-Hub -> slaves (PUB :5556)
-    P_<id> POS|epoch|seq|uid|type|symbol|vol|price_open|sl|tp|magic|reason
-    P_<id> SNAP|epoch|seq|uid,type,symbol,vol,price_open,sl,tp,magic;...
-    P_<id> HB|epoch|seq
-    P_<id> OPEN|pos_id|...  /  CLOSE|pos_id|...                   (legacy Slave EA, HUB_LEGACY_PUBLISH=1)
-Hub -> API (PUB :5558, internal)
+Master -> hub (after its HELLO)
+    V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
+    V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
+    V2HELLO|login|trade_mode|server|company                        (trade_mode: demo, contest, real)
+Slave -> hub (after its HELLO)
+    EXEC|login|-|uid|action|position_id|volume|price|retcode|seq
+Hub -> the slaves of one portfolio
+    POS|epoch|seq|uid|type|symbol|vol|price_open|sl|tp|magic|reason
+    SNAP|epoch|seq|uid,type,symbol,vol,price_open,sl,tp,magic;...
+    HB|epoch|seq
+Hub -> API (ZMQ PUB :5558, internal network only)
     WEB <json>
+
+The ZMQ ports Masters and Slaves used before the v4 EAs (5557 and 5556, no authentication) are gone.
 """
 import asyncio
 import datetime
@@ -40,7 +37,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
-import zmq.asyncio
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError, DataError
 from websockets.asyncio.server import serve
@@ -53,21 +49,16 @@ import observability
 
 logger = logging.getLogger("hub")
 
-PULL_BIND = os.getenv("HUB_PULL_BIND", "tcp://*:5557")
-PUB_BIND = os.getenv("HUB_PUB_BIND", "tcp://*:5556")
 EVENTS_BIND = os.getenv("HUB_EVENTS_BIND", "tcp://*:5558")
 HEALTH_PORT = int(os.getenv("HUB_HEALTH_PORT", "8001"))
 WS_PORT = int(os.getenv("HUB_WS_PORT", "8002"))
 WS_MAX_MESSAGE = 1_048_576  # A V2SYNC of a big Master fits; nothing a client sends needs more
-# Ports 5557 and 5556 are open to anyone. Without a cap libzmq takes a message of any size: a single 256 MB
-# one took the hub to 568 MB. A larger message drops the connection before it is buffered.
-ZMQ_PULL_MAX_MESSAGE = WS_MAX_MESSAGE
-ZMQ_PUB_MAX_MESSAGE = 4096  # What a PUB receives are subscriptions ("P_<id> ")
+# The events PUB only receives the API's subscription; without a cap libzmq would buffer a message of any size
+EVENTS_MAX_MESSAGE = 4096
 HEARTBEAT_SECONDS = float(os.getenv("HUB_HEARTBEAT_SECONDS", "5"))
 SNAPSHOT_SECONDS = float(os.getenv("HUB_SNAPSHOT_SECONDS", "15"))
 WARMUP_SECONDS = float(os.getenv("HUB_WARMUP_SECONDS", "20"))
 DIRECTORY_TTL_SECONDS = float(os.getenv("HUB_DIRECTORY_TTL_SECONDS", "30"))
-LEGACY_PUBLISH = os.getenv("HUB_LEGACY_PUBLISH", "1") == "1"
 WRITE_QUEUE_SIZE = 10_000
 STALE_LOOP_SECONDS = 15
 SYNC_MISSES_TO_CLOSE = 2  # A position must be absent from this many V2SYNCs in a row before it is closed
@@ -130,7 +121,6 @@ class Directory:
     strategies_by_magic: Dict[Tuple[int, int], StrategyInfo] = field(default_factory=dict)
     strategies_by_id: Dict[int, StrategyInfo] = field(default_factory=dict)
     portfolios_by_strategy: Dict[int, Tuple[int, ...]] = field(default_factory=dict)
-    portfolio_by_key: Dict[str, int] = field(default_factory=dict)  # Legacy ZMQ Slaves: portfolio public_key
     portfolio_ids: Tuple[int, ...] = ()
     licenses_by_hash: Dict[str, LicenseInfo] = field(default_factory=dict)  # Licenses with a key only
     licenses_by_id: Dict[int, LicenseInfo] = field(default_factory=dict)
@@ -159,7 +149,7 @@ def load_directory(session) -> Directory:
     by_strategy: Dict[int, List[int]] = {}
     for portfolio_id, strategy_id in session.execute(models.portfolio_items.select()).fetchall():
         by_strategy.setdefault(strategy_id, []).append(portfolio_id)
-    portfolios = session.query(models.Portfolio.id, models.Portfolio.public_key).all()
+    portfolio_ids = [pid for (pid,) in session.query(models.Portfolio.id)]
     licenses = [
         LicenseInfo(l.id, l.portfolio_id, int(l.client_mt5_login or 0), float(l.max_lots or 0), bool(l.is_active),
                     _unix(l.expires_at), l.key_hash, _unix(l.revoked_at))
@@ -172,8 +162,7 @@ def load_directory(session) -> Directory:
         strategies_by_magic=by_magic,
         strategies_by_id=by_id,
         portfolios_by_strategy={k: tuple(sorted(v)) for k, v in by_strategy.items()},
-        portfolio_by_key={key: pid for pid, key in portfolios if key},
-        portfolio_ids=tuple(sorted(pid for pid, _ in portfolios)),
+        portfolio_ids=tuple(sorted(portfolio_ids)),
         licenses_by_hash={l.key_hash: l for l in licenses},
         licenses_by_id={l.id: l for l in licenses},
         loaded_at=time.time(),
@@ -220,11 +209,10 @@ class HubCore:
     def __init__(
         self,
         directory: Callable[[], Directory],
-        publish: Callable[[str, str], None],
+        publish: Callable[[int, str], None],  # (portfolio_id, line): to the slaves of that portfolio
         web: Callable[[dict], None],
         persist: Callable[[dict], None],
         request_refresh: Callable[[], None] = lambda: None,
-        legacy_publish: bool = LEGACY_PUBLISH,
         epoch: Optional[int] = None,
         clock: Callable[[], float] = time.monotonic,
     ):
@@ -233,7 +221,6 @@ class HubCore:
         self.web = web
         self.persist = persist
         self.request_refresh = request_refresh
-        self.legacy_publish = legacy_publish
         # Milliseconds: a crash-restart can take under a second
         self.epoch = epoch if epoch is not None else int(time.time() * 1000)
         self.clock = clock
@@ -261,30 +248,9 @@ class HubCore:
 
     # --- inbound ---
 
-    def handle_message(self, msg: str):
-        """ZMQ inbound: KEY|... from Masters, EXEC|... from Slaves."""
-        self.stats["msgs"] += 1
-        if msg.startswith("EXEC|"):
-            self.handle_exec(msg.split("|"))
-            return
-        parts = msg.split("|", 1)
-        if len(parts) != 2:
-            self._warn("malformed", f"Malformed message: {msg[:120]}")
-            return
-        key, rest = parts
-        found = self.directory().master_for_key(key)
-        if found is None:
-            # One warning key for all of them: random keys must not grow _last_warn
-            if self._warn("unknown-key", f"Unknown master key {key[:8]}…"):
-                self.request_refresh()
-            return
-        manager, master_key = found
-        self.master_key_used(master_key)
-        self.handle_master(manager, rest)
-
     def handle_master(self, manager: ManagerInfo, rest: str):
-        """A message from an authenticated Master, without the key: V2, V2SYNC, V2HELLO or the legacy format.
-        It is also what signals.raw and the logs get, so the key never reaches either."""
+        """A message from an authenticated Master: V2, V2SYNC or V2HELLO. It is also what signals.raw and the
+        logs get; the key travels only in the HELLO, so it never reaches either."""
         raw = rest
         self.stats["last_master_msg"] = time.time()
         if rest.startswith("V2SYNC|"):
@@ -300,36 +266,9 @@ class HubCore:
             _, login, reason, pos_id, type_, symbol, vol, price_open, sl, tp, magic = f
             self.apply_state(manager, int(login), int(pos_id),
                              parse_state(type_, symbol, vol, price_open, sl, tp, magic),
-                             reason=reason, live=True, raw=raw)
+                             reason=reason, raw=raw)
         else:
-            self._handle_legacy(manager, rest, raw=raw)
-
-    def _handle_legacy(self, manager: ManagerInfo, rest: str, raw: str):
-        f = rest.split("|")
-        if len(f) < 9:
-            self._warn("legacy-size", f"Malformed legacy message: {raw[:120]}")
-            return
-        action, pos_id, type_, symbol, vol, price, sl, tp, magic = f[:9]
-        pos_id = int(pos_id)
-        state = parse_state(type_, symbol, vol, price, sl, tp, magic)
-        key = (manager.id, 0, pos_id)  # Legacy Masters don't send their login
-        existing = self.positions.get(key)
-        if action == "OPEN":
-            if existing is not None:
-                # Netting scale-in: legacy OPEN carries the deal volume, not the position volume
-                state = PositionState(existing.state.type, existing.state.symbol,
-                                      existing.state.volume + state.volume, existing.state.price_open,
-                                      existing.state.sl, existing.state.tp, existing.state.magic)
-                action = "ADD"
-        elif action in ("CLOSE", "REVERSE"):
-            if existing is None:
-                return
-            state = PositionState(existing.state.type, existing.state.symbol, 0.0, existing.state.price_open,
-                                  existing.state.sl, existing.state.tp, existing.state.magic)
-            action = "CLOSE"
-        else:
-            return
-        self.apply_state(manager, 0, pos_id, state, reason=action, live=True, raw=raw)
+            self._warn(f"master-format:{manager.id}", f"Unknown Master message: {raw[:120]}")
 
     def _handle_sync(self, manager: ManagerInfo, login: int, entries: str, raw: str):
         seen = set()
@@ -340,7 +279,7 @@ class HubCore:
                 continue
             pos_id = int(f[0])
             seen.add(pos_id)
-            self.apply_state(manager, login, pos_id, parse_state(*f[1:]), reason="SYNC", live=False, raw=None)
+            self.apply_state(manager, login, pos_id, parse_state(*f[1:]), reason="SYNC", raw=None)
 
         for pos in [p for p in self.positions.values() if p.manager_id == manager.id and p.master_login == login]:
             if pos.pos_id in seen:
@@ -349,7 +288,7 @@ class HubCore:
             if pos.missing_syncs >= SYNC_MISSES_TO_CLOSE:
                 closed = PositionState(pos.state.type, pos.state.symbol, 0.0, pos.state.price_open,
                                        pos.state.sl, pos.state.tp, pos.state.magic)
-                self.apply_state(manager, login, pos.pos_id, closed, reason="SYNC", live=False, raw=None)
+                self.apply_state(manager, login, pos.pos_id, closed, reason="SYNC", raw=None)
 
         self.pending_logins.discard((manager.id, login))
 
@@ -386,17 +325,13 @@ class HubCore:
         self.key_used_at[master_key.id] = now
         self.persist({"kind": "master_key_used", "id": master_key.id, "at": datetime.datetime.utcnow()})
 
-    def handle_exec(self, f: List[str], portfolio_id: Optional[int] = None, login: Optional[int] = None):
-        """EXEC|login|conn_key|uid|action|position_id|volume|price|retcode|seq. Over ZMQ the portfolio comes
-        from the portfolio key in the message; a WSS session passes the portfolio and login of its license."""
+    def handle_exec(self, f: List[str], portfolio_id: int, login: int):
+        """EXEC|login|-|uid|action|position_id|volume|price|retcode|seq from a Slave session: the portfolio and
+        the login are those of its license, not what the message says."""
         if len(f) != 10:
             self._warn("exec-size", f"Malformed EXEC: {'|'.join(f)[:120]}")
             return
-        _, msg_login, conn_key, uid, action, position_id, volume, price, retcode, seq = f
-        if portfolio_id is None:
-            portfolio_id = self.directory().portfolio_by_key.get(conn_key)
-        if login is None:
-            login = int(msg_login)
+        _, _, _, uid, action, position_id, volume, price, retcode, seq = f
         # The slave reports the last seq it applied. It only measures this execution when that POS was
         # about the same position; a late entry through SNAP still counts, from the POS it missed.
         latency_ms = None
@@ -429,7 +364,7 @@ class HubCore:
     # --- state machine ---
 
     def apply_state(self, manager: ManagerInfo, login: int, pos_id: int, new: PositionState,
-                    reason: str, live: bool, raw: Optional[str]):
+                    reason: str, raw: Optional[str]):
         key = (manager.id, login, pos_id)
         pos = self.positions.get(key)
 
@@ -455,7 +390,7 @@ class HubCore:
                 return
             pos = Position(manager.id, login, pos_id, strategy.id, new, opened_at=time.time())
             self.positions[key] = pos
-            self._emit(pos, prev_volume=0.0, reason=reason, live=live, raw=raw)
+            self._emit(pos, reason=reason, raw=raw)
             return
 
         pos.missing_syncs = 0
@@ -466,7 +401,7 @@ class HubCore:
             self.closed[key] = None
             while len(self.closed) > CLOSED_MEMORY:
                 self.closed.popitem(last=False)
-            self._emit(pos, prev_volume=old.volume, reason=reason, live=live, raw=raw)
+            self._emit(pos, reason=reason, raw=raw)
             return
 
         if not (new.type != old.type or changed(new.volume, old.volume) or changed(new.sl, old.sl)
@@ -474,7 +409,7 @@ class HubCore:
             return
         # Magic and strategy stay frozen: on a netting Master two magics can share one position
         pos.state = PositionState(new.type, new.symbol, new.volume, new.price_open, new.sl, new.tp, old.magic)
-        self._emit(pos, prev_volume=old.volume, reason=reason, live=live, raw=raw)
+        self._emit(pos, reason=reason, raw=raw)
 
     # --- outbound ---
 
@@ -487,34 +422,20 @@ class HubCore:
         s = pos.state
         return ",".join([pos.uid, str(s.type), s.symbol, fmt(s.volume), fmt(s.price_open), fmt(s.sl), fmt(s.tp), str(s.magic)])
 
-    def _emit(self, pos: Position, prev_volume: float, reason: str, live: bool, raw: Optional[str]):
+    def _emit(self, pos: Position, reason: str, raw: Optional[str]):
         s = pos.state
         directory = self.directory()
         for portfolio_id in directory.portfolios_by_strategy.get(pos.strategy_id, ()):
-            topic = f"P_{portfolio_id}"
             seq = self._next_seq(portfolio_id)
             self.sent[(portfolio_id, seq)] = (pos.uid, self.clock())
             while len(self.sent) > SENT_MEMORY:
                 self.sent.popitem(last=False)
-            self.publish(topic, "|".join([
+            self.publish(portfolio_id, "|".join([
                 "POS", str(self.epoch), str(seq), pos.uid, str(s.type), s.symbol, fmt(s.volume),
                 fmt(s.price_open), fmt(s.sl), fmt(s.tp), str(s.magic), reason,
             ]))
-            # Old Slave EAs only understand OPEN/CLOSE; send them live transitions only, never
-            # something discovered by V2SYNC (they have no late-entry deviation guard).
-            if self.legacy_publish and live:
-                legacy_action = None
-                if prev_volume <= 0 < s.volume:
-                    legacy_action = "OPEN"
-                elif s.volume <= 0 < prev_volume:
-                    legacy_action = "CLOSE"
-                if legacy_action:
-                    self.publish(topic, "|".join([
-                        legacy_action, str(pos.pos_id), str(s.type), s.symbol, fmt(s.volume if s.volume > 0 else prev_volume),
-                        fmt(s.price_open), fmt(s.sl), fmt(s.tp), str(s.magic),
-                    ]))
 
-        strategy = directory.strategies_by_id.get(pos.strategy_id)
+        strategy =directory.strategies_by_id.get(pos.strategy_id)
         self.web({"type": "UPDATE", "data": {
             "key": f"{pos.strategy_id}_{pos.uid}",
             "action": reason,
@@ -572,26 +493,33 @@ class HubCore:
                 by_portfolio.setdefault(portfolio_id, []).append(self._entry(pos))
         for portfolio_id, entries in by_portfolio.items():
             seq = self.seq.get(portfolio_id, 0)
-            self.publish(f"P_{portfolio_id}", f"SNAP|{self.epoch}|{seq}|{';'.join(entries)}")
+            self.publish(portfolio_id, f"SNAP|{self.epoch}|{seq}|{';'.join(entries)}")
 
     def publish_heartbeats(self):
         for portfolio_id in self.directory().portfolio_ids:
-            self.publish(f"P_{portfolio_id}", f"HB|{self.epoch}|{self.seq.get(portfolio_id, 0)}")
+            self.publish(portfolio_id, f"HB|{self.epoch}|{self.seq.get(portfolio_id, 0)}")
 
     # --- startup / timers ---
 
     def load_positions(self, rows: List[dict]):
         """Merge open positions read from the database. Live state received meanwhile wins."""
+        orphans = 0
         for r in rows:
             key = (r["manager_id"], r["master_login"], r["pos_id"])
             if key in self.positions or key in self.closed:
+                continue
+            if r["master_login"] == 0:
+                # Opened by a Master EA older than v3, which didn't send its login: no Master can update or close
+                # it any more, so it stays out of the snapshots and the slaves close their copies
+                orphans += 1
                 continue
             state = PositionState(r["type"], r["symbol"], r["volume"], r["price_open"] or 0.0,
                                   r["sl"] or 0.0, r["tp"] or 0.0, r["magic"] or 0)
             self.positions[key] = Position(r["manager_id"], r["master_login"], r["pos_id"], r["strategy_id"], state,
                                            opened_at=r.get("opened_at") or 0.0)
-            if r["master_login"] != 0:  # Legacy Masters never send V2SYNC
-                self.pending_logins.add((r["manager_id"], r["master_login"]))
+            self.pending_logins.add((r["manager_id"], r["master_login"]))
+        if orphans:
+            logger.warning(f"Left out {orphans} open positions of pre-v3 Masters (login 0): nothing can close them")
         self.loaded_at = self.clock()
         logger.info(f"Loaded {len(rows)} open positions; waiting V2SYNC from {len(self.pending_logins)} master logins")
 
@@ -814,15 +742,12 @@ class Writer(threading.Thread):
 # --- Runtime ---
 
 class Hub:
-    """One asyncio loop runs everything that touches HubCore: the ZMQ PULL, the WebSocket edge and the timers.
+    """One asyncio loop runs everything that touches HubCore: the WebSocket edge and the timers.
     Database work stays in threads (DirectoryLoader, Writer, PositionLoader)."""
 
     def __init__(self):
-        self.ctx = zmq.Context()             # PUB sockets: send never blocks
-        self.actx = zmq.asyncio.Context()    # PULL, awaited in the loop
-        self.pull = self._socket(self.actx, zmq.PULL, PULL_BIND, ZMQ_PULL_MAX_MESSAGE)
-        self.pub = self._socket(self.ctx, zmq.PUB, PUB_BIND, ZMQ_PUB_MAX_MESSAGE)
-        self.events = self._socket(self.ctx, zmq.PUB, EVENTS_BIND, ZMQ_PUB_MAX_MESSAGE)
+        self.ctx = zmq.Context()
+        self.events = self._events_socket(self.ctx)  # PUB: send never blocks
 
         self.directory = DirectoryLoader()
         self.writer = Writer()
@@ -841,20 +766,19 @@ class Hub:
         self.last_loop = time.time()
 
     @staticmethod
-    def _socket(ctx, kind: int, endpoint: str, max_message: int):
-        s = ctx.socket(kind)
+    def _events_socket(ctx):
+        s = ctx.socket(zmq.PUB)
         s.setsockopt(zmq.LINGER, 0)
-        s.setsockopt(zmq.MAXMSGSIZE, max_message)
-        # Swarm's ingress drops idle TCP after ~15 min; keepalive keeps idle subscribers attached
+        s.setsockopt(zmq.MAXMSGSIZE, EVENTS_MAX_MESSAGE)
+        # Swarm's ingress drops idle TCP after ~15 min; keepalive keeps the API's subscription attached
         s.setsockopt(zmq.TCP_KEEPALIVE, 1)
         s.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
         s.setsockopt(zmq.TCP_KEEPALIVE_INTVL, 15)
-        s.bind(endpoint)
+        s.bind(EVENTS_BIND)
         return s
 
-    def _publish(self, topic: str, payload: str):
-        self.pub.send_string(f"{topic} {payload}")
-        self.edge.fanout(topic, payload)
+    def _publish(self, portfolio_id: int, payload: str):
+        self.edge.fanout(portfolio_id, payload)
 
     def _web(self, event: dict):
         self.events.send_string("WEB " + json.dumps(event))
@@ -925,16 +849,14 @@ class Hub:
         server = await serve(self.edge.handler, "0.0.0.0", WS_PORT, process_request=self.edge.process_request,
                              compression=None, max_size=WS_MAX_MESSAGE, server_header=None,
                              ping_interval=20, ping_timeout=20)  # The MQL5 client answers pings
-        logger.info(f"Hub up: ws :{WS_PORT}, PULL {PULL_BIND}, PUB {PUB_BIND}, events {EVENTS_BIND}, "
-                    f"health :{HEALTH_PORT}, epoch {self.core.epoch}, "
-                    f"legacy publish {'on' if self.core.legacy_publish else 'off'}")
-        tasks = [asyncio.create_task(self._zmq_reader()), asyncio.create_task(self._ticker())]
+        logger.info(f"Hub up: ws :{WS_PORT}, events {EVENTS_BIND}, health :{HEALTH_PORT}, epoch {self.core.epoch}")
+        tasks = [asyncio.create_task(self._ticker())]
         try:
             stopped = asyncio.create_task(self.stop_event.wait())
             done, _ = await asyncio.wait([stopped, *tasks], return_when=asyncio.FIRST_COMPLETED)
             for t in done:
                 if t is not stopped and t.exception():
-                    raise t.exception()  # A dead reader or ticker is fatal: the orchestrator restarts us
+                    raise t.exception()  # A dead ticker is fatal: the orchestrator restarts us
         finally:
             for t in tasks:
                 t.cancel()
@@ -943,19 +865,6 @@ class Hub:
                 await asyncio.wait_for(server.wait_closed(), 3)
             except asyncio.TimeoutError:
                 pass
-
-    async def _zmq_reader(self):
-        handled = 0
-        while True:
-            msg = await self.pull.recv_string()
-            try:
-                self.core.handle_message(msg)
-            except Exception as e:
-                self.core.stats["errors"] += 1
-                logger.exception(f"Error handling message {msg[:120]!r}: {e}")
-            handled += 1
-            if handled % 100 == 0:
-                await asyncio.sleep(0)  # A queued message completes recv without yielding: keep timers flowing
 
     async def _ticker(self):
         while True:
@@ -972,7 +881,6 @@ class Hub:
         logger.info("Shutting down: flushing database writes")
         self.writer.stop(timeout=8)  # Swarm sends SIGKILL ~10s after SIGTERM
         self.ctx.destroy(linger=0)
-        self.actx.destroy(linger=0)
 
 
 async def amain(hub: Hub):
@@ -988,8 +896,6 @@ async def amain(hub: Hub):
 def main():
     observability.setup("hub")
     logging.getLogger("websockets").setLevel(logging.WARNING)  # One INFO line per connection otherwise; ours say more
-    if sys.platform == "win32":  # zmq.asyncio needs a selector loop
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     hub = Hub()
     try:
         asyncio.run(amain(hub))

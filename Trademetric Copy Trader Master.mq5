@@ -25,8 +25,7 @@ input int    InpSyncSeconds = 10;                            // Full position re
 // ticket but keeps the identifier.
 // Transport: wss://<InpWsHost>/v1/master. The first message authenticates
 //   HELLO|master|v1|<key>|<login>|<version>   ->   WELCOME|epoch|hb_s   (or ERR|code|reason)
-// and the lines above follow. No DLL: a binary that #imports one only runs with "Allow DLL imports",
-// even if it never calls it, so the ZMQ transport stays with the v3 EA until the hub drops it.
+// and the lines above follow. No DLL, so the terminal runs it with "Allow DLL imports" off.
 
 struct PosState {
    long   id;

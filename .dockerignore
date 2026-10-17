@@ -31,9 +31,7 @@ debug_auth.py
 diagnose_db.py
 test_link.py
 test_token.py
-verify_full_system.py
 verify_portfolio.py
-verify_zmq.py
 
 # Hosted-terminal spike: results and demo-account credentials never go into an image
 tools/spike/out

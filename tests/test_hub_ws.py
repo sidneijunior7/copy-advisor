@@ -65,9 +65,9 @@ class Env:
         self.server.close()
         await self.server.wait_closed()
 
-    def _publish(self, topic, payload):
-        self.published.append((topic, payload))
-        self.edge.fanout(topic, payload)
+    def _publish(self, portfolio_id, payload):
+        self.published.append((portfolio_id, payload))
+        self.edge.fanout(portfolio_id, payload)
 
     async def connect(self, path, hello=None):
         ws = await connect(f"ws://127.0.0.1:{self.port}{path}")
@@ -82,7 +82,7 @@ class Env:
         return await self.connect("/v1/master", f"HELLO|master|v1|{key}|{login}|4.00")
 
     def v2(self, reason, pos_id, vol=1.0, magic=555, sl=0.0):
-        self.core.handle_message(f"{MASTER_KEY}|V2|900|{reason}|{pos_id}|0|EURUSD|{vol}|1.10000|{sl}|0|{magic}")
+        self.core.handle_master(self.dir.managers_by_id[1], f"V2|900|{reason}|{pos_id}|0|EURUSD|{vol}|1.10000|{sl}|0|{magic}")
 
 
 async def recv(ws, timeout=2.0) -> str:
@@ -119,7 +119,7 @@ async def test_slave_gets_welcome_snapshot_and_only_its_portfolio():
 
         env.v2("OPEN", 2, magic=556)  # Portfolio 8 only
         env.v2("OPEN", 3)
-        assert (await recv(ws)).startswith("POS|42|2|900_3|")  # Nothing from portfolio 8, no legacy OPEN line
+        assert (await recv(ws)).startswith("POS|42|2|900_3|")  # Nothing from portfolio 8
         env.core.publish_heartbeats()
         assert await recv(ws) == "HB|42|2"
         await ws.close()
@@ -301,7 +301,7 @@ async def test_master_publishes_over_ws_bound_to_its_login():
         assert await recv(master) == "WELCOME|42|5"
 
         await master.send("V2|901|OPEN|6|0|EURUSD|1|1.1|0|0|555")      # Another login: dropped
-        await master.send("OPEN|7|0|EURUSD|1|1.1|0|0|555")             # Legacy format: ZMQ only
+        await master.send("OPEN|7|0|EURUSD|1|1.1|0|0|555")             # Pre-v3 format: ignored
         await master.send("V2|900|OPEN|5|0|EURUSD|1|1.10000|0|0|555")
         assert (await recv(slave)).startswith("POS|42|1|900_5|")
         position_jobs = [j for j in env.jobs if j["kind"] == "position"]

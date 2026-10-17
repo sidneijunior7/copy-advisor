@@ -54,7 +54,7 @@ export default function Connections() {
         <div className="space-y-6">
             <PageHeader
                 title="Conexões"
-                description="Terminais conectados ao hub via WSS agora. EAs v3 usam ZMQ e não aparecem aqui."
+                description="Terminais conectados ao hub agora."
                 icon={<Plug />}
             >
                 {fetchedAt && (
@@ -90,8 +90,8 @@ export default function Connections() {
                 <div className="panel">
                     <EmptyState
                         icon={<Unplug />}
-                        title="Nenhum terminal conectado via WSS"
-                        description="EAs v3 usam ZMQ e não aparecem aqui."
+                        title="Nenhum terminal conectado"
+                        description="Masters e Slaves aparecem aqui assim que o EA conecta ao hub."
                     />
                 </div>
             ) : (
@@ -103,7 +103,7 @@ export default function Connections() {
                         flush
                     >
                         {masters.length === 0 ? (
-                            <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Master conectado via WSS.</p>
+                            <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Master conectado.</p>
                         ) : (
                             <Table>
                                 <TableHeader>
@@ -140,7 +140,7 @@ export default function Connections() {
                         flush
                     >
                         {slaves.length === 0 ? (
-                            <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Slave conectado via WSS.</p>
+                            <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Slave conectado.</p>
                         ) : (
                             <Table>
                                 <TableHeader>

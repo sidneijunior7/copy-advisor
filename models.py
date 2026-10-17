@@ -3,10 +3,6 @@ from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, Fore
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
-import uuid
-
-def generate_key():
-    return str(uuid.uuid4())  # Portfolio public_key, the legacy ZMQ Slave key
 
 # SQLite only autoincrements INTEGER PRIMARY KEY, so BigInteger PKs fall back to Integer there
 BigIntPK = BigInteger().with_variant(Integer, "sqlite")
@@ -27,9 +23,6 @@ class User(Base):
     password_hash = Column(String(255))
     role = Column(String(50), default="CLIENT") # MANAGER, CLIENT, TDM_DEV
     status = Column(String(20), default="active") # active, frozen, archived
-    # Legacy plain-text Master key: adopted into master_keys by migration 0006 and no longer read.
-    # Kept until the ZMQ cut so a rollback to an older hub still works; dropped then.
-    master_key = Column(String(100), unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -43,7 +36,6 @@ class Strategy(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String(100))
     magic_number = Column(BigInteger) # Magic number used in MT5 (ulong in MQL5)
-    # secret_key removed in favor of User.master_key
     is_active = Column(Boolean, default=True)
 
     owner = relationship("User", back_populates="strategies")
@@ -56,7 +48,6 @@ class Portfolio(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String(100))
-    public_key = Column(String(100), unique=True, default=generate_key) # Key for Client to Subscribe
 
     owner = relationship("User", back_populates="portfolios")
     strategies = relationship("Strategy", secondary=portfolio_items, back_populates="portfolios")

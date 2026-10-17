@@ -59,7 +59,7 @@ docker compose logs -f tdm-spike-pod
 docker compose down                                          # -v apaga banco e slots
 ```
 
-- **`EA=probe`:** roda `Trademetric Spike Probe.mq5`, que não precisa de conta. Ela responde se o terminal carrega a DLL do ZMQ, se recebe o heartbeat do hub e se o `WebRequest` é liberado pela configuração de partida. Os logs dela começam com `PROBE`.
+- **`EA=probe`:** roda `Trademetric Spike Probe.mq5`, que não precisa de conta. Ela responde se o terminal carrega a DLL do ZMQ, se recebe o heartbeat do hub e se o `WebRequest` é liberado pela configuração de partida. Os logs dela começam com `PROBE`. Desde o corte do ZMQ o hub não publica mais na 5556, então o teste de heartbeat da sonda falha; a carga da DLL e o `WebRequest` continuam valendo.
 - **`EA=slave`:** roda o Slave v4 de verdade no portfólio Spike, por WebSocket e sem DLL.
 - **`PLAN`:** define um papel por slot (`slave`, `echo`, `master` ou `probe`) e a conta de cada um, pelo índice em `accounts.json`. No exemplo, os dois EAs v4 rodam em cadeia:
   1. o `fake_master.py` publica no Spike;

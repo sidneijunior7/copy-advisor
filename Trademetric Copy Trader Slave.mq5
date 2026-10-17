@@ -20,8 +20,6 @@
 //
 // Transporte: wss://<inp_ws_host>/v1/slave, autenticado pela chave da licença (lic_...). Sem DLL e sem
 // WebRequest para a API: o hub valida a licença, informa o limite de lotes e manda o SNAP na conexão.
-// (O v3, por ZMQ, continua atendido pelo hub até o desligamento; um binário com #import de DLL só roda
-// com "Allow DLL imports", mesmo sem chamá-la, por isso o ZMQ não está aqui.)
 //   EA -> hub  HELLO|slave|v1|<chave>|<login>|<versão>|<epoch>|<seq> · ACK|epoch|seq (a cada HB) · EXEC|...
 //   hub -> EA  WELCOME|epoch|hb_s|portfolio|ativa|max_lots · LIC|ativa|max_lots · ERR|código|motivo
 //              SKIP|epoch|seq: seq consumido por uma posição que esta licença não acompanha

@@ -25,8 +25,8 @@ type RowAction =
 
 const formatLots = (value: number) => Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
-// A WSS Slave (v4) gets changes within seconds; a ZMQ one (v3) rechecks its license hourly
-const EA_DELAY = 'O EA v4 aplica em segundos; o EA v3, em até 1 hora.';
+// The hub tells the connected Slave within seconds
+const EA_DELAY = 'O EA aplica em segundos.';
 // What a revoked or expired license still does, after "O EA"
 const MANAGE_ONLY = 'não abre posições novas e continua gerindo as abertas até fecharem no Master.';
 
@@ -190,7 +190,7 @@ export default function Clients() {
         <div className="space-y-6">
             <PageHeader
                 title="Clientes"
-                description="Autorize contas MT5 a copiar seus portfólios e defina o limite e a validade de cada uma. Alterações chegam ao EA v4 em segundos e ao EA v3 em até 1 hora."
+                description="Autorize contas MT5 a copiar seus portfólios e defina o limite e a validade de cada uma. Alterações chegam ao EA em segundos."
                 icon={<Users />}
             />
 

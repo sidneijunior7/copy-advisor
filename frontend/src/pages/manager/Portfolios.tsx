@@ -6,7 +6,6 @@ import { Briefcase, Check, Link as LinkIcon, Plus, Users, X } from 'lucide-react
 import { toast } from 'sonner';
 import api, { type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
-import CopyField from '../../components/CopyField';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
@@ -232,22 +231,6 @@ export default function Portfolios() {
                                     )}
                                 </div>
 
-                                <div className="mt-5 border-t border-border pt-4">
-                                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                                        Chave de conexão (EA v3)
-                                    </p>
-                                    <CopyField value={p.public_key} label="Chave de conexão" />
-                                    <p className="mt-2 text-xs text-muted-foreground">
-                                        Só para o EA Slave v3 (ZMQ). No EA v4, cada cliente usa a chave da própria licença,
-                                        gerada em{' '}
-                                        <Link
-                                            to={`/manager/clients?portfolio=${p.id}`}
-                                            className="font-medium text-primary underline-offset-4 hover:underline"
-                                        >
-                                            Clientes
-                                        </Link>.
-                                    </p>
-                                </div>
                             </Card>
                         );
                     })}

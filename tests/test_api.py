@@ -154,7 +154,7 @@ def test_dashboard_is_told_to_try_later_while_the_database_is_down(client, monke
 def test_data_routes_wait_for_the_startup_migration(client, monkeypatch):
     monkeypatch.setattr(server.schema, "state", "pending")
     assert client.get("/licenses", headers=AUTH).status_code == 503
-    assert client.post("/api/license/check", json={"connection_key": "k", "mt5_login": 1}).status_code == 503
+    assert client.get("/me/master-keys", headers=AUTH).status_code == 503
     assert client.get("/health/live").status_code == 200
     r = client.get("/health")
     assert r.status_code == 503 and r.json()["status"] == "starting" and r.json()["schema"] == "pending"

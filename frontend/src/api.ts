@@ -44,7 +44,6 @@ export type Strategy = { id: number; name: string; magic_number: number; is_acti
 export type Portfolio = {
     id: number;
     name: string;
-    public_key: string; // Legacy ZMQ (EA v3) Slave key
     strategies: Pick<Strategy, 'id' | 'name' | 'magic_number'>[];
 };
 

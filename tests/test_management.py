@@ -24,14 +24,6 @@ def client():
         yield c
 
 
-@pytest.fixture(autouse=True)
-def fresh_limiter():
-    # Revoked licenses fail the license check, which counts towards the per-IP rate limit
-    server.failure_limiter.reset()
-    yield
-    server.failure_limiter.reset()
-
-
 def make_manager(role="MANAGER"):
     db = database.SessionLocal()
     try:
@@ -54,7 +46,7 @@ def make_portfolio(manager_id, with_strategy=False):
             strategy = models.Strategy(user_id=manager_id, name="Scalper", magic_number=uuid.uuid4().int % 10**9)
             portfolio.strategies.append(strategy)
         db.commit()
-        return portfolio.id, portfolio.public_key, strategy.id if strategy else None
+        return portfolio.id, strategy.id if strategy else None
     finally:
         db.close()
 
@@ -87,10 +79,6 @@ def create_license(client, headers, portfolio_id, login, max_lots=1.0):
                        json={"portfolio_id": portfolio_id, "client_mt5_login": login, "max_lots": max_lots})
 
 
-def check(client, key, login):
-    return client.post("/api/license/check", json={"connection_key": key, "mt5_login": login})
-
-
 def load_directory():
     db = database.SessionLocal()
     try:
@@ -103,7 +91,7 @@ def load_directory():
 
 def test_license_key_is_shown_once_and_a_new_one_replaces_it(client):
     manager_id, headers = make_manager()
-    portfolio_id, _, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     created = create_license(client, headers, portfolio_id, 2001).json()
     key = created["license_key"]
     assert key.startswith("lic_") and created["key_prefix"] == key[:12] and created["has_key"] is True
@@ -126,7 +114,7 @@ def test_license_key_is_shown_once_and_a_new_one_replaces_it(client):
 
 def test_revocation_time_and_expiry_are_recorded(client):
     manager_id, headers = make_manager()
-    portfolio_id, key, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     license_id = create_license(client, headers, portfolio_id, 2002).json()["id"]
 
     revoked = client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": False}).json()
@@ -136,17 +124,17 @@ def test_revocation_time_and_expiry_are_recorded(client):
 
     expired = client.patch(f"/licenses/{license_id}", headers=headers, json={"expires_at": "2020-01-01T03:00:00-03:00"}).json()
     assert expired["expires_at"].startswith("2020-01-01T06:00:00")  # Stored in UTC
-    assert check(client, key, 2002).status_code == 403              # The legacy check honours the expiry too
+    assert load_directory().licenses_by_id[license_id].expires_at == 1577858400  # What the hub compares with
     assert client.patch(f"/licenses/{license_id}", headers=headers, json={"max_lots": 2}).json()["expires_at"] is not None
     assert client.patch(f"/licenses/{license_id}", headers=headers, json={"expires_at": None}).json()["expires_at"] is None
-    assert check(client, key, 2002).status_code == 200
+    assert load_directory().licenses_by_id[license_id].expires_at is None
 
 
 def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
     manager_id, headers = make_manager()
-    portfolio_id, _, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     other_id, _ = make_manager()
-    other_portfolio, _, _ = make_portfolio(other_id)
+    other_portfolio, _ = make_portfolio(other_id)
     assert client.get("/me/connections", headers=headers).json() == {"available": False, "masters": [], "slaves": []}
 
     monkeypatch.setattr(server, "fetch_hub_sessions", lambda: [
@@ -162,30 +150,31 @@ def test_connections_show_only_the_managers_own_sessions(client, monkeypatch):
 
 def test_manager_edits_the_lot_limit_and_the_ea_receives_it(client):
     manager_id, headers = make_manager()
-    portfolio_id, key, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     license_id = create_license(client, headers, portfolio_id, 1001).json()["id"]
 
     r = client.patch(f"/licenses/{license_id}", headers=headers, json={"max_lots": 0.5})
     assert r.status_code == 200 and r.json()["max_lots"] == 0.5 and r.json()["is_active"] is True
-    assert check(client, key, 1001).json()["max_lots"] == 0.5
+    assert load_directory().licenses_by_id[license_id].max_lots == 0.5  # The hub sends it in LIC
 
 
-def test_revoked_license_fails_the_check_until_reactivated(client):
+def test_revoked_license_reaches_the_hub_until_reactivated(client):
     manager_id, headers = make_manager()
-    portfolio_id, key, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     license_id = create_license(client, headers, portfolio_id, 1002).json()["id"]
 
     assert client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": False}).json()["is_active"] is False
-    assert check(client, key, 1002).status_code == 403
+    revoked = load_directory().licenses_by_id[license_id]
+    assert not revoked.is_active and revoked.revoked_at is not None
 
     r = client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": True})
     assert r.json()["is_active"] is True and r.json()["max_lots"] == 1.0  # Fields left out are kept
-    assert check(client, key, 1002).status_code == 200
+    assert load_directory().licenses_by_id[license_id].is_active
 
 
 def test_license_of_another_manager_is_not_found(client):
     owner_id, owner_headers = make_manager()
-    portfolio_id, _, _ = make_portfolio(owner_id)
+    portfolio_id, _ = make_portfolio(owner_id)
     license_id = create_license(client, owner_headers, portfolio_id, 1003).json()["id"]
 
     _, intruder_headers = make_manager()
@@ -198,7 +187,7 @@ def test_license_of_another_manager_is_not_found(client):
 @pytest.mark.parametrize("max_lots", [0, -1])
 def test_lot_limit_must_be_positive(client, max_lots):
     manager_id, headers = make_manager()
-    portfolio_id, _, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     assert create_license(client, headers, portfolio_id, 1004, max_lots=max_lots).status_code == 422
     license_id = create_license(client, headers, portfolio_id, 1004).json()["id"]
     assert client.patch(f"/licenses/{license_id}", headers=headers, json={"max_lots": max_lots}).status_code == 422
@@ -206,7 +195,7 @@ def test_lot_limit_must_be_positive(client, max_lots):
 
 def test_same_account_cannot_be_licensed_twice_in_a_portfolio(client):
     manager_id, headers = make_manager()
-    portfolio_id, _, _ = make_portfolio(manager_id)
+    portfolio_id, _ = make_portfolio(manager_id)
     license_id = create_license(client, headers, portfolio_id, 1005).json()["id"]
 
     r = create_license(client, headers, portfolio_id, 1005)
@@ -214,7 +203,7 @@ def test_same_account_cannot_be_licensed_twice_in_a_portfolio(client):
     client.patch(f"/licenses/{license_id}", headers=headers, json={"is_active": False})
     assert "revogada" in create_license(client, headers, portfolio_id, 1005).json()["detail"]
 
-    other_portfolio_id, _, _ = make_portfolio(manager_id)
+    other_portfolio_id, _ = make_portfolio(manager_id)
     assert create_license(client, headers, other_portfolio_id, 1005).status_code == 200
 
 
@@ -222,13 +211,13 @@ def test_same_account_cannot_be_licensed_twice_in_a_portfolio(client):
 
 def test_strategy_cannot_be_linked_twice(client):
     manager_id, headers = make_manager()
-    portfolio_id, _, strategy_id = make_portfolio(manager_id, with_strategy=True)
+    portfolio_id, strategy_id = make_portfolio(manager_id, with_strategy=True)
     assert client.post(f"/portfolios/{portfolio_id}/add_strategy/{strategy_id}", headers=headers).status_code == 409
 
 
 def test_strategy_with_open_positions_stays_in_the_portfolio(client):
     manager_id, headers = make_manager()
-    portfolio_id, _, strategy_id = make_portfolio(manager_id, with_strategy=True)
+    portfolio_id, strategy_id = make_portfolio(manager_id, with_strategy=True)
     position_id = open_position(manager_id, strategy_id)
     url = f"/portfolios/{portfolio_id}/strategies/{strategy_id}"
 
@@ -244,6 +233,6 @@ def test_strategy_with_open_positions_stays_in_the_portfolio(client):
 
 def test_strategy_of_another_managers_portfolio_is_not_found(client):
     owner_id, _ = make_manager()
-    portfolio_id, _, strategy_id = make_portfolio(owner_id, with_strategy=True)
+    portfolio_id, strategy_id = make_portfolio(owner_id, with_strategy=True)
     _, intruder_headers = make_manager()
     assert client.delete(f"/portfolios/{portfolio_id}/strategies/{strategy_id}", headers=intruder_headers).status_code == 404

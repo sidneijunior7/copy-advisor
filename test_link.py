@@ -48,14 +48,5 @@ def test_endpoints():
     print(f"Create License Status: {resp.status_code}")
     print(f"Response: {resp.text}")
 
-    print("--- TEST 3: CHECK LICENSE (Expect 200 active) ---")
-    check_payload = {
-        "connection_key": p['public_key'],
-        "mt5_login": 999999
-    }
-    resp = requests.post(f"{BASE_URL}/api/license/check", json=check_payload)
-    print(f"Check License Status: {resp.status_code}")
-    print(f"Response: {resp.text}")
-
 if __name__ == "__main__":
     test_endpoints()

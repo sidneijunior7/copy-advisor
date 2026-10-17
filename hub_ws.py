@@ -2,8 +2,7 @@
 WebSocket edge of the hub: wss:// on 443 through the EasyPanel proxy, which terminates TLS.
 
 Masters and Slaves authenticate with their own key in the first message. A Slave is bound to the
-portfolio of its license; it never picks a topic. Lines are the ones the ZMQ side carries, without
-the topic prefix (Hub -> Slave) or the key prefix (Master -> hub).
+portfolio of its license; it never picks one. The lines after the HELLO are those in hub.py.
 
 /v1/master
     Master -> hub   HELLO|master|v1|<master_key>|<login>|<ea_version>
@@ -14,7 +13,7 @@ the topic prefix (Hub -> Slave) or the key prefix (Master -> hub).
     hub -> Slave    WELCOME|<epoch>|<heartbeat_s>|<portfolio_id>|<active 0/1>|<max_lots>
                     SNAP right after (unless the hub is warming up), then POS · SNAP · HB as published,
                     LIC|<active 0/1>|<max_lots> when the license changes, SKIP|<epoch>|<seq> (see below)
-    Slave -> hub    ACK|<epoch>|<seq> after each HB · EXEC|... (as on ZMQ; login and key fields are ignored)
+    Slave -> hub    ACK|<epoch>|<seq> after each HB · EXEC|... (its login and key fields are ignored)
 Errors
     hub -> client   ERR|<code>|<reason>, then close with an application code (4400, 4401...)
 
@@ -387,11 +386,9 @@ class Edge:
 
     # --- outbound ---
 
-    def fanout(self, topic: str, payload: str):
-        """Called by the hub for every published line. Legacy OPEN/CLOSE lines are for old ZMQ Slaves only."""
-        if not payload.startswith(("POS|", "SNAP|", "HB|")) or not topic.startswith("P_"):
-            return
-        for s in list(self.slaves_by_portfolio.get(int(topic[2:]), ())):
+    def fanout(self, portfolio_id: int, payload: str):
+        """Called by the hub for every line published to a portfolio: POS, SNAP or HB."""
+        for s in list(self.slaves_by_portfolio.get(portfolio_id, ())):
             if not s.outbox.put(s.view(payload)):
                 self.stats["slow"] += 1
                 self.kick(s, "slow", "connection too slow, reconnect to resynchronise", CLOSE_SLOW)

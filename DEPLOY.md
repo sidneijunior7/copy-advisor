@@ -7,23 +7,23 @@ O monólito passa a ser dois serviços, construídos a partir do mesmo repositó
 | Serviço | Dockerfile | O que faz | Portas |
 |---|---|---|---|
 | `mirror-api` | `Dockerfile` | API, dashboard e `/ws`; migra o banco ao subir, em segundo plano | 8000 (domínio `mirror.trademetric.com.br`) |
-| `mirror-hub` | `Dockerfile.hub` | Recebe os Masters, publica para os Slaves, grava sinais | 8002 (WebSocket, domínio `signals.trademetric.com.br`); 5557 e 5556 publicadas no host até o corte do ZMQ; 5558 e 8001 só na rede interna |
+| `mirror-hub` | `Dockerfile.hub` | Recebe os Masters, publica para os Slaves, grava sinais | 8002 (WebSocket, domínio `signals.trademetric.com.br`); 5558 e 8001 só na rede interna |
 
 Um deploy da API não derruba mais os sinais. O hub roda sozinho, com o próprio `/health` na porta 8001.
 
 ## v4: transporte WSS e chaves próprias
 
-O hub passa a atender WebSocket na porta 8002, em `/v1/master` e `/v1/slave`, atrás do proxy do EasyPanel (`wss://signals.trademetric.com.br`). Cada conexão se autentica com a própria chave, e um Slave só recebe o portfólio da licença dele. O ZMQ continua igual até o corte, para os EAs v3.
+O hub atende WebSocket na porta 8002, em `/v1/master` e `/v1/slave`, atrás do proxy do EasyPanel (`wss://signals.trademetric.com.br`). Cada conexão se autentica com a própria chave, e um Slave só recebe o portfólio da licença dele. Desde o corte do ZMQ (seção abaixo), é o único caminho dos EAs até o hub.
 
 - **Chaves só com hash.** O gestor tem várias chaves de Master (uma por Master/VPS), cada uma revogável. Cada licença tem a sua chave de Slave (`lic_...`), que pode ser trocada, e uma validade opcional. A chave aparece uma vez, quando é criada.
-- **EAs v4.** Usam só WSS, sem DLL e sem `WebRequest` para a API: o hub valida a licença e informa o limite de lotes. O ZMQ ficou de fora, porque um EA que importa uma DLL só roda com "Allow DLL imports", mesmo que nunca a chame. Quem ainda não puder migrar continua no v3, que o hub atende pelo ZMQ até o corte.
+- **EAs v4.** Usam só WSS, sem DLL e sem `WebRequest` para a API: o hub valida a licença e informa o limite de lotes. Um EA que importa uma DLL só roda com "Allow DLL imports", mesmo que nunca a chame, por isso o ZMQ ficou de fora.
 - **Efeito imediato.** A API pede ao hub que recarregue o diretório depois de cada mudança em chave ou licença. Revogar uma chave derruba na hora os terminais conectados com ela.
 
 ### EasyPanel
 1. **DNS:** registro A `signals.trademetric.com.br` → `148.230.74.39`, o mesmo IP do `mirror`.
-2. **`tdm_hub`:** domínio `signals.trademetric.com.br` com HTTPS apontando para a porta **8002** do serviço. As portas 5557 e 5556 continuam publicadas enquanto houver EA v3.
+2. **`tdm_hub`:** domínio `signals.trademetric.com.br` com HTTPS apontando para a porta **8002** do serviço.
 3. **Deploy da API e, logo em seguida, do hub.** A API roda a migração `0006`.
-   - O hub antigo continua funcionando depois da migração, porque `users.master_key` não é apagada.
+   - O hub antigo continua funcionando depois da migração, porque `users.master_key` só é apagada na `0007`.
    - O hub novo, sem a `0006`, não carrega o diretório e recusa os Masters até a tabela existir. Ele tenta de novo a cada 30 s.
 4. Não há variável nova obrigatória. As opcionais do hub são `HUB_WS_PORT` (8002), `HUB_WS_QUEUE` (1000 mensagens por conexão), `HUB_WS_CONNS_PER_IP` (300; um pod de terminais hospedados divide um IP) e `HUB_WS_FAILS_PER_IP` (30 HELLOs recusados em 5 min).
 
@@ -33,10 +33,10 @@ O hub passa a atender WebSocket na porta 8002, em `/v1/master` e `/v1/slave`, at
 - No painel, **Conexões** lista os terminais conectados via WSS.
 
 ### Gestores e clientes
-- **Chaves do Master:** a chave usada até agora aparece como "Chave anterior" e continua valendo. Crie uma chave por Master/VPS e revogue a anterior quando todos os Masters estiverem no v4, porque ela trafegou em claro pelo ZMQ.
+- **Chaves do Master:** uma por Master/VPS, criada em Estratégias › Chaves do Master. As que existiam antes do corte do ZMQ foram revogadas por ele.
 - **Licenças antigas** não têm chave de Slave: gere uma em Clientes ("Gerar chave") e entregue ao cliente junto com o EA v4.
 - **No terminal do cliente,** libere `https://signals.trademetric.com.br` em *Ferramentas › Opções › Expert Advisors › Permitir WebRequest*. "Allow DLL imports" deixa de ser necessário. O gráfico mostra o estado da conexão e da licença.
-- **Troque o v3 pelo v4 sem posição copiada aberta.** O v4 grava o mapeamento por portfólio (`MQL5\Files\TDM_Mirror\<login>_P<id>.csv`) e usa outra tag nos comentários, então não reconhece cópias abertas pelo v3. Em troca, trocar a chave da licença no v4 não perde as cópias abertas.
+- **Quem ainda tiver o v3 instalado** troca pelo v4 sem posição copiada aberta. O v4 grava o mapeamento por portfólio (`MQL5\Files\TDM_Mirror\<login>_P<id>.csv`) e usa outra tag nos comentários, então não reconhece cópias abertas pelo v3. Em troca, trocar a chave da licença no v4 não perde as cópias abertas.
 
 ### Revogação, validade e chaves trocadas
 - **Licença revogada ou expirada:** o terminal fica conectado em modo só-gestão. Ele recebe só as posições que já estavam abertas quando a licença deixou de valer, acompanha o Master até fechá-las e não abre nada novo. Posições abertas depois chegam como `SKIP`, sem conteúdo. Revogar não abre nem fecha nada por conta própria.
@@ -44,10 +44,17 @@ O hub passa a atender WebSocket na porta 8002, em `/v1/master` e `/v1/slave`, at
 - **Dois terminais com a mesma licença:** o mais novo assume. O anterior para de copiar, não reconecta e avisa no gráfico.
 
 ### Corte do ZMQ
-Faça o corte depois de 7 dias com todos os EAs no v4: o `/health` do hub não pode mostrar mensagens chegando pela porta 5557, e os slaves conectados por WSS devem bater com as licenças ativas.
-1. `HUB_LEGACY_PUBLISH=0` e remoção das portas 5557 e 5556 do `tdm_hub` no EasyPanel.
-2. Revogação da "Chave anterior" de cada gestor.
-3. Migração que apaga `users.master_key` e deixa de usar `portfolios.public_key`, e remoção do ZMQ do hub.
+O hub não abre mais as portas 5557 (PUSH dos Masters e confirmações dos Slaves) e 5556 (PUB dos Slaves), que não tinham autenticação: quem assinasse a 5556 lia todos os portfólios. Saem junto o formato do Master anterior ao v3, as linhas `OPEN`/`CLOSE` do Slave antigo (`HUB_LEGACY_PUBLISH` deixa de existir) e a validação de licença do Slave v3 (`POST /api/license/check`). EAs v3 param de copiar. O canal interno de eventos para a API (5558) continua.
+
+A migração `0007` apaga `users.master_key` e `portfolios.public_key` e **revoga todas as chaves de Master existentes**, porque podem ter trafegado em claro pela 5557.
+
+**Ordem**
+1. **Deploy do hub primeiro.** O hub novo não lê as colunas que a `0007` apaga, então roda com o banco ainda na `0006`. O hub antigo, ao contrário, deixa de carregar o diretório depois da `0007`.
+2. **Deploy da API**, que roda a `0007`. Confira `"schema": "ready"` no `/health`. Os Masters conectados caem com `ERR|revoked` em até 30 s.
+3. **No EasyPanel, tire as portas 5557 e 5556 do `tdm_hub`.** De fora, as duas devem estar fechadas.
+4. **Cada gestor cria uma chave de Master nova** no painel e a coloca no input do Master. Os Slaves não mudam.
+
+Um Master conectado com uma chave revogada tenta de novo a cada minuto e mostra o motivo no gráfico. Com a chave nova no input ele volta sozinho, e o `V2SYNC` dele reconcilia as posições abertas.
 
 ## Antes do primeiro deploy
 
@@ -69,15 +76,15 @@ Antes, o `python migrate.py` rodava antes do uvicorn: com o banco fora no boot, 
 
 ## EasyPanel
 
-**`mirror-hub` (serviço novo)**
+**`mirror-hub`**
 - Fonte: este repositório, `Dockerfile.hub`.
-- Variáveis: `DATABASE_URL` (a mesma da API) e `HUB_LEGACY_PUBLISH=1`.
-- Portas publicadas: `5557` e `5556`.
+- Variáveis: `DATABASE_URL` (a mesma da API).
+- Nenhuma porta publicada no host: o domínio `signals.trademetric.com.br` aponta para a 8002, e a API chega à 5558 e à 8001 pela rede interna.
 - **Uma réplica.** Se o EasyPanel permitir escolher a ordem de update, use *stop-first*. Com dois hubs no ar ao mesmo tempo, os Masters podem ir para um e os Slaves ficarem no outro.
 
-**`mirror-api` (serviço atual)**
-- **Remover** a porta publicada `5556` (e a `5557`, se existir); elas passam para o hub.
-- Variáveis novas (use o hostname interno do hub, que o EasyPanel mostra na página do serviço, algo como `<projeto>_mirror-hub`):
+**`mirror-api`**
+- Nenhuma porta publicada além do domínio `mirror.trademetric.com.br` (8000).
+- Variáveis do hub (use o hostname interno dele, que o EasyPanel mostra na página do serviço, algo como `<projeto>_mirror-hub`):
   - `HUB_EVENTS_URL=tcp://<hostname-do-hub>:5558`
   - `HUB_HEALTH_URL=http://<hostname-do-hub>:8001/health`
 
@@ -85,31 +92,19 @@ A lista completa de variáveis está em `.env.example`.
 
 **Conferência:** `GET https://mirror.trademetric.com.br/health` deve mostrar `"status": "healthy"` e o bloco `hub` com `"warming": false`.
 
-## Ordem de rollout
+## Tipo da conta do Master
 
-1. **Janela de manutenção:** criar o `mirror-hub` com as portas 5557 e 5556, tirar a 5556 da API e fazer o deploy da API. Com `HUB_LEGACY_PUBLISH=1`, os EAs antigos continuam funcionando: o hub aceita o formato antigo do Master e publica as linhas `OPEN`/`CLOSE` que o Slave antigo entende.
-2. **Masters:** instalar o Master v3 **com a conta sem posição aberta**. A versão antiga truncava `pos_id` grandes, então uma posição aberta com ela ganharia identidade nova na troca. Configurar o input novo `InpServer`, que antes era um `127.0.0.1` fixo no código.
-3. **Slaves:** distribuir o Slave v3 com a instrução de instalar **sem posição copiada aberta**. Posições do EA antigo (comentário `Copy ZMQ`) não são geridas pela v3, e o EA avisa no log quando encontra alguma.
-4. **Desligar o legado:** com todos os clientes atualizados, `HUB_LEGACY_PUBLISH=0`.
-
-### Master 3.01: tipo da conta
-
-O Master 3.01 envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.
-
-A ordem é: deploy da API, que roda a `0005`; depois o hub; por último o Master.
-- **Hub antigo:** recebendo um Master 3.01, loga `Malformed legacy message` no máximo uma vez por minuto. Fora isso, nada muda.
-- **Hub novo antes da migração:** as gravações do hub ficam na fila até a tabela existir. A publicação dos sinais segue normal.
+O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.
 
 ```sql
 SELECT u.email, a.master_login, a.trade_mode, a.server, a.company, a.last_seen_at
 FROM master_accounts a JOIN users u ON u.id = a.manager_id ORDER BY a.last_seen_at DESC;
 ```
 
-### Inputs novos do Slave
+## Inputs do Slave
 
 | Input | Padrão | Uso |
 |---|---|---|
-| `inp_push_port` | 5557 | Envio das confirmações de execução |
 | `inp_slippage_points` | 20 | Desvio máximo na execução |
 | `inp_late_max_deviation_points` | 50 | Entrada atrasada (posição descoberta pelo snapshot) só se o preço estiver a até N pontos da entrada do master; 0 = nunca |
 | `inp_symbol_map` | vazio | Tradução explícita, ex.: `EURUSD=EURUSDm;XAUUSD=GOLD` |
@@ -117,7 +112,7 @@ FROM master_accounts a JOIN users u ON u.id = a.manager_id ORDER BY a.last_seen_
 | `inp_sizing_mode` | Fixed factor | `Fixed factor`: lote do master × fator. `Proportional to balance/equity`: lote do master × fator × capital da conta ÷ `inp_reference_capital` |
 | `inp_reference_capital` | 10000 | Capital, na moeda da conta, que copia 1× os lotes do master (ex.: master opera 1 lote para cada 10 mil) |
 
-No modo proporcional a escala é calculada quando a cópia abre e fica gravada no mapeamento: o equity oscilando depois não aumenta nem reduz a posição. O volume nunca fica abaixo do mínimo do símbolo, então contas muito pequenas copiam o lote mínimo. O teto de lotes da licença continua valendo.
+No modo proporcional a escala é calculada quando a cópia abre e fica gravada no mapeamento: o equity oscilando depois não aumenta nem reduz a posição. O volume nunca fica abaixo do mínimo do símbolo, então contas muito pequenas copiam o lote mínimo. O limite de lotes da licença vale para a soma das cópias abertas, e uma cópia cortada por ele guarda a proporção que recebeu.
 
 ## Checklist no MT5 (contas demo)
 
@@ -129,7 +124,6 @@ Faça isto antes de liberar para clientes. Use uma conta hedging, uma netting e 
 - [ ] Slave desligado enquanto o master abre e fecha: ao voltar, a posição órfã fecha; a entrada perdida só abre se o preço estiver dentro do desvio.
 - [ ] SL batendo só no slave: a posição **não** reabre.
 - [ ] Duas estratégias no mesmo símbolo numa conta netting: não entra em ciclo de fecha e reabre.
-- [ ] Um Slave antigo ligado ao hub novo continua copiando OPEN/CLOSE.
 - [ ] Linhas aparecem em `master_positions`, `signals` e `executions`.
 
 **EAs v4 (WSS)**, com "Allow DLL imports" desligado e `https://signals.trademetric.com.br` na lista de WebRequest:
@@ -142,7 +136,7 @@ Faça isto antes de liberar para clientes. Use uma conta hedging, uma netting e 
 - [ ] O mesmo `.set` em dois terminais: o segundo assume e o primeiro para, com aviso no gráfico.
 - [ ] Hub reiniciado (Implantar no EasyPanel) com posição aberta: os EAs reconectam sozinhos e nada duplica.
 
-Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen` mostra o que um slave recebe e `master` simula um master. Com `--ws wss://signals.trademetric.com.br`, ele usa a conexão WebSocket com a chave da licença ou do Master.
+Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen --key lic_... --login <conta>` mostra o que um slave recebe, e `master --key mst_... --magic <magic>` simula um master. O padrão é `wss://signals.trademetric.com.br`; `--ws ws://127.0.0.1:8002` aponta para um hub local.
 
 ## Observabilidade
 
@@ -162,8 +156,7 @@ GROUP BY 1;
 ## Limitações conhecidas
 
 - **Netting:** o Slave ajusta a posição líquida do símbolo inteiro. Operar manualmente o mesmo símbolo numa conta netting copiada faz o EA "corrigir" a operação manual. Com várias cópias no mesmo símbolo, o SL/TP não é copiado.
-- **Master antigo:** fechamento parcial continua virando fechamento total, porque o formato antigo não distingue os dois.
-- **Segurança:** a Fase 1 está na seção abaixo. O barramento ZMQ (portas 5557/5556) continua sem autenticação até o corte (seção v4): quem assinar o PUB lê todos os portfólios.
+- **Segurança:** a Fase 1 está na seção abaixo. Desde o corte do ZMQ, todo Master e todo Slave se autenticam com a própria chave.
 
 ## Fase 1 de segurança
 
@@ -179,11 +172,11 @@ GROUP BY 1;
    ```
    Num console sem terminal interativo: `ADMIN_PASSWORD='<senha>' python create_admin.py <email>`. O mesmo comando cria uma conta TDM_DEV se o email não existir.
 2. As senhas migram de `sha256_crypt` para bcrypt sozinhas, no próximo login de cada usuário.
-3. **Chaves do Master:** desde a v4, cada gestor cria e revoga as próprias chaves no painel (seção v4). A rotação em massa acontece no corte do ZMQ.
+3. **Chaves do Master:** desde a v4, cada gestor cria e revoga as próprias chaves no painel (seção v4). A rotação em massa aconteceu no corte do ZMQ (migração `0007`).
 
 **O que mudou para quem usa o dashboard**
 - O `/ws` só aceita conexão depois de receber `{"type": "AUTH", "token": ...}`. Cada manager vê só as próprias posições, e o TDM_DEV vê todas. Uma conta CLIENT é recusada (código 4403), porque ainda não existe vínculo entre cliente e manager.
 - O token é renovado sozinho um minuto antes de expirar, até o limite de `SESSION_MAX_HOURS` desde o login. Um token expirado ou uma resposta 401 levam de volta para o login.
 - Um manager congelado perde o acesso na hora, sem esperar o token expirar.
 - Licença é sempre de portfólio: `POST /licenses` exige `portfolio_id`. Para vender uma estratégia avulsa, crie um portfólio só com ela. Licenças antigas por estratégia continuam listadas, mas nunca autenticaram no EA.
-- `/token` e `/api/license/check` respondem `429` depois de `AUTH_MAX_FAILURES` falhas do mesmo IP em `AUTH_FAILURE_WINDOW_SECONDS`. O IP vem do `X-Forwarded-For`, mas só de um proxy na rede privada (`FORWARDED_ALLOW_IPS` no `Dockerfile`): o endereço que o cliente escreve no cabeçalho é ignorado.
+- `/token` responde `429` depois de `AUTH_MAX_FAILURES` falhas do mesmo IP em `AUTH_FAILURE_WINDOW_SECONDS`. O IP vem do `X-Forwarded-For`, mas só de um proxy na rede privada (`FORWARDED_ALLOW_IPS` no `Dockerfile`): o endereço que o cliente escreve no cabeçalho é ignorado.

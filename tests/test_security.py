@@ -338,7 +338,7 @@ def make_portfolio(manager_id):
         portfolio = models.Portfolio(user_id=manager_id, name="P")
         db.add(portfolio)
         db.commit()
-        return portfolio.id, portfolio.public_key
+        return portfolio.id
     finally:
         db.close()
 
@@ -348,23 +348,14 @@ def test_license_requires_a_portfolio(client):
     headers = bearer(token_for(email))
     r = client.post("/licenses", headers=headers, json={"client_mt5_login": 1, "max_lots": 1.0, "strategy_id": 1})
     assert r.status_code == 422
-    portfolio_id, key = make_portfolio(manager_id)
+    portfolio_id = make_portfolio(manager_id)
     r = client.post("/licenses", headers=headers, json={"client_mt5_login": 77, "max_lots": 2.0, "portfolio_id": portfolio_id})
-    assert r.status_code == 200
-    r = client.post("/api/license/check", json={"connection_key": key, "mt5_login": 77})
-    assert r.status_code == 200 and r.json()["topic"] == f"P_{portfolio_id}"
+    assert r.status_code == 200 and r.json()["portfolio_id"] == portfolio_id and r.json()["license_key"].startswith("lic_")
 
 
-def test_license_check_is_rate_limited_after_failures(client, fresh_limiter):
-    manager_id, email = make_user()
-    portfolio_id, key = make_portfolio(manager_id)
-    client.post("/licenses", headers=bearer(token_for(email)),
-                json={"client_mt5_login": 88, "max_lots": 1.0, "portfolio_id": portfolio_id})
-    for _ in range(server.AUTH_MAX_FAILURES):
-        r = client.post("/api/license/check", json={"connection_key": str(uuid.uuid4()), "mt5_login": 88})
-        assert r.status_code == 403
-    # Blocked even with the right key until the window slides
-    assert client.post("/api/license/check", json={"connection_key": key, "mt5_login": 88}).status_code == 429
+def test_the_v3_license_check_is_gone(client):
+    """v3 Slaves validated a portfolio key here; v4 ones authenticate with the license key at the hub."""
+    assert client.post("/api/license/check", json={"connection_key": "k", "mt5_login": 1}).status_code in (404, 405)
 
 
 def test_login_is_rate_limited_after_failures(client, fresh_limiter):

@@ -48,7 +48,7 @@ WS_CLOSE_UNAUTHORIZED = 4401  # The client should log out instead of reconnectin
 WS_CLOSE_FORBIDDEN = 4403
 WS_CLOSE_TRY_LATER = 1013  # Database unavailable or still migrating
 
-# Failed logins and license checks allowed per client IP inside the window, then 429 until it slides
+# Failed logins allowed per client IP inside the window, then 429 until it slides
 AUTH_MAX_FAILURES = int(os.getenv("AUTH_MAX_FAILURES", "10"))
 AUTH_FAILURE_WINDOW_SECONDS = float(os.getenv("AUTH_FAILURE_WINDOW_SECONDS", "600"))
 
@@ -380,8 +380,7 @@ class LicenseCreate(BaseModel):
     portfolio_id: int
     expires_at: Optional[datetime.datetime] = None
 
-# A WSS Slave gets changes within seconds (the API asks the hub to refresh);
-# a ZMQ Slave rechecks its license hourly
+# The Slave gets changes within seconds: the API asks the hub to refresh
 class LicenseUpdate(BaseModel):
     max_lots: Optional[float] = Field(default=None, gt=0)
     is_active: Optional[bool] = None
@@ -443,10 +442,6 @@ def fetch_hub_sessions() -> Optional[list]:
     except Exception as e:
         logger.warning(f"Could not read hub sessions: {e}")
         return None
-
-class LicenseCheck(BaseModel):
-    connection_key: str
-    mt5_login: int
 
 # --- API Routes ---
 
@@ -671,7 +666,6 @@ def list_portfolios(current_user: models.User = Depends(get_current_user), db: S
         result.append({
             "id": p.id,
             "name": p.name,
-            "public_key": p.public_key,
             "strategies": [
                 {"id": s.id, "name": s.name, "magic_number": s.magic_number}
                 for s in p.strategies
@@ -716,7 +710,7 @@ def create_master_key(data: MasterKeyCreate, current_user: models.User = Depends
 
 @app.delete("/me/master-keys/{key_id}")
 def revoke_master_key(key_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """The hub drops Masters connected with it at once (WSS) and ignores it on ZMQ."""
+    """The hub drops the Masters connected with it at once."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     mk = db.get(models.MasterKey, key_id)
     if mk is None or mk.user_id != current_user.id: raise HTTPException(status_code=404)
@@ -730,7 +724,7 @@ def revoke_master_key(key_id: int, current_user: models.User = Depends(get_curre
 
 @app.get("/me/connections")
 def list_connections(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Masters and Slaves connected to the hub over WSS right now (ZMQ clients can't be seen)."""
+    """Masters and Slaves connected to the hub right now."""
     if current_user.role != "MANAGER": raise HTTPException(status_code=403)
     sessions = fetch_hub_sessions()
     if sessions is None:
@@ -852,27 +846,6 @@ def update_license(license_id: int, changes: LicenseUpdate, current_user: models
                 f"is_active={lic.is_active} expires_at={lic.expires_at}")
     notify_hub()
     return license_out(lic)
-
-@app.post("/api/license/check")
-def check_license(check: LicenseCheck, request: Request, db: Session = Depends(get_db)):
-    """Anonymous (the Slave EA calls it); failures are rate limited per IP against key enumeration."""
-    check_not_limited("license", request)
-    valid_license = None
-    zmq_topic = ""
-    portfolio = db.query(models.Portfolio).filter(models.Portfolio.public_key == check.connection_key).first()
-    if portfolio:
-        valid_license = db.query(models.License).filter(
-            models.License.portfolio_id == portfolio.id,
-            models.License.client_mt5_login == check.mt5_login,
-            models.License.is_active == True,
-            (models.License.expires_at.is_(None)) | (models.License.expires_at > datetime.datetime.utcnow()),
-        ).first()
-        zmq_topic = f"P_{portfolio.id}"
-    
-    if not valid_license:
-        failure_limiter.fail(f"license:{client_ip(request)}")
-        raise HTTPException(status_code=403, detail="Invalid License or Key")
-    return {"status": "active", "topic": zmq_topic, "max_lots": valid_license.max_lots}
 
 # Serve static files (Frontend)
 FRONTEND_DIST = "frontend/dist"

@@ -75,13 +75,16 @@ def test_migrate_from_every_origin(pg_url, origin):
 
     insp = inspect(engine)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0006_access_keys"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007_zmq_cut"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
-            # The plain-text master key was adopted as a hashed master key, exactly once
-            adopted = c.execute(text("SELECT user_id, key_hash, key_prefix FROM master_keys")).fetchall()
-            assert [tuple(r) for r in adopted] == [(1, hashlib.sha256(b"k1").hexdigest(), "k1")]
+            # The plain-text master key was adopted as a hashed master key, exactly once, and revoked at the
+            # ZMQ cut: it had crossed the open port in clear
+            adopted = c.execute(text("SELECT user_id, key_hash, key_prefix, revoked_at IS NOT NULL FROM master_keys")).fetchall()
+            assert [tuple(r) for r in adopted] == [(1, hashlib.sha256(b"k1").hexdigest(), "k1", True)]
     assert {"master_positions", "signals", "executions", "master_accounts", "master_keys"} <= set(insp.get_table_names())
+    assert "master_key" not in {col["name"] for col in insp.get_columns("users")}
+    assert "public_key" not in {col["name"] for col in insp.get_columns("portfolios")}
     columns = {col["name"]: col for col in insp.get_columns("strategies")}
     assert str(columns["magic_number"]["type"]) == "BIGINT"
     login_type = {col["name"]: col for col in insp.get_columns("licenses")}["client_mt5_login"]["type"]
@@ -121,7 +124,7 @@ def test_concurrent_migrations_are_serialized(pg_url):
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0006_access_keys"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007_zmq_cut"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0
 
