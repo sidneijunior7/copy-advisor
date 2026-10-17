@@ -269,3 +269,26 @@ def test_hub_process_over_websocket(setup):
             models.MasterPosition.manager_id == info["manager"]).one().raw.startswith("V2|900|OPEN|77|")
     finally:
         db.close()
+
+
+def test_hub_drops_oversized_zmq_messages(setup):
+    """Port 5557 is open to anyone: a message over ZMQ_PULL_MAX_MESSAGE drops its connection before libzmq
+    buffers it (a single 256 MB one used to take the hub to 568 MB), and the hub carries on."""
+    info, ports = setup
+    proc, _ = start_hub(ports)
+    peer = Peer(ports, f"P_{info['portfolio']}")
+    ctx = zmq.Context()
+    try:
+        peer.wait_for("HB|")
+        big = ctx.socket(zmq.PUSH)
+        big.setsockopt(zmq.LINGER, 0)
+        big.connect(f"tcp://127.0.0.1:{ports['pull']}")
+        big.send(b"x" * 2_000_000)
+        peer.push.send_string(f"{info['key']}|V2|900|OPEN|88|0|EURUSD|1|1.10000|0|0|4242")
+        assert peer.wait_for("POS|").split("|")[3] == "900_88"
+        time.sleep(1)
+        assert health(ports)["msgs"] == 1  # Only the V2: the oversized message never reached the hub
+    finally:
+        ctx.destroy(linger=0)
+        peer.close()
+        stop_hub(proc)

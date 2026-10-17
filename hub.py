@@ -59,6 +59,10 @@ EVENTS_BIND = os.getenv("HUB_EVENTS_BIND", "tcp://*:5558")
 HEALTH_PORT = int(os.getenv("HUB_HEALTH_PORT", "8001"))
 WS_PORT = int(os.getenv("HUB_WS_PORT", "8002"))
 WS_MAX_MESSAGE = 1_048_576  # A V2SYNC of a big Master fits; nothing a client sends needs more
+# Ports 5557 and 5556 are open to anyone. Without a cap libzmq takes a message of any size: a single 256 MB
+# one took the hub to 568 MB. A larger message drops the connection before it is buffered.
+ZMQ_PULL_MAX_MESSAGE = WS_MAX_MESSAGE
+ZMQ_PUB_MAX_MESSAGE = 4096  # What a PUB receives are subscriptions ("P_<id> ")
 HEARTBEAT_SECONDS = float(os.getenv("HUB_HEARTBEAT_SECONDS", "5"))
 SNAPSHOT_SECONDS = float(os.getenv("HUB_SNAPSHOT_SECONDS", "15"))
 WARMUP_SECONDS = float(os.getenv("HUB_WARMUP_SECONDS", "20"))
@@ -816,9 +820,9 @@ class Hub:
     def __init__(self):
         self.ctx = zmq.Context()             # PUB sockets: send never blocks
         self.actx = zmq.asyncio.Context()    # PULL, awaited in the loop
-        self.pull = self._socket(self.actx, zmq.PULL, PULL_BIND)
-        self.pub = self._socket(self.ctx, zmq.PUB, PUB_BIND)
-        self.events = self._socket(self.ctx, zmq.PUB, EVENTS_BIND)
+        self.pull = self._socket(self.actx, zmq.PULL, PULL_BIND, ZMQ_PULL_MAX_MESSAGE)
+        self.pub = self._socket(self.ctx, zmq.PUB, PUB_BIND, ZMQ_PUB_MAX_MESSAGE)
+        self.events = self._socket(self.ctx, zmq.PUB, EVENTS_BIND, ZMQ_PUB_MAX_MESSAGE)
 
         self.directory = DirectoryLoader()
         self.writer = Writer()
@@ -837,9 +841,10 @@ class Hub:
         self.last_loop = time.time()
 
     @staticmethod
-    def _socket(ctx, kind: int, endpoint: str):
+    def _socket(ctx, kind: int, endpoint: str, max_message: int):
         s = ctx.socket(kind)
         s.setsockopt(zmq.LINGER, 0)
+        s.setsockopt(zmq.MAXMSGSIZE, max_message)
         # Swarm's ingress drops idle TCP after ~15 min; keepalive keeps idle subscribers attached
         s.setsockopt(zmq.TCP_KEEPALIVE, 1)
         s.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
