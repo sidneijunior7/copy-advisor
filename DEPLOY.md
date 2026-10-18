@@ -169,7 +169,7 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - Informa os fechamentos que não fez (SL, TP, stop out, fechamento manual) como `CLOSE_EXT`.
   - Envia saldo e patrimônio (`ACC`) a cada 5 minutos.
 - **Master 4.01:**
-  - Envia cada execução da conta (`V2DEAL`): operações, depósitos e saques, com lucro, swap, comissão e horário em UTC. Ele lê o histórico a partir de um cursor guardado na variável global `TDM_DEALS_<login>` do terminal; na primeira vez, desde 7 dias atrás. O que se perdeu numa queda sai na reconexão, e o hub descarta duplicatas pelo número da execução.
+  - Envia cada execução da conta (`V2DEAL`): operações, depósitos e saques, com lucro, swap, comissão e horário em UTC. Ele lê o histórico a partir de um cursor guardado na variável global `TDM_DEALS_<login>` do terminal; na primeira vez, desde 90 dias atrás, para que as posições que o hub já acompanhava entrem no desempenho (uma posição só conta com as execuções dela). O que se perdeu numa queda sai na reconexão, e o hub descarta duplicatas pelo número da execução.
   - Envia saldo e patrimônio (`V2ACC`) junto com o `V2HELLO`.
 - **Hub:**
   - Aceita `EXEC` com 10 campos (EAs antigos) ou 11.

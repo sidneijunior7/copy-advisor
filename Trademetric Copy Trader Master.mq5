@@ -68,7 +68,8 @@ const int HELLO_MS  = 300000; // Account details are re-sent so a hub that resta
 const ulong FILA_MAX_MS = 10000;
 const int   FILA_MAX = 1000;
 const int   DEALS_MS = 2000;            // How often the deal history is read
-const int   DEALS_FIRST_DAYS = 7;       // How far back a terminal that never sent deals starts
+const int   DEALS_FIRST_DAYS = 90;      // How far back a terminal that never sent deals starts: the positions the
+                                        // hub already tracked get their results (the catalog shows 90 days)
 const int   DEALS_PER_ROUND = 200;      // A long backlog goes out over several rounds
 ulong       next_deals = 0;
 ulong       deals_at_cursor[];          // Deals sent at exactly the cursor's millisecond (ties)
