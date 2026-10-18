@@ -1,0 +1,14 @@
+# Alerts (service "mirror-monitor"): checks /health once a minute and sends Telegram messages.
+# Standard library only, no ports. One replica.
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+COPY monitor.py ./
+
+# The loop touches the file every round: a monitor stuck for 5 minutes is restarted
+HEALTHCHECK --interval=60s --timeout=3s --start-period=120s --retries=3 \
+    CMD python -c "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/monitor.alive') > 300)"
+
+CMD ["python", "monitor.py"]

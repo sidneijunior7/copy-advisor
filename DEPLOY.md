@@ -99,6 +99,13 @@ Antes, o `python migrate.py` rodava antes do uvicorn: com o banco fora no boot, 
 
 A lista completa de variáveis está em `.env.example`.
 
+**`mirror-monitor`** (alertas no Telegram)
+- Fonte: este repositório, `Dockerfile.monitor`. Uma réplica, nenhuma porta, limite de memória de 64 MB.
+- Checa o `/health` da API e o `signals.trademetric.com.br/health` a cada minuto. Avisa quando a API, o banco, o hub ou o endereço dos EAs falham três vezes seguidas, quando falta Master conectado no pregão (dias úteis, 09:00–18:30 de Brasília) e quando o hub perde gravações; avisa de novo quando volta ao normal. Ao subir, manda uma mensagem de teste.
+- **Telegram:** crie o bot com o @BotFather (`/newbot`), que devolve o token. Mande uma mensagem ao bot (ou o adicione a um grupo) e abra `https://api.telegram.org/bot<TOKEN>/getUpdates`: o `chat.id` é o destino.
+- Variáveis: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Opcionais: `MONITOR_SESSION` (padrão `09:00-18:30`), `MONITOR_MIN_MASTERS` (1), `MONITOR_FAILURES` (3), `MONITOR_INTERVAL_S` (60), `MONITOR_MASTER_QUIET_S` (120).
+- Na mesma VPS, ele não avisa se a própria VPS cair. Para isso, `MONITOR_PING_URL` recebe a URL de um serviço como o healthchecks.io, chamada a cada rodada; o serviço avisa quando as chamadas param.
+
 **Conferência:** `GET https://mirror.trademetric.com.br/health` deve mostrar `"status": "healthy"` e o bloco `hub` com `"warming": false`.
 
 ## Tipo da conta do Master
