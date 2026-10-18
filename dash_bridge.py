@@ -4,6 +4,8 @@ token the manager pasted, in the format of the Dash's own Live Tracking EA (one 
 creator then runs one EA, the Master, for both products.
 
 - The Dash address comes from DASH_INGEST_URL, never from the user.
+- DASH_MIRROR_KEY, the key shared with the Dash (its MIRROR_INGEST_KEY), goes in x-mirror-key: with it the Dash marks
+  the trades as the Mirror's, verified. Without it they arrive as plain EA trades.
 - Each item carries external_id "mirror:<master login>:<deal>", which the Dash uses to drop what it already has: a
   send that timed out can be repeated.
 - The token is kept encrypted with HOSTING_SECRET, like the hosted accounts' passwords.
@@ -31,6 +33,7 @@ import models
 logger = logging.getLogger(__name__)
 
 INGEST_URL = os.getenv("DASH_INGEST_URL", "https://webrequest.trademetric.com.br/api/ingest")
+MIRROR_KEY = os.getenv("DASH_MIRROR_KEY", "").strip()
 INTERVAL = int(os.getenv("DASH_BRIDGE_SECONDS", "30"))  # 0 turns the bridge off
 ERROR_RETRY_SECONDS = 3600
 BATCH = 100  # master_deals read per step, so at most this many items per request
@@ -44,9 +47,10 @@ Send = Callable[[str, list], Tuple[int, str]]
 
 def send(token: str, items: list) -> Tuple[int, str]:
     """POST to the Dash ingest: (HTTP status, the start of the body); status 0 when the Dash did not answer."""
-    req = urllib.request.Request(INGEST_URL, data=json.dumps(items).encode(), method="POST",
-                                 headers={"Content-Type": "application/json", "x-api-token": token,
-                                          "User-Agent": "TrademetricMirror/1"})
+    headers = {"Content-Type": "application/json", "x-api-token": token, "User-Agent": "TrademetricMirror/1"}
+    if MIRROR_KEY:
+        headers["x-mirror-key"] = MIRROR_KEY
+    req = urllib.request.Request(INGEST_URL, data=json.dumps(items).encode(), method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return r.status, r.read(500).decode(errors="replace")

@@ -174,6 +174,35 @@ def test_a_refused_token_stops_the_link_until_retry(client, monkeypatch):
     assert len(dash.items(token)) == 2 and link_row(portfolio_id).status == "active"
 
 
+def test_send_carries_the_shared_key_only_when_set(monkeypatch):
+    seen = []
+
+    class Answer:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, n):
+            return b"{}"
+
+    def urlopen(req, timeout):
+        seen.append((req.full_url, dict(req.header_items())))
+        return Answer()
+
+    monkeypatch.setattr(dash_bridge.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(dash_bridge, "MIRROR_KEY", "")
+    assert dash_bridge.send("tc_x", []) == (201, "{}")
+    monkeypatch.setattr(dash_bridge, "MIRROR_KEY", "shared")
+    dash_bridge.send("tc_x", [])
+    (url, plain), (_, keyed) = seen
+    assert url == dash_bridge.INGEST_URL and plain["X-api-token"] == "tc_x"
+    assert "X-mirror-key" not in plain and keyed["X-mirror-key"] == "shared"
+
+
 def test_a_dash_that_fails_gets_the_same_trades_again(client, monkeypatch):
     manager_id, _, portfolio_id, magic, token = linked(client, monkeypatch)
     seed_deals(manager_id, magic, uuid.uuid4().int % 10**9)

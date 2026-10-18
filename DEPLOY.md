@@ -230,7 +230,12 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - O token fica cifrado com o `HOSTING_SECRET`; sem ele, o vínculo não aparece.
   - O endereço do Dash vem de `DASH_INGEST_URL` (padrão `https://webrequest.trademetric.com.br/api/ingest`), nunca do usuário.
   - A stack local (`tools/spike`) aponta para um Dash falso no próprio computador.
-- **Depende do Dash:** o `/api/ingest` do Dash precisa descartar o `external_id` que já tem, para um reenvio não duplicar. Essa mudança está na branch `mirror-bridge` do repositório do Dash. **Faça o deploy dela antes de vincular o primeiro portfólio.**
+- **Selo de verificado:**
+  - O Dash só marca as operações como do Mirror ("Verificado via Trademetric Mirror") quando o pedido traz a chave compartilhada: `DASH_MIRROR_KEY` na API do Mirror, igual ao `MIRROR_INGEST_KEY` do servidor de ingestão do Dash.
+  - Sem a chave, chegam como operações de EA comum. Assim, um criador não ganha o selo mandando operações por conta própria.
+- **Depende do Dash:**
+  - O `/api/ingest` do Dash precisa descartar o `external_id` que já tem, para um reenvio não duplicar. Essa mudança está na branch `mirror-bridge` do repositório do Dash (`docs/ponte-mirror.md` lá).
+  - **Faça o deploy dela, com a migração e o `MIRROR_INGEST_KEY`, antes de vincular o primeiro portfólio.**
 - **Deploy:** a migração `0013` cria a tabela `dash_links`. Só a API muda.
 
 ## Tipo da conta do Master
