@@ -178,6 +178,25 @@ class HostedPod(Base):
     last_seen_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
 
+class DashLink(Base):
+    """A portfolio whose Master trades go to a Trademetric Dash portfolio (dash_bridge.py)."""
+    __tablename__ = "dash_links"
+
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False, unique=True)
+    token_encrypted = Column(Text, nullable=False) # The Dash portfolio's API token, Fernet with HOSTING_SECRET
+    token_hint = Column(String(8)) # Its last characters, to tell tokens apart on the screen
+    deal_cursor = Column(BigInteger, nullable=False, default=0) # The last master_deals.id gone through
+    send_since = Column(DateTime, nullable=False) # Deals closed before this are not sent
+    status = Column(String(16), nullable=False, default="active") # active | error (the Dash refused the token)
+    last_error = Column(String(300))
+    last_attempt_at = Column(DateTime)
+    last_sent_at = Column(DateTime)
+    sent_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    portfolio = relationship("Portfolio")
+
 class HostedTerminal(Base):
     """A license whose Slave runs in a pod. The broker password and the license key are stored encrypted, not
     hashed: the pod has to hand them to MT5."""

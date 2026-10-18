@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import api, { type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
+import DashLinkPanel from '../../components/DashLinkPanel';
 import PageHeader from '../../components/PageHeader';
 import PortfolioLimits from '../../components/PortfolioLimits';
 import { Badge } from '../../components/ui/Badge';
@@ -242,6 +243,7 @@ export default function Portfolios() {
                                     portfolio={p}
                                     onSaved={limits => setPortfolios(current => current.map(x => (x.id === p.id ? { ...x, client_limits: limits } : x)))}
                                 />
+                                <DashLinkPanel portfolioId={p.id} portfolioName={p.name} />
                             </Card>
                         );
                     })}

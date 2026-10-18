@@ -270,6 +270,19 @@ export type FollowerStats = {
     symbols: FollowerSymbol[];
 };
 
+// A portfolio's link to a Trademetric Dash portfolio (the Master's closed trades go to the Dash)
+export type DashLink = {
+    token_hint: string;
+    status: 'active' | 'error'; // error: the Dash refused the token; the Mirror tries again every hour
+    last_error: string | null;
+    last_sent_at: string | null;
+    sent_count: number;
+    send_since: string;
+    created_at: string;
+};
+
+export type DashLinkState = { available: boolean; link: DashLink | null };
+
 // The marketplace shows the figures only past a minimum of followers and copies
 export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
 

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 # Internal Imports
 import clients
+import dash_bridge
 import database
 import followers
 import hosting
@@ -304,6 +305,8 @@ async def lifespan(app: FastAPI):
     relay = threading.Thread(target=trade_manager.relay_hub_events, args=(asyncio.get_running_loop(), stop),
                              name="hub-relay", daemon=True)
     relay.start()
+    if dash_bridge.INTERVAL > 0:
+        threading.Thread(target=dash_bridge.run_forever, args=(stop,), name="dash-bridge", daemon=True).start()
     yield
     stop.set()
     relay.join(2)
@@ -1199,6 +1202,65 @@ def portfolio_performance(portfolio_id: int, days: int = 90, current_user: model
                                                   models.Portfolio.user_id == current_user.id).first()
     if not portfolio: raise HTTPException(status_code=404)
     return performance.portfolio(db, portfolio, days, datetime.datetime.utcnow())
+
+class DashLinkIn(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+    history_days: int = Field(0, ge=0, le=dash_bridge.HISTORY_MAX_DAYS)
+
+def own_portfolio(portfolio_id: int, current_user: models.User, db: Session) -> models.Portfolio:
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id,
+                                                  models.Portfolio.user_id == current_user.id).first()
+    if not portfolio: raise HTTPException(status_code=404)
+    return portfolio
+
+@app.get("/portfolios/{portfolio_id}/dash")
+def get_dash_link(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The portfolio's link to a Trademetric Dash portfolio, if any (dash_bridge.py)."""
+    portfolio = own_portfolio(portfolio_id, current_user, db)
+    link = db.query(models.DashLink).filter(models.DashLink.portfolio_id == portfolio.id).first()
+    return {"available": hosting.cipher() is not None, "link": dash_bridge.link_out(link)}
+
+@app.put("/portfolios/{portfolio_id}/dash")
+def save_dash_link(portfolio_id: int, data: DashLinkIn, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Links the portfolio to a Dash portfolio by its API token: from now on (or from history_days before), each
+    trade the Master closes in one of its strategies goes to the Dash. The Dash checks the token first."""
+    portfolio = own_portfolio(portfolio_id, current_user, db)
+    token = data.token.strip()
+    if not dash_bridge.TOKEN_PATTERN.match(token):
+        raise HTTPException(status_code=422, detail="Cole o token de API do portfólio do Dash: ele começa com tc_")
+    fernet = hosting.cipher()
+    if fernet is None:
+        raise HTTPException(status_code=503, detail="O vínculo com o Dash não está disponível neste servidor")
+    status_code, _ = dash_bridge.send(token, [])  # Nothing to ingest: the Dash only checks the token and the plan
+    if status_code not in (200, 201):
+        refused = dash_bridge.refusal(status_code)
+        if refused:
+            raise HTTPException(status_code=422, detail=refused)
+        raise HTTPException(status_code=502, detail="Não foi possível falar com o Dash agora. Tente de novo em alguns minutos.")
+    now = datetime.datetime.utcnow()
+    link = db.query(models.DashLink).filter(models.DashLink.portfolio_id == portfolio.id).first()
+    if link is None:
+        link = models.DashLink(portfolio_id=portfolio.id, created_at=now, sent_count=0)
+        db.add(link)
+    link.token_encrypted = fernet.encrypt(token.encode()).decode()
+    link.token_hint = token[-4:]
+    link.deal_cursor = 0  # The Dash drops what it already has (external_id): going through again is safe
+    link.send_since = now - datetime.timedelta(days=data.history_days)
+    link.status, link.last_error = "active", None
+    db.commit()
+    db.refresh(link)
+    logger.info(f"Portfolio {portfolio.id}: linked to the Dash (history {data.history_days} days)")
+    return dash_bridge.link_out(link)
+
+@app.delete("/portfolios/{portfolio_id}/dash")
+def delete_dash_link(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    portfolio = own_portfolio(portfolio_id, current_user, db)
+    db.query(models.DashLink).filter(models.DashLink.portfolio_id == portfolio.id).delete()
+    db.commit()
+    logger.info(f"Portfolio {portfolio.id}: Dash link removed")
+    return {"message": "Vínculo removido"}
 
 @app.get("/portfolios/{portfolio_id}/followers")
 def portfolio_followers(portfolio_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),

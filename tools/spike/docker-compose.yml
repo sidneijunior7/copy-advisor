@@ -43,6 +43,9 @@ services:
       HUB_EVENTS_URL: tcp://tdm-spike-hub:5558
       HUB_HEALTH_URL: http://tdm-spike-hub:8001/health
       HOSTING_SECRET: TLMLNDmTcat-cP4jg_JTZKbG1d-BIWSZPKOq5U7Rxps=  # Local only
+      # Never the real Dash: a stand-in on the host when testing the bridge (nothing listens there otherwise)
+      DASH_INGEST_URL: http://host.docker.internal:18555/api/ingest
+      DASH_BRIDGE_SECONDS: "10"
     command: sh -c "python migrate.py && python spike/seed.py && exec uvicorn server:app --host 0.0.0.0 --port 8000"
     depends_on:
       tdm-spike-db:

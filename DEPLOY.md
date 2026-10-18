@@ -214,6 +214,25 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
 - **Por ativo,** porque pontos de ativos diferentes não se somam. O ativo é o do Master.
 - **Deploy:** a migração `0012` cria um índice em `executions` (portfólio e data). A retenção do hub passou a guardar as execuções que formam o resultado das cópias; veja Observabilidade. Mesma ordem de sempre: API, depois o hub.
 
+## Ponte com o Trademetric Dash
+
+- **Para que serve:** com um portfólio vinculado, cada operação que o Master fecha numa das estratégias dele vai para o acompanhamento ao vivo de um portfólio do Dash. Assim, o criador roda um EA só, o Master, para os dois produtos.
+- **Como vincular:** em **Portfólios**, no cartão do portfólio, o gestor clica em **Vincular** e cola o token de API do portfólio do Dash (`tc_...`, gerado no Dash e mostrado uma vez só).
+  - O Mirror confere o token com o Dash antes de salvar: um token errado, revogado ou de um plano sem acompanhamento ao vivo é recusado na hora.
+  - "Enviar também os últimos 90 dias" manda o histórico. Só vale marcar se o EA de acompanhamento do Dash não rodava naquela conta; senão, as operações aparecem duas vezes no Dash.
+  - Depois de vincular, o EA de acompanhamento do Dash deve sair daquela conta.
+- **O que vai:** um item por execução de saída, no formato do EA do Dash (`strategy_id` = magic, `side` LONG/SHORT, preços de entrada e saída, volume, `pnl`, `fees`, duração e horário em UTC). Também vão `external_id` = `mirror:<conta>:<deal>` e `source` = `mirror`. As taxas incluem a parte da comissão de entrada que cabe à saída; o EA do Dash não a inclui.
+- **Como envia** (`dash_bridge.py`, uma thread da API a cada `DASH_BRIDGE_SECONDS`, padrão 30):
+  - Cada vínculo guarda até onde foi em `master_deals` e só manda o que fechou depois de vinculado (ou do histórico pedido).
+  - Se o Dash não responde ou dá erro, o Mirror manda as mesmas operações na rodada seguinte.
+  - Se o Dash recusa o token (401) ou o plano (402), o vínculo para, o painel mostra o motivo e o Mirror tenta de novo a cada hora. Corrigir o plano no Dash basta.
+- **Segurança:**
+  - O token fica cifrado com o `HOSTING_SECRET`; sem ele, o vínculo não aparece.
+  - O endereço do Dash vem de `DASH_INGEST_URL` (padrão `https://webrequest.trademetric.com.br/api/ingest`), nunca do usuário.
+  - A stack local (`tools/spike`) aponta para um Dash falso no próprio computador.
+- **Depende do Dash:** o `/api/ingest` do Dash precisa descartar o `external_id` que já tem, para um reenvio não duplicar. Essa mudança está na branch `mirror-bridge` do repositório do Dash. **Faça o deploy dela antes de vincular o primeiro portfólio.**
+- **Deploy:** a migração `0013` cria a tabela `dash_links`. Só a API muda.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.
