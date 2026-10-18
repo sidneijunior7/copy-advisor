@@ -2,11 +2,12 @@
 import { Fragment, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'react-router-dom';
-import { Ban, CalendarX, Check, KeyRound, Pencil, RefreshCw, RotateCcw, Search, ShieldCheck, Users, X } from 'lucide-react';
+import { Ban, CalendarX, Check, KeyRound, Pencil, RefreshCw, RotateCcw, Search, Server, ShieldCheck, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type License, type Portfolio, type Strategy } from '../../api';
+import api, { type HostedTerminal, type HostingList, type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
+import HostingPanel, { HostingBadge } from '../../components/HostingPanel';
 import InlineConfirm from '../../components/InlineConfirm';
 import OneTimeKey from '../../components/OneTimeKey';
 import PageHeader from '../../components/PageHeader';
@@ -21,7 +22,7 @@ type LicenseChanges = { max_lots?: number; is_active?: boolean; expires_at?: str
 // One inline action at a time across the list: the limit is edited in its cell, the rest in a panel under the row
 type RowAction =
     | { kind: 'limit' | 'expiry'; id: number; value: string }
-    | { kind: 'revoke' | 'rotate'; id: number };
+    | { kind: 'revoke' | 'rotate' | 'hosting'; id: number };
 
 const formatLots = (value: number) => Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
@@ -41,6 +42,8 @@ const endOfDay = (day: string) => {
 };
 const todayInput = () => toDayInput(new Date());
 
+const HOSTING_POLL_MS = 15_000; // Hosted terminals change state on their own (starting, running, login refused)
+
 export default function Clients() {
     const [licenses, setLicenses] = useState<License[]>([]);
     const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
@@ -55,6 +58,7 @@ export default function Clients() {
     // Plain Slave keys live here, and only until the user closes the notice
     const [created, setCreated] = useState<{ login: number; key: string } | null>(null);
     const [rotated, setRotated] = useState<{ id: number; key: string; replaced: boolean } | null>(null);
+    const [hosting, setHosting] = useState<HostingList | null>(null);
     const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<LicenseForm>({
         defaultValues: { max_lots: '1.00', expires_on: '' },
     });
@@ -78,6 +82,22 @@ export default function Clients() {
     };
 
     useEffect(() => { refresh(); }, []);
+
+    useEffect(() => {
+        const refreshHosting = () =>
+            api.get<HostingList>('/hosting').then(res => setHosting(res.data)).catch(e => console.error(e));
+        refreshHosting();
+        const timer = window.setInterval(refreshHosting, HOSTING_POLL_MS);
+        return () => window.clearInterval(timer);
+    }, []);
+
+    const hostedOf = (l: License) => hosting?.terminals.find(t => t.license_id === l.id);
+
+    const onHostingChange = (l: License, terminal: HostedTerminal | null) =>
+        setHosting(current => current && {
+            ...current,
+            terminals: [...current.terminals.filter(t => t.license_id !== l.id), ...(terminal ? [terminal] : [])],
+        });
 
     const onCreateLicense = async (data: LicenseForm) => {
         try {
@@ -157,7 +177,11 @@ export default function Clients() {
             const res = await api.post<License>(`/licenses/${l.id}/key`);
             const { license_key, ...stored } = res.data;
             setLicenses(current => current.map(x => (x.id === l.id ? stored : x)));
-            setRotated({ id: l.id, key: license_key ?? '', replaced: l.has_key });
+            if (hostedOf(l)) {
+                toast.success(`Conta ${l.client_mt5_login}: nova chave`, { description: 'O terminal hospedado a recebe e reinicia sozinho.' });
+            } else {
+                setRotated({ id: l.id, key: license_key ?? '', replaced: l.has_key });
+            }
             setAction(null);
         } catch (e) {
             console.error(e);
@@ -345,6 +369,7 @@ export default function Clients() {
                                     const canHaveKey = l.portfolio_id != null;
                                     const panel = mine && mine.kind !== 'limit' ? mine : null;
                                     const shownKey = !panel && rotated?.id === l.id ? rotated : null;
+                                    const hosted = hostedOf(l);
                                     return (
                                         <Fragment key={l.id}>
                                             <TableRow className={cn((panel || shownKey) && 'border-b-0')}>
@@ -450,8 +475,24 @@ export default function Clients() {
                                                     {status !== 'Ativa' && (
                                                         <p className="mt-1 text-xs text-muted-foreground" title={`O EA ${MANAGE_ONLY}`}>Só gestão</p>
                                                     )}
+                                                    {hosted && (
+                                                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground" title={hosted.detail ?? undefined}>
+                                                            <Server className="size-3" /> Hospedada <HostingBadge terminal={hosted} />
+                                                        </div>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="text-right">
+                                                    {canHaveKey && (hosting?.available || hosted) && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => setAction({ kind: 'hosting', id: l.id })}
+                                                            disabled={mine?.kind === 'hosting'}
+                                                            aria-label={`${hosted ? 'Editar a hospedagem' : 'Hospedar o terminal'} da conta ${l.client_mt5_login}`}
+                                                        >
+                                                            <Server /> {hosted ? 'Hospedagem' : 'Hospedar'}
+                                                        </Button>
+                                                    )}
                                                     {!l.is_active ? (
                                                         <Button variant="ghost" size="sm" loading={isBusy} onClick={() => reactivate(l)}>
                                                             {!isBusy && <RotateCcw />} Reativar
@@ -505,6 +546,14 @@ export default function Clients() {
                                                                     </Button>
                                                                 </div>
                                                             </form>
+                                                        ) : panel?.kind === 'hosting' ? (
+                                                            <HostingPanel
+                                                                license={l}
+                                                                terminal={hosted}
+                                                                servers={hosting?.servers ?? []}
+                                                                onChange={t => onHostingChange(l, t)}
+                                                                onClose={() => setAction(null)}
+                                                            />
                                                         ) : panel?.kind === 'revoke' ? (
                                                             <InlineConfirm
                                                                 confirmLabel="Revogar conta"

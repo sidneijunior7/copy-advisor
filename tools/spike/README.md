@@ -59,6 +59,24 @@ docker compose logs -f tdm-spike-pod
 docker compose down                                          # -v apaga banco e slots
 ```
 
+## Hospedagem (pod de produção contra esta stack)
+
+O serviço `tdm-spike-hosted` roda o `Dockerfile.pod` da raiz, com o `pod_agent.py`. Ele sobe pelo profile `hosting` e usa a chave `pod_spike_local`, que o `seed.py` cria:
+
+```bash
+docker compose --profile hosting up -d tdm-spike-hosted
+```
+
+Os terminais vêm da API, como em produção (`PUT /licenses/{id}/hosting`). Para logar no painel local, dê uma senha ao gestor do spike com `create_admin.py spike-manager@local` dentro do `tdm-spike-api` e copie o `frontend/dist` para `/app/frontend/` do container. O `seed.py` não troca a chave de uma licença hospedada, porque o pod tem a dela.
+
+**Lista do WebRequest do pod (`pod/webrequest_url.txt`):** foi gerada assim, num container da imagem do pod:
+1. Suba o Xvfb e o desktop do Wine como o `pod_agent.py` faz, crie uma pasta de terminal e abra o `terminal64.exe /portable` **sem** `/config`.
+2. Feche o assistente de abertura de conta (Cancel), abra *Tools → Options* (Ctrl+O) e vá à aba *Experts*.
+3. Em cada URL, clique na linha "add new URL", aperte F2, digite e confirme com Enter: `https://signals.trademetric.com.br` e `http://hub.spike.test`.
+4. Clique em OK, feche o terminal com `wine taskkill /IM terminal64.exe` e copie a linha `WebRequestUrl=` do `config/common.ini` (UTF-16).
+
+Confira cada passo com `import -window root` no `DISPLAY=:99`.
+
 - **`EA=probe`:** roda `Trademetric Spike Probe.mq5`, que não precisa de conta. Ela responde se o terminal carrega a DLL do ZMQ, se recebe o heartbeat do hub e se o `WebRequest` é liberado pela configuração de partida. Os logs dela começam com `PROBE`. Desde o corte do ZMQ o hub não publica mais na 5556, então o teste de heartbeat da sonda falha; a carga da DLL e o `WebRequest` continuam valendo.
 - **`EA=slave`:** roda o Slave v4 de verdade no portfólio Spike, por WebSocket e sem DLL.
 - **`PLAN`:** define um papel por slot (`slave`, `echo`, `master` ou `probe`) e a conta de cada um, pelo índice em `accounts.json`. No exemplo, os dois EAs v4 rodam em cadeia:

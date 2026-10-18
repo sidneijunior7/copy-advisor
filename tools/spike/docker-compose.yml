@@ -42,6 +42,7 @@ services:
       <<: *backend-env
       HUB_EVENTS_URL: tcp://tdm-spike-hub:5558
       HUB_HEALTH_URL: http://tdm-spike-hub:8001/health
+      HOSTING_SECRET: TLMLNDmTcat-cP4jg_JTZKbG1d-BIWSZPKOq5U7Rxps=  # Local only
     command: sh -c "python migrate.py && python spike/seed.py && exec uvicorn server:app --host 0.0.0.0 --port 8000"
     depends_on:
       tdm-spike-db:
@@ -103,6 +104,33 @@ services:
     cpus: 4
     mem_limit: ${POD_MEM_LIMIT:-3g}
 
+  # The hosting pod (Dockerfile.pod, pod_agent.py) against this stack: it runs the terminals hosted through the
+  # API (PUT /licenses/{id}/hosting). Start it on its own: docker compose --profile hosting up -d tdm-spike-hosted
+  tdm-spike-hosted:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.pod
+    image: tdm-pod
+    container_name: tdm-spike-hosted
+    profiles: [hosting]
+    environment:
+      API_URL: http://api.spike.test:8000
+      POD_KEY: pod_spike_local  # seed.py
+      CAPACITY: ${CAPACITY:-3}
+      WS_HOST: hub.spike.test
+      WS_PORT: 8002
+      WS_TLS: "0"
+      STAGGER_SECONDS: ${STAGGER_SECONDS:-30}
+    volumes:
+      - tdm-spike-hosted:/root/.wine64/drive_c/slots
+    stop_grace_period: 60s
+    depends_on:
+      tdm-spike-api:
+        condition: service_healthy
+    cpus: 4
+    mem_limit: ${POD_MEM_LIMIT:-3g}
+
 volumes:
   tdm-spike-db:
   tdm-spike-slots:
+  tdm-spike-hosted:

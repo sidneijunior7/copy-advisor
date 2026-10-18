@@ -18,6 +18,7 @@ import models  # noqa: E402
 
 EMAIL = "spike-manager@local"
 MASTER_KEY = "spike-master-key"
+POD_KEY = "pod_spike_local"  # The hosting pod of docker-compose.yml (tdm-spike-hosted)
 MAGIC = 777001
 ECHO_MAGIC = 5457873
 ACCOUNTS = "/spike/private/accounts.json"
@@ -37,6 +38,9 @@ def main():
                                     key_prefix=keys.key_prefix(MASTER_KEY)))
         else:
             master_key.revoked_at = None  # The ZMQ cut (migration 0007) revoked every key that existed then
+        if db.query(models.HostedPod).filter_by(key_hash=keys.key_hash(POD_KEY)).first() is None:
+            db.add(models.HostedPod(name="spike-local", key_hash=keys.key_hash(POD_KEY),
+                                    key_prefix=keys.key_prefix(POD_KEY)))
         logins = [int(a["login"]) for a in json.load(open(ACCOUNTS))] if os.path.exists(ACCOUNTS) else []
         for name, magic, prefix in (("Spike", MAGIC, "lic_spike"), ("Echo", ECHO_MAGIC, "lic_echo")):
             strategy = db.query(models.Strategy).filter_by(user_id=manager.id, magic_number=magic).one_or_none()
@@ -56,7 +60,9 @@ def main():
                     lic = models.License(portfolio_id=portfolio.id, client_mt5_login=login, max_lots=1.0)
                     db.add(lic)
                 key = f"{prefix}_{login}"
-                lic.key_hash, lic.key_prefix = keys.key_hash(key), keys.key_prefix(key)
+                hosted = lic.id is not None and db.query(models.HostedTerminal).filter_by(license_id=lic.id).first()
+                if not hosted:  # Hosting gave the license its own key, which only the pod has
+                    lic.key_hash, lic.key_prefix = keys.key_hash(key), keys.key_prefix(key)
             print(f"seed: {name}: strategy {strategy.id} (magic {magic}), portfolio {portfolio.id}, "
                   f"{len(logins)} licensed logins")
         db.commit()

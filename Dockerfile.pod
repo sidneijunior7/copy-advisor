@@ -1,0 +1,14 @@
+# Hosting pod (service "mirror-pod"): runs the hosted terminals the API assigns to it (pod_agent.py).
+# Built on the Drawdown Guard worker image for its Wine prefix, warmed MT5 and Xvfb, so nothing heavy is built
+# here. Mount a volume at /root/.wine64/drive_c/slots: each terminal's folder, with the Slave's copy mapping.
+# Needs POD_KEY (python create_pod.py <name> on the API). ~400 MB of memory per terminal.
+ARG BASE=ghcr.io/sidneijunior7/mt5-worker:v1.72
+FROM ${BASE}
+
+ENV PYTHONUNBUFFERED=1
+HEALTHCHECK NONE
+COPY pod/ /opt/pod/
+COPY ["downloads/Trademetric Copy Trader Slave.ex5", "/opt/pod/"]
+COPY pod_agent.py /opt/pod/
+ENTRYPOINT ["python3", "/opt/pod/pod_agent.py"]
+CMD []

@@ -108,6 +108,41 @@ A lista completa de variáveis está em `.env.example`.
 
 **Conferência:** `GET https://mirror.trademetric.com.br/health` deve mostrar `"status": "healthy"` e o bloco `hub` com `"warming": false`.
 
+## Terminais hospedados
+
+O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O pod roda o mesmo Slave, e o hub não vê diferença.
+
+**Como funciona**
+- O gestor clica em **Hospedar** na linha da licença, em Clientes, e informa o servidor da corretora, a senha de negociação da conta e as entradas do Slave (tamanho, SL/TP, mapas de símbolo).
+- A senha e a chave da licença ficam cifradas com o `HOSTING_SECRET` (Fernet), que fica fora do banco. Hospedar dá à licença uma chave nova, que só o pod conhece. Por isso, um Slave que o cliente rode no próprio computador é desconectado.
+- Cada pod (`pod_agent.py`, `Dockerfile.pod`) chama `POST /pods/sync` a cada 15 s. Ele informa o estado de cada terminal e recebe a lista do que deve rodar.
+  - Um terminal novo vai para o primeiro pod com espaço e fica nele, mesmo desligado, porque o mapeamento das cópias mora na pasta dele.
+  - Uma mudança de configuração reinicia o terminal.
+  - Login recusado ("Invalid account", ou três recusas seguidas) para o terminal sem tentar de novo, porque a corretora pode bloquear a conta. Ele só volta com uma configuração nova.
+  - Um terminal que cai volta sozinho, com espera crescente (30 s até 10 min).
+  - Um terminal removido tem a pasta guardada por 7 dias em `slots/.removed`.
+- O estado em Clientes vem do pod, que lê o diário e o log dos EAs do MT5, e das sessões do hub: um Slave conectado ao hub aparece como **Copiando**.
+
+**API (`mirror-api`)**
+- `HOSTING_SECRET`: gere com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Sem ela, a hospedagem fica desligada. Trocá-la torna ilegíveis as senhas já cadastradas.
+- A migração `0008` cria `hosted_pods` e `hosted_terminals`.
+- Cada pod precisa de uma chave: `python create_pod.py <nome>` no console da API mostra a chave uma vez. `--revoke <nome>` corta o pod.
+
+**Pod (`mirror-pod`)**
+- Imagem: `Dockerfile.pod`, sobre `ghcr.io/sidneijunior7/mt5-worker:v1.72` (a VPS precisa de acesso a esse registro). Leva o Slave de `downloads/`; depois de publicar uma versão nova, refaça a imagem.
+- Variáveis: `POD_KEY` e `CAPACITY` (terminais no pod). `API_URL`, `WS_HOST`, `WS_PORT` e `WS_TLS` já apontam para produção.
+- Volume em `/root/.wine64/drive_c/slots`: as pastas dos terminais, com o mapeamento das cópias.
+- Recursos, medidos em 18/10 num Ryzen 5 5500 com a B3 fechada:
+  - cerca de 460 MB por terminal;
+  - a subida de um terminal já criado leva uns 14 s a 1 a 1,5 núcleo, cerca de 21 s de CPU no total; ela só acontece quando o pod sobe, quando a configuração muda ou quando o terminal cai;
+  - parado, cada terminal gasta ~2% de um núcleo, mais ~3,5% fixos do Wine (`wineserver`, `winedevice`) por pod; com o mercado aberto, os ticks somam ao custo (falta medir num pregão);
+  - os terminais sobem um de cada vez, a cada `STAGGER_SECONDS` (20).
+- Numa VPS que divide a CPU com outros serviços, rode o pod com `--cpu-shares 2`: o kernel só dá CPU a ele quando os outros containers não querem. A subida fica mais lenta quando a máquina está ocupada, mas não tira CPU de ninguém. `--cpus` serve de teto.
+- **Corretoras:** `pod/brokers/brokers.json` liga cada servidor ao `servers.dat` dela e a um símbolo que ela lista, para o gráfico de partida. Sem o `servers.dat`, o terminal nunca conecta e não dá erro. Para incluir uma corretora, copie o `config/servers.dat` de um MT5 que já logou nela.
+- **Lista do WebRequest:** `pod/webrequest_url.txt` tem a lista cifrada com `https://signals.trademetric.com.br` e `http://hub.spike.test`. Ela só vale para terminais desta imagem base. Se a base mudar, gere outra pela tela do MT5, como descrito em `tools/spike/README.md`.
+
+**Teste local:** `tools/spike`, com `docker compose --profile hosting up -d tdm-spike-hosted`. O pod local usa a chave `pod_spike_local`, criada pelo `seed.py`.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.

@@ -126,3 +126,36 @@ export type CopyIssue = {
     volume: number | null;
     retcode: number;
 };
+
+// Slave inputs a manager sets for a hosted terminal; the rest keep the EA's defaults
+export type HostingInputs = {
+    sizing_mode?: 'factor' | 'balance' | 'equity';
+    lots_factor?: number;
+    reference_capital?: number;
+    sltp_mode?: 'distance' | 'price';
+    symbol_map?: string;
+    suffix_map?: string;
+    late_max_deviation_points?: number;
+};
+
+// pending: waiting for a pod; disabled and pod_offline come from the API, the rest from the pod's report
+export type HostingState =
+    | 'pending' | 'starting' | 'running' | 'login_failed' | 'key_refused' | 'error' | 'restarting' | 'stopped'
+    | 'disabled' | 'pod_offline';
+
+// A license whose Slave runs in one of our pods. Never the password nor the key
+export type HostedTerminal = {
+    license_id: number;
+    server: string;
+    enabled: boolean;
+    inputs: HostingInputs;
+    state: HostingState;
+    detail: string | null;
+    status_at: string | null;
+    pod: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
+// available: false while the server has no HOSTING_SECRET. servers: the broker servers the pods can log into
+export type HostingList = { available: boolean; servers: string[]; terminals: HostedTerminal[] };

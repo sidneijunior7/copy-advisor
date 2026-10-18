@@ -87,6 +87,47 @@ class MasterKey(Base):
     last_used_at = Column(DateTime, nullable=True) # Updated by the hub at most hourly
     revoked_at = Column(DateTime, nullable=True)
 
+# --- Hosted terminals (hosting.py): the client's MT5 runs in one of our pods instead of on the client's machine ---
+
+class HostedPod(Base):
+    """A container running hosted terminals (pod_agent.py). It authenticates with its own key (pod_...)."""
+    __tablename__ = "hosted_pods"
+    __table_args__ = (UniqueConstraint("key_hash", name="uq_hosted_pods_key_hash"),)
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), nullable=False)
+    key_hash = Column(String(64), nullable=False)
+    key_prefix = Column(String(16), nullable=False)
+    capacity = Column(Integer, nullable=False, default=0) # Terminals it can run, from its last sync
+    info = Column(Text) # JSON from its last sync: agent version, memory, broker servers it knows
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_seen_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+class HostedTerminal(Base):
+    """A license whose Slave runs in a pod. The broker password and the license key are stored encrypted, not
+    hashed: the pod has to hand them to MT5."""
+    __tablename__ = "hosted_terminals"
+    __table_args__ = (UniqueConstraint("license_id", name="uq_hosted_terminals_license_id"),)
+
+    id = Column(Integer, primary_key=True)
+    license_id = Column(Integer, ForeignKey("licenses.id"), nullable=False)
+    server = Column(String(64), nullable=False) # Broker server, as in the MT5 login dialog
+    password_enc = Column(Text, nullable=False)
+    license_key_enc = Column(Text, nullable=False)
+    inputs = Column(Text) # JSON of Slave inputs (hosting.SlaveInputs)
+    enabled = Column(Boolean, nullable=False, default=True)
+    config_version = Column(Integer, nullable=False, default=1) # Bumped on every change: the pod restarts the terminal
+    pod_id = Column(Integer, ForeignKey("hosted_pods.id"), nullable=True, index=True) # Kept while disabled: the copy mapping lives in that pod
+    status = Column(String(32), nullable=False, default="pending") # As the pod last reported it
+    status_detail = Column(String(255))
+    status_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    license = relationship("License")
+    pod = relationship("HostedPod")
+
 # --- Signal history (written by hub.py) ---
 
 class MasterPosition(Base):

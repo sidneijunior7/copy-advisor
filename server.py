@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 # Internal Imports
 import database
+import hosting
 import keys
 import models
 import auth
@@ -879,6 +880,11 @@ def regenerate_license_key(license_id: int, current_user: models.User = Depends(
     if lic.portfolio_id is None:
         raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
     key = set_license_key(lic)
+    hosted = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    if hosted is not None:  # The pod gets the new key and restarts the terminal with it
+        hosted.license_key_enc = hosting.encrypt(hosting_cipher(), key)
+        hosted.config_version += 1
+        hosted.updated_at = datetime.datetime.utcnow()
     db.commit()
     db.refresh(lic)
     logger.info(f"License {lic.id} got a new key ({lic.key_prefix}) from manager {current_user.id}")
@@ -903,6 +909,105 @@ def update_license(license_id: int, changes: LicenseUpdate, current_user: models
                 f"is_active={lic.is_active} expires_at={lic.expires_at}")
     notify_hub()
     return license_out(lic)
+
+# --- Hosted terminals (hosting.py) ---
+
+def hosting_cipher():
+    f = hosting.cipher()
+    if f is None:
+        raise HTTPException(status_code=503, detail="Hospedagem não configurada no servidor (HOSTING_SECRET)")
+    return f
+
+def pod_from_request(request: Request, db: Session) -> models.HostedPod:
+    check_not_limited("pod", request)
+    header = request.headers.get("Authorization", "")
+    key = header[7:].strip() if header.startswith("Bearer ") else ""
+    pod = db.query(models.HostedPod).filter(models.HostedPod.key_hash == keys.key_hash(key),
+                                            models.HostedPod.revoked_at.is_(None)).first() if key.startswith(keys.POD) else None
+    if pod is None:
+        failure_limiter.fail(f"pod:{client_ip(request)}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown or revoked pod key")
+    return pod
+
+@app.get("/hosting")
+def list_hosting(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The manager's hosted terminals with what their pod last reported, and the broker servers the pods support."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    now = datetime.datetime.utcnow()
+    portfolio_ids = [p.id for p in current_user.portfolios]
+    terminals = (db.query(models.HostedTerminal).join(models.License)
+                 .filter(models.License.portfolio_id.in_(portfolio_ids))
+                 .order_by(models.HostedTerminal.id).all()) if portfolio_ids else []
+    connected = {s.get("license_id") for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if terminals else set()
+    return {"available": hosting.cipher() is not None, "servers": hosting.known_servers(db, now),
+            "terminals": [hosting.terminal_out(t, now, t.license_id in connected) for t in terminals]}
+
+@app.put("/licenses/{license_id}/hosting")
+def update_hosting(license_id: int, changes: hosting.HostingUpdate, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Hosts this license's Slave in a pod, or changes how it runs: the pod restarts the terminal with the new
+    configuration. The first call needs the server and the password, and gives the license a new key, so a Slave
+    the client runs on their own machine is disconnected."""
+    f = hosting_cipher()
+    lic = owned_license(license_id, current_user, db)
+    if lic.portfolio_id is None:
+        raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
+    now = datetime.datetime.utcnow()
+    inputs = json.dumps(changes.inputs.model_dump(exclude_none=True), sort_keys=True) if changes.inputs else None
+    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    new_key = t is None
+    if new_key:
+        if not changes.server or not changes.password:
+            raise HTTPException(status_code=422, detail="Informe o servidor da corretora e a senha da conta")
+        t = models.HostedTerminal(license_id=lic.id, server=changes.server,
+                                  password_enc=hosting.encrypt(f, changes.password),
+                                  license_key_enc=hosting.encrypt(f, set_license_key(lic)), inputs=inputs or "{}",
+                                  enabled=changes.enabled is not False, config_version=1, status="pending",
+                                  created_at=now, updated_at=now)
+        db.add(t)
+    else:
+        changed = False
+        if changes.server is not None and changes.server != t.server:
+            t.server, changed = changes.server, True
+        if changes.password is not None:
+            t.password_enc, changed = hosting.encrypt(f, changes.password), True
+        if inputs is not None and inputs != (t.inputs or "{}"):
+            t.inputs, changed = inputs, True
+        if changes.enabled is not None and changes.enabled != t.enabled:
+            t.enabled, changed = changes.enabled, True
+        if changed:
+            t.config_version += 1
+            t.updated_at = now
+            if t.pod_id is not None:
+                t.status, t.status_detail, t.status_at = "starting", None, now
+    db.commit()
+    db.refresh(t)
+    logger.info(f"Hosting of license {lic.id} {'created' if new_key else 'updated'} by manager {current_user.id}: "
+                f"server={t.server} enabled={t.enabled} version={t.config_version}")
+    if new_key:
+        notify_hub()  # The previous key stops working at once
+    return hosting.terminal_out(t, now)
+
+@app.delete("/licenses/{license_id}/hosting")
+def remove_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Stops hosting: the pod closes the terminal and deletes its folder at its next sync. Nobody else has the
+    license key the pod used: generate a new one to run the Slave elsewhere."""
+    lic = owned_license(license_id, current_user, db)
+    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    if t is None: raise HTTPException(status_code=404)
+    db.delete(t)
+    db.commit()
+    logger.info(f"Hosting of license {lic.id} removed by manager {current_user.id}")
+    return {"message": "Hospedagem removida"}
+
+@app.post("/pods/sync")
+def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(get_db)):
+    """A hosting pod (pod_agent.py) reports its terminals and gets the ones it runs, credentials included."""
+    f = hosting_cipher()
+    pod = pod_from_request(request, db)
+    out = hosting.sync(db, pod, report, f, datetime.datetime.utcnow())
+    db.commit()
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
 # Serve static files (Frontend)
 FRONTEND_DIST = "frontend/dist"

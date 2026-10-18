@@ -1,5 +1,5 @@
 """
-Access keys for Master EAs and Slave licenses.
+Access keys for Master EAs, Slave licenses and hosting pods.
 
 Only the SHA-256 of a key is stored: the plain key is shown once, when it is created. Keys carry
 192 random bits, so a fast hash is enough (no bcrypt). The prefix stays in clear so a manager can
@@ -10,6 +10,7 @@ import secrets
 
 MASTER = "mst_"
 LICENSE = "lic_"
+POD = "pod_"
 PREFIX_LEN = 12  # "lic_" + 8 random characters
 
 

@@ -1,0 +1,5 @@
+{
+    "XPMT5-DEMO": {"file": "xp.dat", "symbol": "PETR4"},
+    "Tickmill-Demo": {"file": "tickmill.dat", "symbol": "EURUSD"},
+    "RoboForex-ECN": {"file": "roboforex.dat", "symbol": "EURUSD"}
+}

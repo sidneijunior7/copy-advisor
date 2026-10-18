@@ -75,7 +75,7 @@ def test_migrate_from_every_origin(pg_url, origin):
 
     insp = inspect(engine)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007_zmq_cut"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0008_hosting"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
             # The plain-text master key was adopted as a hashed master key, exactly once, and revoked at the
@@ -124,7 +124,7 @@ def test_concurrent_migrations_are_serialized(pg_url):
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007_zmq_cut"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0008_hosting"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0
 
