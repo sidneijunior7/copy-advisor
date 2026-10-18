@@ -24,7 +24,9 @@ class User(Base):
     role = Column(String(50), default="CLIENT") # MANAGER, CLIENT, TDM_DEV
     status = Column(String(20), default="active") # active, frozen, archived
     name = Column(String(100), nullable=True) # Shown to the other side: a client's manager, a manager's clients
+    bio = Column(Text, nullable=True) # A manager's public profile in the marketplace
     email_verified_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True) # Sessions that began before it are over
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -95,6 +97,69 @@ class MasterKey(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True) # Updated by the hub at most hourly
     revoked_at = Column(DateTime, nullable=True)
+
+# --- Marketplace (marketplace.py) ---
+
+class Listing(Base):
+    """A portfolio offered in the public marketplace. Only its manager edits it; a TDM_DEV can suspend it."""
+    __tablename__ = "listings"
+    __table_args__ = (UniqueConstraint("portfolio_id", name="uq_listings_portfolio"),
+                      UniqueConstraint("slug", name="uq_listings_slug"))
+
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False)
+    slug = Column(String(80), nullable=False) # Its address: /marketplace/<slug>
+    title = Column(String(80), nullable=False)
+    summary = Column(String(200))
+    description = Column(Text) # Plain text, shown as written
+    markets = Column(String(100)) # Comma-separated (marketplace.MARKETS)
+    price = Column(Float) # Per period of default_days, in currency
+    currency = Column(String(3), default="BRL")
+    checkout_url = Column(String(500)) # Where the client pays, until payments are built in
+    default_days = Column(Integer, default=30) # Validity an approved subscription grants
+    default_max_lots = Column(Float, default=1.0)
+    min_capital = Column(Float)
+    hosting_allowed = Column(Boolean, default=True)
+    status = Column(String(16), nullable=False, default="draft") # draft, published, suspended
+    suspended_reason = Column(String(255))
+    published_at = Column(DateTime)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    portfolio = relationship("Portfolio")
+
+class Subscription(Base):
+    """A client asking for a listing (or to renew its license). Approving creates or extends the license."""
+    __tablename__ = "subscriptions"
+    __table_args__ = (Index("ix_subscriptions_listing_status", "listing_id", "status"),)
+
+    id = Column(Integer, primary_key=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False)
+    client_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    mt5_login = Column(BigInteger, nullable=False)
+    kind = Column(String(16), nullable=False, default="new") # new, renewal
+    status = Column(String(16), nullable=False, default="pending") # pending, approved, rejected, cancelled
+    note = Column(String(500)) # From the client
+    decision_note = Column(String(500)) # From the manager
+    license_id = Column(Integer, ForeignKey("licenses.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    decided_at = Column(DateTime)
+
+    listing = relationship("Listing")
+    client = relationship("User")
+    license = relationship("License")
+
+class UserToken(Base):
+    """One-time links sent by email: verify the address, reset the password. Only the hash is stored."""
+    __tablename__ = "user_tokens"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_user_tokens_hash"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(16), nullable=False) # verify, reset
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 # --- Hosted terminals (hosting.py): the client's MT5 runs in one of our pods instead of on the client's machine ---
 

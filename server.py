@@ -28,6 +28,8 @@ import clients
 import database
 import hosting
 import keys
+import mailer
+import marketplace
 import models
 import auth
 import observability
@@ -349,7 +351,12 @@ def user_from_token(token: str, db: Session) -> Optional[models.User]:
     email = payload.get("sub") if payload else None
     if not email:
         return None
-    return db.query(models.User).filter(models.User.email == email).first()
+    user = db.query(models.User).filter(models.User.email == email).first()
+    # A password change ends every session that began before it
+    if user is not None and user.password_changed_at is not None and \
+            payload.get("auth_time", 0) < int(user.password_changed_at.replace(tzinfo=datetime.timezone.utc).timestamp()):
+        return None
+    return user
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     user = user_from_token(token, db)
@@ -1037,6 +1044,10 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     db.add(user)
     db.commit()
     logger.info(f"Client {user.id} signed up")
+    if mailer.enabled():
+        token = mailer.issue_token(db, user, "verify", datetime.datetime.utcnow())
+        db.commit()
+        mailer.send_verification(user, token)
     return {"access_token": auth.create_access_token(data={"sub": user.email, "role": user.role}),
             "token_type": "bearer"}
 
@@ -1208,6 +1219,316 @@ def update_client_limits(portfolio_id: int, data: clients.ClientLimits, current_
     portfolio.client_limits = data.model_dump_json()
     db.commit()
     return clients.limits_of(portfolio).model_dump()
+
+# --- Email: confirming the address and resetting the password (mailer.py) ---
+
+class TokenIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+class ForgotIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class ResetIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/email/verify")
+def verify_email(data: TokenIn, request: Request, db: Session = Depends(get_db)):
+    check_not_limited("token", request)
+    now = datetime.datetime.utcnow()
+    user = mailer.consume_token(db, "verify", data.token, now)
+    if user is None:
+        failure_limiter.fail(f"token:{client_ip(request)}")
+        raise HTTPException(status_code=400, detail="Link inválido ou vencido. Peça um novo no painel.")
+    user.email_verified_at = user.email_verified_at or now
+    db.commit()
+    return {"message": "Email confirmado"}
+
+@app.post("/email/resend")
+def resend_verification(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A new confirmation link, at most a few per window (it goes to the account's own address)."""
+    if current_user.email_verified_at is not None:
+        return {"message": "Email já confirmado"}
+    if not mailer.enabled():
+        raise HTTPException(status_code=503, detail="O envio de emails não está configurado")
+    if failure_limiter.blocked(f"resend:{current_user.id}"):
+        raise HTTPException(status_code=429, detail="Aguarde alguns minutos para pedir outro link")
+    failure_limiter.fail(f"resend:{current_user.id}")
+    token = mailer.issue_token(db, current_user, "verify", datetime.datetime.utcnow())
+    db.commit()
+    mailer.send_verification(current_user, token)
+    return {"message": "Link enviado"}
+
+@app.post("/password/forgot")
+def forgot_password(data: ForgotIn, request: Request, db: Session = Depends(get_db)):
+    """Sends a reset link if the account exists. The answer is the same either way, so it tells nobody which
+    emails have accounts."""
+    check_not_limited("forgot", request)
+    failure_limiter.fail(f"forgot:{client_ip(request)}")  # Every request counts: each one may send an email
+    if not mailer.enabled():
+        raise HTTPException(status_code=503, detail="A recuperação de senha por email não está disponível. Fale com o suporte.")
+    user = db.query(models.User).filter(func.lower(models.User.email) == data.email.strip().lower()).first()
+    if user is not None and not is_blocked(user):
+        token = mailer.issue_token(db, user, "reset", datetime.datetime.utcnow())
+        db.commit()
+        mailer.send_reset(user, token)
+    return {"message": "Se houver uma conta com este email, o link chega em instantes"}
+
+@app.post("/password/reset")
+def reset_password(data: ResetIn, request: Request, db: Session = Depends(get_db)):
+    """A new password from a reset link. It ends every open session of the account."""
+    check_not_limited("token", request)
+    if auth.validate_password(data.password):
+        raise HTTPException(status_code=422, detail=f"A senha precisa ter de {auth.PASSWORD_MIN_LENGTH} a "
+                                                    f"{auth.PASSWORD_MAX_BYTES} caracteres")
+    now = datetime.datetime.utcnow()
+    user = mailer.consume_token(db, "reset", data.token, now)
+    if user is None:
+        failure_limiter.fail(f"token:{client_ip(request)}")
+        raise HTTPException(status_code=400, detail="Link inválido ou vencido. Peça um novo.")
+    user.password_hash = auth.get_password_hash(data.password)
+    user.password_changed_at = now
+    user.email_verified_at = user.email_verified_at or now  # The link reached the address
+    db.commit()
+    logger.info(f"Password of user {user.id} reset by email link")
+    return {"message": "Senha redefinida"}
+
+# --- Marketplace (marketplace.py) ---
+
+@app.get("/me")
+def my_account(current_user: models.User = Depends(get_current_user)):
+    return {"email": current_user.email, "name": current_user.name, "role": current_user.role, "bio": current_user.bio,
+            "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled()}
+
+@app.put("/me/profile")
+def update_profile(data: marketplace.Profile, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """The name others see (a manager's also in the marketplace, with the bio)."""
+    current_user.name = data.name.strip()
+    if current_user.role == "MANAGER":
+        current_user.bio = (data.bio or "").strip() or None
+    db.commit()
+    marketplace.clear_cache()
+    return my_account(current_user)
+
+def published_listing(slug: str, db: Session) -> models.Listing:
+    listing = db.query(models.Listing).filter(models.Listing.slug == slug, models.Listing.status == "published").first()
+    if listing is None: raise HTTPException(status_code=404, detail="Portfólio não encontrado")
+    return listing
+
+@app.get("/marketplace")
+def list_marketplace(db: Session = Depends(get_db)):
+    """Published listings with the headline numbers of the last 90 days. Public."""
+    now = datetime.datetime.utcnow()
+    listings = db.query(models.Listing).filter(models.Listing.status == "published").order_by(models.Listing.published_at).all()
+    return [marketplace.public_listing(db, l, now) for l in listings]
+
+@app.get("/marketplace/{slug}")
+def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
+    return marketplace.public_listing(db, published_listing(slug, db), datetime.datetime.utcnow())
+
+@app.get("/marketplace/{slug}/performance")
+def get_marketplace_performance(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
+    days = min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds
+    return marketplace.public_performance(db, published_listing(slug, db), days, datetime.datetime.utcnow())
+
+@app.post("/marketplace/{slug}/subscribe")
+def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """A client asks for a listing with the MT5 account that will copy. The manager approves it once paid."""
+    client_only(current_user)
+    listing = published_listing(slug, db)
+    if mailer.enabled() and current_user.email_verified_at is None:
+        raise HTTPException(status_code=403, detail="Confirme seu email antes de assinar: o link está na sua caixa de entrada")
+    pending = db.query(models.Subscription).filter(models.Subscription.client_user_id == current_user.id,
+                                                   models.Subscription.status == "pending")
+    if pending.count() >= marketplace.MAX_PENDING_PER_CLIENT:
+        raise HTTPException(status_code=429, detail="Você tem pedidos demais esperando resposta")
+    if pending.filter(models.Subscription.listing_id == listing.id,
+                      models.Subscription.mt5_login == data.mt5_login).first():
+        raise HTTPException(status_code=409, detail="Já existe um pedido desta conta esperando resposta")
+    existing = db.query(models.License).filter(models.License.portfolio_id == listing.portfolio_id,
+                                               models.License.client_mt5_login == data.mt5_login).first()
+    if existing is not None and existing.client_user_id not in (None, current_user.id):
+        raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio em outro cadastro")
+    sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
+                              kind="renewal" if existing is not None else "new",
+                              note=(data.note or "").strip() or None, created_at=datetime.datetime.utcnow())
+    db.add(sub)
+    db.commit()
+    db.refresh(sub)
+    logger.info(f"Subscription {sub.id}: client {current_user.id} asked for listing {listing.id}")
+    if listing.portfolio and listing.portfolio.owner:
+        mailer.send_new_subscription(listing.portfolio.owner, sub)
+    return marketplace.subscription_out(sub, for_manager=False)
+
+@app.post("/me/licenses/{license_id}/renew")
+def renew_my_license(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A renewal request for the portfolio's listing: approving it extends the license."""
+    lic = own_license(license_id, current_user, db)
+    listing = db.query(models.Listing).filter(models.Listing.portfolio_id == lic.portfolio_id,
+                                              models.Listing.status == "published").first()
+    if listing is None:
+        raise HTTPException(status_code=409, detail="Este portfólio não está no marketplace: renove com quem vendeu a licença")
+    return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login), current_user, db)
+
+@app.get("/me/subscriptions")
+def list_my_subscriptions(status_filter: Optional[str] = None, current_user: models.User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """A client's own requests, or the requests for a manager's listings."""
+    q = db.query(models.Subscription).join(models.Listing)
+    if current_user.role == "CLIENT":
+        q = q.filter(models.Subscription.client_user_id == current_user.id)
+    elif current_user.role == "MANAGER":
+        q = q.join(models.Portfolio, models.Portfolio.id == models.Listing.portfolio_id).filter(
+            models.Portfolio.user_id == current_user.id)
+    else:
+        raise HTTPException(status_code=403)
+    if status_filter:
+        q = q.filter(models.Subscription.status == status_filter)
+    rows = q.order_by(models.Subscription.created_at.desc()).limit(500).all()
+    return [marketplace.subscription_out(s, for_manager=current_user.role == "MANAGER") for s in rows]
+
+def managed_subscription(subscription_id: int, user: models.User, db: Session) -> models.Subscription:
+    if user.role != "MANAGER": raise HTTPException(status_code=403)
+    sub = db.get(models.Subscription, subscription_id)
+    if sub is None or sub.listing.portfolio is None or sub.listing.portfolio.user_id != user.id:
+        raise HTTPException(status_code=404)
+    if sub.status != "pending":
+        raise HTTPException(status_code=409, detail="Este pedido já foi respondido")
+    return sub
+
+@app.post("/subscriptions/{subscription_id}/approve")
+def approve_subscription(subscription_id: int, decision: marketplace.Decision,
+                         current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Creates the license for the client's account (or extends it), already linked to the client."""
+    sub = managed_subscription(subscription_id, current_user, db)
+    lic = marketplace.approve(db, sub, decision, datetime.datetime.utcnow())
+    db.commit()
+    logger.info(f"Subscription {sub.id} approved by manager {current_user.id}: license {lic.id} until {lic.expires_at}")
+    notify_hub()
+    mailer.send_decision(sub)
+    return marketplace.subscription_out(sub, for_manager=True)
+
+@app.post("/subscriptions/{subscription_id}/reject")
+def reject_subscription(subscription_id: int, decision: marketplace.Decision,
+                        current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    sub = managed_subscription(subscription_id, current_user, db)
+    sub.status, sub.decided_at = "rejected", datetime.datetime.utcnow()
+    sub.decision_note = (decision.note or "").strip() or None
+    db.commit()
+    mailer.send_decision(sub)
+    return marketplace.subscription_out(sub, for_manager=True)
+
+@app.post("/me/subscriptions/{subscription_id}/cancel")
+def cancel_my_subscription(subscription_id: int, current_user: models.User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    client_only(current_user)
+    sub = db.get(models.Subscription, subscription_id)
+    if sub is None or sub.client_user_id != current_user.id: raise HTTPException(status_code=404)
+    if sub.status != "pending": raise HTTPException(status_code=409, detail="Este pedido já foi respondido")
+    sub.status, sub.decided_at = "cancelled", datetime.datetime.utcnow()
+    db.commit()
+    return marketplace.subscription_out(sub, for_manager=False)
+
+def owned_portfolio(portfolio_id: int, user: models.User, db: Session) -> models.Portfolio:
+    if user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id, models.Portfolio.user_id == user.id).first()
+    if not portfolio: raise HTTPException(status_code=404)
+    return portfolio
+
+@app.get("/me/listings")
+def list_my_listings(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Every portfolio of the manager, with its listing if it has one."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    listings = {l.portfolio_id: l for l in db.query(models.Listing).join(models.Portfolio)
+                .filter(models.Portfolio.user_id == current_user.id)}
+    return [{"portfolio": {"id": p.id, "name": p.name, "strategies": len(p.strategies)},
+             "listing": marketplace.listing_out(listings[p.id]) if p.id in listings else None}
+            for p in current_user.portfolios]
+
+@app.put("/portfolios/{portfolio_id}/listing")
+def save_listing(portfolio_id: int, data: marketplace.ListingIn, current_user: models.User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """Creates the portfolio's listing as a draft, or edits it (published edits show at once)."""
+    portfolio = owned_portfolio(portfolio_id, current_user, db)
+    now = datetime.datetime.utcnow()
+    listing = db.query(models.Listing).filter(models.Listing.portfolio_id == portfolio.id).first()
+    if listing is None:
+        listing = models.Listing(portfolio_id=portfolio.id, status="draft")
+        db.add(listing)
+    slug = marketplace.unique_slug(db, data.slug or marketplace.slugify(data.title), listing.id)
+    marketplace.apply(listing, data, slug, now)
+    db.commit()
+    db.refresh(listing)
+    marketplace.clear_cache()
+    return marketplace.listing_out(listing)
+
+@app.post("/portfolios/{portfolio_id}/listing/publish")
+def publish_listing(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    portfolio = owned_portfolio(portfolio_id, current_user, db)
+    listing = db.query(models.Listing).filter(models.Listing.portfolio_id == portfolio.id).first()
+    if listing is None: raise HTTPException(status_code=404, detail="Crie o anúncio antes de publicar")
+    if listing.status == "suspended":
+        raise HTTPException(status_code=409, detail="Anúncio suspenso pela administração: " + (listing.suspended_reason or "fale com o suporte"))
+    if not portfolio.strategies:
+        raise HTTPException(status_code=409, detail="Vincule ao menos uma estratégia ao portfólio antes de publicar")
+    if not current_user.name:
+        raise HTTPException(status_code=409, detail="Preencha seu nome público no perfil antes de publicar")
+    listing.status = "published"
+    listing.published_at = listing.published_at or datetime.datetime.utcnow()
+    db.commit()
+    marketplace.clear_cache()
+    logger.info(f"Listing {listing.id} published by manager {current_user.id}")
+    return marketplace.listing_out(listing)
+
+@app.post("/portfolios/{portfolio_id}/listing/unpublish")
+def unpublish_listing(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Leaves the marketplace; licenses already sold keep working."""
+    portfolio = owned_portfolio(portfolio_id, current_user, db)
+    listing = db.query(models.Listing).filter(models.Listing.portfolio_id == portfolio.id).first()
+    if listing is None: raise HTTPException(status_code=404)
+    if listing.status == "published":
+        listing.status = "draft"
+        db.commit()
+        marketplace.clear_cache()
+    return marketplace.listing_out(listing)
+
+class Suspension(BaseModel):
+    reason: str = Field(min_length=3, max_length=255, pattern=hosting.ONE_LINE)
+
+@app.get("/admin/listings")
+def admin_list_listings(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    return [{**marketplace.listing_out(l), "manager": l.portfolio.owner.email if l.portfolio and l.portfolio.owner else None}
+            for l in db.query(models.Listing).order_by(models.Listing.id)]
+
+@app.post("/admin/listings/{listing_id}/suspend")
+def admin_suspend_listing(listing_id: int, data: Suspension, current_user: models.User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Takes a listing out of the marketplace; its manager cannot publish it again. Licenses keep working."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    listing = db.get(models.Listing, listing_id)
+    if listing is None: raise HTTPException(status_code=404)
+    listing.status, listing.suspended_reason = "suspended", data.reason.strip()
+    db.commit()
+    marketplace.clear_cache()
+    logger.info(f"Listing {listing.id} suspended by {current_user.id}: {listing.suspended_reason}")
+    return marketplace.listing_out(listing)
+
+@app.post("/admin/listings/{listing_id}/restore")
+def admin_restore_listing(listing_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Back to draft: its manager decides when to publish again."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    listing = db.get(models.Listing, listing_id)
+    if listing is None: raise HTTPException(status_code=404)
+    if listing.status == "suspended":
+        listing.status, listing.suspended_reason = "draft", None
+        db.commit()
+    return marketplace.listing_out(listing)
 
 @app.post("/pods/sync")
 def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(get_db)):
