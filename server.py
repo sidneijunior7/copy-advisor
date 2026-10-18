@@ -1335,6 +1335,9 @@ def get_marketplace_performance(slug: str, days: int = marketplace.PUBLIC_DAYS, 
     days = min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds
     return marketplace.public_performance(db, published_listing(slug, db), days, datetime.datetime.utcnow())
 
+# Requests per client per day: each one emails the manager, and cancelling frees the pending slot again
+subscribe_limiter = FailureLimiter(int(os.getenv("SUBSCRIBE_MAX_PER_DAY", "20")), 86400)
+
 @app.post("/api/marketplace/{slug}/subscribe")
 def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.User = Depends(get_current_user),
               db: Session = Depends(get_db)):
@@ -1354,6 +1357,9 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
                                                models.License.client_mt5_login == data.mt5_login).first()
     if existing is not None and existing.client_user_id not in (None, current_user.id):
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio em outro cadastro")
+    if subscribe_limiter.blocked(f"subscribe:{current_user.id}"):
+        raise HTTPException(status_code=429, detail="Pedidos demais hoje. Tente de novo amanhã ou fale com o gestor")
+    subscribe_limiter.fail(f"subscribe:{current_user.id}")
     sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
                               kind="renewal" if existing is not None else "new",
                               note=(data.note or "").strip() or None, created_at=datetime.datetime.utcnow())

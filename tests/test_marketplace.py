@@ -118,6 +118,17 @@ def test_reject_cancel_and_someone_elses_account(client):
     assert r.status_code == 409
 
 
+def test_cancel_and_ask_again_is_limited_per_day(client, monkeypatch):
+    _, _, _, listing = published(client, title=f"Limite {uuid.uuid4().hex[:6]}")
+    cli, _ = client_headers(client)
+    monkeypatch.setattr(server, "subscribe_limiter", server.FailureLimiter(2, 86400))
+    for _ in range(2):
+        sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 444}).json()
+        client.post(f"/me/subscriptions/{sub['id']}/cancel", headers=cli)
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 444})
+    assert r.status_code == 429
+
+
 def test_admin_suspends_and_the_manager_cannot_republish(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Suspensa {uuid.uuid4().hex[:6]}")
     _, admin = make_manager(role="TDM_DEV")
