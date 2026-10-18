@@ -170,7 +170,8 @@ def test_client_hosts_its_own_license(client):
     assert t["password"] == "p4ss" and t["login"] == lic["client_mt5_login"]
     client.put(f"/me/licenses/{lic['id']}/settings", headers=cli, json={"lots_factor": 0.5})
     [t2] = sync(client, pod)
-    assert t2["config_version"] == t["config_version"] + 1 and t2["inputs"]["inp_lots_factor"] == "0.5"
+    # The running Slave gets it from the hub (CFG): no restart, but the .set the pod writes next time has it too
+    assert t2["config_version"] == t["config_version"] and t2["inputs"]["inp_lots_factor"] == "0.5"
     view = client.get("/me/licenses", headers=cli).json()["licenses"][0]
     assert view["hosting"]["server"] == "Tickmill-Demo" and "pod" not in view["hosting"]
     assert client.post(f"/me/licenses/{lic['id']}/key", headers=cli).status_code == 409  # The pod has the key

@@ -17,6 +17,7 @@ import Portfolios from './pages/manager/Portfolios';
 import Clients from './pages/manager/Clients';
 import Connections from './pages/manager/Connections';
 import Install from './pages/manager/Install';
+import PortfolioPerformance from './pages/manager/PortfolioPerformance';
 
 // Client Pages
 import MyLicenses from './pages/client/MyLicenses';
@@ -69,6 +70,7 @@ function App() {
                 <Route path="connections" element={<Connections />} />
                 <Route path="strategies" element={<Strategies />} />
                 <Route path="portfolios" element={<Portfolios />} />
+                <Route path="portfolios/:id/performance" element={<PortfolioPerformance />} />
                 <Route path="clients" element={<Clients />} />
                 <Route path="install" element={<Install />} />
               </Route>

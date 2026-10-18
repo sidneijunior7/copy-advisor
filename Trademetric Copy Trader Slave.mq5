@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "4.03"
-#define VERSAO "4.03"
+#property version   "4.04"
+#define VERSAO "4.04"
 
 #include <Trade\Trade.mqh>
 #include "Include/TDM/WsClient.mqh"
@@ -23,6 +23,9 @@
 //   EA -> hub  HELLO|slave|v1|<chave>|<login>|<versão>|<epoch>|<seq> · ACK|epoch|seq (a cada HB) · EXEC|...
 //   hub -> EA  WELCOME|epoch|hb_s|portfolio|ativa|max_lots · LIC|ativa|max_lots · ERR|código|motivo
 //              SKIP|epoch|seq: seq consumido por uma posição que esta licença não acompanha
+//              CFG|chave=valor|...: ajustes da licença no painel, por cima das entradas (as que faltam voltam às
+//              entradas). Chaves: factor, sizing, capital, sltp, copysltp, late, slip, symmap, sufmap
+//   EA -> hub  EXEC termina com o lucro do negócio (swap e comissão incluídos; "-" se não leu) · ACC|saldo|patrimônio|moeda
 
 enum ENUM_OPERATOR_LOTS
    {
@@ -120,6 +123,17 @@ string   falhas_sltp[];  // "uid|sl|tp" que o broker recusou: não insiste
 bool   hedging;
 long   login;
 double lots_factor;
+// Ajustes em uso: as entradas do EA, com o que a licença definir no painel por cima (CFG)
+ENUM_SIZING    cfg_sizing;
+double         cfg_capital;
+ENUM_SLTP_MODE cfg_sltp;
+bool           cfg_copy_sltp;
+int            cfg_late;
+int            cfg_slip;
+string         cfg_symmap;
+string         cfg_sufmap;
+string         cfg_aplicado = "";  // Última linha CFG aplicada
+ulong          proximo_acc = 0;
 double max_lots_limit = 0; // Limit from License
 ulong  standard_magic_number;
 string s_magic_to_copy[];
@@ -139,6 +153,7 @@ string comment_tag;
 const int   WARMUP_MS = 5000;           // Posições e histórico carregam depois do OnInit
 const ulong PENDING_TIMEOUT_MS = 60000;
 const int   MAX_ADIADAS = 20000;        // Acima disso descarta e espera o próximo SNAP
+const ulong ACC_MS = 300000;            // Saldo e patrimônio vão ao hub a cada 5 minutos
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -152,8 +167,9 @@ int OnInit() {
    StringSplit(inp_magic_to_copy, ',', s_magic_to_copy);
 
    if(inp_lots_factor <= 0){Print("Lots Factor must be greater than zero."); return(INIT_FAILED);}
-   lots_factor = inp_lots_op==multiply ? inp_lots_factor : (1/inp_lots_factor);
    if(inp_sizing_mode != sizing_factor && inp_reference_capital <= 0) {Print("Reference capital must be greater than zero."); return(INIT_FAILED);}
+   EntradasLocais();
+   cfg_aplicado = "";
 
    login = AccountInfoInteger(ACCOUNT_LOGIN);
    if(login <= 0) {Print("Conta não identificada. Faça login e reinicie o EA."); return(INIT_FAILED);}
@@ -168,7 +184,7 @@ int OnInit() {
    FolderCreate("TDM_Mirror");
    AvisarPosicoesAntigas();
    trade.SetExpertMagicNumber(standard_magic_number);
-   trade.SetDeviationInPoints(inp_slippage_points);
+   trade.SetDeviationInPoints(cfg_slip);
    // Numa re-inicialização as globais do fluxo ainda são da conexão anterior: recomeça pelo snapshot
    last_epoch = "";
    last_seq = 0;
@@ -257,6 +273,11 @@ void OnTimer() {
    }
    if(!ws.Aberto() && !parado && !erro_do_hub && ws.UltimoErro() != "") estado_hub = ws.UltimoErro();
    if(dirty && map_file != "") SalvarMapa();
+   if(autenticado && pronto && GetTickCount64() >= proximo_acc) {
+      proximo_acc = GetTickCount64() + ACC_MS;
+      ws.Enviar(StringFormat("ACC|%s|%s|%s", DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
+                             DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), AccountInfoString(ACCOUNT_CURRENCY)));
+   }
    MostrarEstado();
 }
 
@@ -270,6 +291,7 @@ void ProcessarWss(string msg) {
    if(StringFind(msg, "WELCOME|") == 0) {Welcome(msg); return;}
    if(StringFind(msg, "ERR|") == 0) {ErroDoHub(msg); return;}
    if(!autenticado || map_file == "") return;  // Linhas de uma conexão anterior ao WELCOME
+   if(msg == "CFG" || StringFind(msg, "CFG|") == 0) {AplicarCfg(msg); return;}
    if(StringFind(msg, "LIC|") == 0) {
       string f[];
       if(StringSplit(msg, '|', f) == 3) AtualizarLicenca(f[1] == "1", StringToDouble(f[2]));
@@ -304,6 +326,7 @@ void Welcome(string msg) {
    }
    autenticado = true;
    erro_do_hub = false;
+   proximo_acc = 0;
    if(f[1] != last_epoch) MarcarLacuna();  // O hub manda o SNAP logo em seguida
    AtualizarLicenca(f[4] == "1", StringToDouble(f[5]));
    estado_hub = StringFormat("conectado, portfólio %d", portfolio_id);
@@ -478,7 +501,7 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
    else if(!TemExposicao(c)) {
       RemoverCopia(c);  // Nada aberto (recusado ou fora do desvio): o próximo snapshot tenta de novo
    }
-   else if(inp_copy_sltp) AjustarSLTP(c, price_open, sl, tp);
+   else if(cfg_copy_sltp) AjustarSLTP(c, price_open, sl, tp);
    dirty = true;
 }
 
@@ -573,8 +596,8 @@ bool Abrir(int c, int type, double vol, double price_open, double sl, double tp,
    // Antes da execução o desvio é estimado pelo preço atual; AjustarSLTP o fixa pela entrada real
    double desvio = copias[c].desvio;
    if(desvio == EMPTY_VALUE) desvio = price_open > 0 ? PrecoDeEntrada(sym, type) - price_open : 0;
-   sl = inp_copy_sltp ? NivelLocal(sym, sl, desvio) : 0;
-   tp = inp_copy_sltp ? NivelLocal(sym, tp, desvio) : 0;
+   sl = cfg_copy_sltp ? NivelLocal(sym, sl, desvio) : 0;
+   tp = cfg_copy_sltp ? NivelLocal(sym, tp, desvio) : 0;
    if(!TemMargem(sym, ot, vol)) {
       if(AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s %s", action, sym, DoubleToString(vol, 2))))
          Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
@@ -665,7 +688,7 @@ int CopiasAtivasNoSimbolo(string sym) {
 void AvisarAtrasada(int c) {
    if(!licenca_ativa) return;
    AvisarUmaVez("late:" + copias[c].uid, StringFormat("Entrada atrasada de %s em %s adiada: preço fora do desvio de %d pontos (tenta de novo a cada snapshot)",
-                                                   copias[c].uid, copias[c].symbol, inp_late_max_deviation_points));
+                                                   copias[c].uid, copias[c].symbol, cfg_late));
 }
 
 bool TemExposicao(int c) {
@@ -728,7 +751,7 @@ void AjustarSLTP(int c, double price_open, double sl, double tp) {
 // Na B3 o desvio é só o slippage
 double NivelLocal(string sym, double nivel, double desvio) {
    if(nivel <= 0) return 0;
-   if(inp_sltp_mode == sltp_price || desvio == 0) return nivel;
+   if(cfg_sltp == sltp_price || desvio == 0) return nivel;
    double local = nivel + desvio;
    double tick = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
    if(tick > 0) local = MathRound(local / tick) * tick;
@@ -762,7 +785,8 @@ bool Executar(string uid, string sym, ENUM_ORDER_TYPE ot, double vol, double sl,
       if(rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED) {
          order_out = trade.ResultOrder();
          pos_out = PosicaoDoResultado();
-         Reportar(uid, action, pos_out, trade.ResultVolume() > 0 ? trade.ResultVolume() : vol, trade.ResultPrice(), rc);
+         Reportar(uid, action, pos_out, trade.ResultVolume() > 0 ? trade.ResultVolume() : vol, trade.ResultPrice(), rc,
+                  LucroDoNegocio(trade.ResultDeal()));
          return true;
       }
       if(rc == TRADE_RETCODE_INVALID_STOPS && (sl != 0 || tp != 0)) {
@@ -793,7 +817,7 @@ bool FecharTicket(string uid, ulong ticket, double vol, string action) {
       bool sent = vol > 0 ? trade.PositionClosePartial(ticket, vol) : trade.PositionClose(ticket);
       rc = trade.ResultRetcode();
       if(sent && (rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED)) {
-         Reportar(uid, action, (long)ticket, trade.ResultVolume(), trade.ResultPrice(), rc);
+         Reportar(uid, action, (long)ticket, trade.ResultVolume(), trade.ResultPrice(), rc, LucroDoNegocio(trade.ResultDeal()));
          return true;
       }
       if(rc == TRADE_RETCODE_POSITION_CLOSED) return true;
@@ -830,11 +854,82 @@ bool TemMargem(string sym, ENUM_ORDER_TYPE ot, double vol) {
    return margin <= AccountInfoDouble(ACCOUNT_MARGIN_FREE);
 }
 
-void Reportar(string uid, string action, long pos, double vol, double price, uint rc) {
+void Reportar(string uid, string action, long pos, double vol, double price, uint rc, double lucro = EMPTY_VALUE) {
    // A sessão já identifica conta e licença: a chave não vai na mensagem
    if(autenticado)
-      ws.Enviar(StringFormat("EXEC|%I64d|-|%s|%s|%I64d|%s|%s|%u|%I64d", login, uid, action, pos,
-                             DoubleToString(vol, 8), DoubleToString(price, 8), rc, last_seq));
+      ws.Enviar(StringFormat("EXEC|%I64d|-|%s|%s|%I64d|%s|%s|%u|%I64d|%s", login, uid, action, pos,
+                             DoubleToString(vol, 8), DoubleToString(price, 8), rc, last_seq,
+                             lucro == EMPTY_VALUE ? "-" : DoubleToString(lucro, 2)));
+}
+
+// Resultado de um negócio na moeda da conta, com swap e comissão; EMPTY_VALUE se o histórico ainda não o tem
+double LucroDoNegocio(ulong deal) {
+   if(deal == 0 || !HistoryDealSelect(deal)) return EMPTY_VALUE;
+   return HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_SWAP) +
+          HistoryDealGetDouble(deal, DEAL_COMMISSION);
+}
+
+// Fechamento que não foi do EA (SL, TP, stop out, manual): o painel conta o resultado dele também. Só os
+// negócios de saída que o EA não fez: as saídas do EA já foram informadas uma a uma.
+void ReportarFechamentoExterno(string uid, long pos, double fracao) {
+   if(!HistorySelectByPosition(pos)) return;
+   double vol = 0, valor = 0, lucro = 0;
+   for(int i = 0; i < HistoryDealsTotal(); i++) {
+      ulong d = HistoryDealGetTicket(i);
+      long entry = HistoryDealGetInteger(d, DEAL_ENTRY);
+      if((entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) || HistoryDealGetInteger(d, DEAL_REASON) == DEAL_REASON_EXPERT)
+         continue;
+      double v = HistoryDealGetDouble(d, DEAL_VOLUME);
+      vol += v;
+      valor += v * HistoryDealGetDouble(d, DEAL_PRICE);
+      lucro += HistoryDealGetDouble(d, DEAL_PROFIT) + HistoryDealGetDouble(d, DEAL_SWAP) + HistoryDealGetDouble(d, DEAL_COMMISSION);
+   }
+   if(vol > 0) Reportar(uid, "CLOSE_EXT", pos, vol * fracao, valor / vol, TRADE_RETCODE_DONE, lucro * fracao);
+}
+
+//+------------------------------------------------------------------+
+//| Ajustes da licença no painel (CFG): começa das entradas do EA e  |
+//| sobrepõe o que a linha trouxer                                   |
+//+------------------------------------------------------------------+
+void EntradasLocais() {
+   lots_factor = inp_lots_op == multiply ? inp_lots_factor : (1 / inp_lots_factor);
+   cfg_sizing = inp_sizing_mode;
+   cfg_capital = inp_reference_capital;
+   cfg_sltp = inp_sltp_mode;
+   cfg_copy_sltp = inp_copy_sltp;
+   cfg_late = inp_late_max_deviation_points;
+   cfg_slip = inp_slippage_points;
+   cfg_symmap = inp_symbol_map;
+   cfg_sufmap = inp_suffix_map;
+}
+
+void AplicarCfg(string msg) {
+   if(msg == cfg_aplicado) return;
+   string mapas = cfg_symmap + "\n" + cfg_sufmap;
+   EntradasLocais();
+   string f[];
+   int n = StringSplit(msg, '|', f);
+   for(int i = 1; i < n; i++) {
+      int eq = StringFind(f[i], "=");
+      if(eq <= 0) continue;
+      string k = StringSubstr(f[i], 0, eq);
+      string v = StringSubstr(f[i], eq + 1);
+      if(k == "factor" && StringToDouble(v) > 0) lots_factor = StringToDouble(v);
+      else if(k == "sizing" && (v == "0" || v == "1" || v == "2")) cfg_sizing = (ENUM_SIZING)StringToInteger(v);
+      else if(k == "capital" && StringToDouble(v) > 0) cfg_capital = StringToDouble(v);
+      else if(k == "sltp") cfg_sltp = v == "1" ? sltp_price : sltp_distance;
+      else if(k == "copysltp") cfg_copy_sltp = v == "1";
+      else if(k == "late") cfg_late = (int)StringToInteger(v);
+      else if(k == "slip") cfg_slip = (int)StringToInteger(v);
+      else if(k == "symmap") cfg_symmap = v;
+      else if(k == "sufmap") cfg_sufmap = v;
+   }
+   if(cfg_sizing != sizing_factor && cfg_capital <= 0) cfg_sizing = sizing_factor;  // Nunca divide por zero
+   trade.SetDeviationInPoints(cfg_slip);
+   if(cfg_symmap + "\n" + cfg_sufmap != mapas) ArrayResize(traducoes, 0);  // Traduções antigas não valem mais
+   cfg_aplicado = msg;
+   PrintFormat("Ajustes %s: fator %s, tamanho %s, SL/TP %s", n > 1 ? "da licença" : "das entradas do EA",
+               DoubleToString(lots_factor, 4), EnumToString(cfg_sizing), EnumToString(cfg_sltp));
 }
 
 // Ordens aceitas cuja posição ainda não apareceu (execução em bolsa devolve PLACED)
@@ -877,8 +972,12 @@ void AtualizarVinculos() {
          int reason = MotivoFechamento(vinculos[i].pos);
          if(reason < 0) continue;  // Histórico ainda não carregou: não conclui nada
          string uid = vinculos[i].uid;
+         long pos = vinculos[i].pos;
          RemoverVinculo(i);
-         if(reason != DEAL_REASON_EXPERT) MarcarDone(uid, reason);
+         if(reason != DEAL_REASON_EXPERT) {
+            ReportarFechamentoExterno(uid, pos, 1.0);
+            MarcarDone(uid, reason);
+         }
       }
       return;
    }
@@ -890,12 +989,20 @@ void AtualizarVinculos() {
       }
       int reason = MotivoFechamento(liquidos[i].pos);
       if(reason < 0) continue;
+      long pos = liquidos[i].pos;
       for(int j = i; j < ArraySize(liquidos) - 1; j++) liquidos[j] = liquidos[j+1];
       ArrayResize(liquidos, ArraySize(liquidos) - 1);
       dirty = true;
       if(reason == DEAL_REASON_EXPERT) continue;
+      // A posição líquida era a soma das cópias no símbolo: cada uma fica com a parte do seu volume
+      double total = 0;
       for(int c = 0; c < ArraySize(copias); c++)
-         if(copias[c].symbol == sym) MarcarDone(copias[c].uid, reason);
+         if(copias[c].symbol == sym && !copias[c].done) total += copias[c].alvo;
+      for(int c = 0; c < ArraySize(copias); c++) {
+         if(copias[c].symbol != sym) continue;
+         if(!copias[c].done && total > 0) ReportarFechamentoExterno(copias[c].uid, pos, copias[c].alvo / total);
+         MarcarDone(copias[c].uid, reason);
+      }
    }
 }
 
@@ -991,12 +1098,12 @@ string TraduzirSimbolo(string master) {
 
    string local = "";
    string pairs[];
-   int n = StringSplit(inp_symbol_map, ';', pairs);
+   int n = StringSplit(cfg_symmap, ';', pairs);
    for(int i = 0; i < n && local == ""; i++) {
       string kv[];
       if(StringSplit(pairs[i], '=', kv) == 2 && kv[0] == master) local = kv[1];
    }
-   n = StringSplit(inp_suffix_map, ';', pairs);
+   n = StringSplit(cfg_sufmap, ';', pairs);
    for(int i = 0; i < n && local == ""; i++) {
       int eq = StringFind(pairs[i], "=");
       if(eq < 0) continue;
@@ -1044,9 +1151,9 @@ double NormalizarVolume(string sym, double vol, bool aplicar_minimo) {
 
 // Volume local por lote do master, no momento em que uma cópia nasce
 double EscalaAtual() {
-   if(inp_sizing_mode == sizing_factor) return lots_factor;
-   double capital = AccountInfoDouble(inp_sizing_mode == sizing_equity ? ACCOUNT_EQUITY : ACCOUNT_BALANCE);
-   return lots_factor * MathMax(capital, 0) / inp_reference_capital;
+   if(cfg_sizing == sizing_factor) return lots_factor;
+   double capital = AccountInfoDouble(cfg_sizing == sizing_equity ? ACCOUNT_EQUITY : ACCOUNT_BALANCE);
+   return lots_factor * MathMax(capital, 0) / cfg_capital;
 }
 
 double CalcularVolume(string sym, double master_volume, double escala) {
@@ -1074,8 +1181,8 @@ double VolumeDasOutrasCopias(string uid) {
 }
 
 bool PrecoPerto(string sym, int type, double price_open) {
-   if(inp_late_max_deviation_points <= 0 || price_open <= 0) return false;
-   return MathAbs(PrecoDeEntrada(sym, type) - price_open) <= inp_late_max_deviation_points * SymbolInfoDouble(sym, SYMBOL_POINT);
+   if(cfg_late <= 0 || price_open <= 0) return false;
+   return MathAbs(PrecoDeEntrada(sym, type) - price_open) <= cfg_late * SymbolInfoDouble(sym, SYMBOL_POINT);
 }
 
 double PrecoDeEntrada(string sym, int type) {

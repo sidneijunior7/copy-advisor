@@ -214,7 +214,38 @@ export type CopyRow = {
     open_price: number | null;
     close_price: number | null;
     result: number | null;
+    profit: number | null; // In money, when the Slave reports it (4.04+)
     failures: number;
 };
 
 export type ClientIssue = { at: string; uid: string; action: string; volume: number | null; retcode: number };
+
+// Results of closed trades in a period, in the account's currency. return_pct and max_drawdown_pct need the
+// balance at the start of the period (one Master account); curve is the cumulative result after each trade
+export type PerformanceStats = {
+    currency: string | null;
+    trades: number;
+    wins: number;
+    losses: number;
+    win_rate: number | null;
+    net: number;
+    gross_profit: number;
+    gross_loss: number;
+    profit_factor: number | null;
+    avg_win: number | null;
+    avg_loss: number | null;
+    best: number | null;
+    worst: number | null;
+    max_drawdown: number;
+    start_balance: number | null;
+    return_pct: number | null;
+    max_drawdown_pct: number | null;
+    months: { month: string; net: number }[];
+    curve: { t: string; v: number }[];
+};
+
+export type PortfolioPerformance = PerformanceStats & { strategies: { id: number; name: string | null; trades: number; net: number }[] };
+
+export type CopiesPerformance = PerformanceStats & { equity: { t: string; balance: number | null; equity: number | null }[] };
+
+export type MyPerformance = { copies: CopiesPerformance; portfolio: PortfolioPerformance | null };

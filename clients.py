@@ -25,7 +25,7 @@ COPIES_MAX_DAYS = 90
 COPIES_LIMIT = 300
 DONE = models.EXECUTION_DONE
 OPENING = ("OPEN", "ADD", "REVERSE")
-CLOSING = ("CLOSE", "PARTIAL")
+CLOSING = ("CLOSE", "PARTIAL", "CLOSE_EXT")  # CLOSE_EXT: SL, TP or a hand close (Slave 4.04+)
 
 
 class ClientLimits(BaseModel):
@@ -49,8 +49,8 @@ class ClientSettings(BaseModel):
     lots_factor: float = Field(default=1.0, gt=0, le=1000)
     reference_capital: Optional[float] = Field(default=None, gt=0)
     sltp_mode: Literal["distance", "price"] = "distance"
-    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=hosting.ONE_LINE)
-    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=hosting.ONE_LINE)
+    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=hosting.MAP_PATTERN)
+    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=hosting.MAP_PATTERN)
 
 
 CLIENT_FIELDS = tuple(ClientSettings.model_fields)
@@ -174,7 +174,8 @@ def license_view(lic: models.License, terminal: Optional[models.HostedTerminal],
 
 def copies(db: Session, lic: models.License, days: int, now: datetime.datetime) -> List[dict]:
     """The license's copies in the last `days` days, newest first, from the Slave's execution reports. The result
-    is in price (close minus open, signed by direction): money needs the Slave to report profit."""
+    is in price (close minus open, signed by direction); profit, in money, is there when the Slave reports it
+    (4.04+): every deal of the copy, commission and swap included."""
     since = now - datetime.timedelta(days=max(1, min(days, COPIES_MAX_DAYS)))
     rows = (db.query(models.Execution)
             .filter(models.Execution.portfolio_id == lic.portfolio_id,
@@ -215,6 +216,7 @@ def copies(db: Session, lic: models.License, days: int, now: datetime.datetime) 
             status = "open"
         else:
             status = "closed"
+        profits = [e.profit for e in done if e.profit is not None]
         out.append({
             "uid": uid,
             "symbol": mp.symbol if mp else None,
@@ -226,6 +228,7 @@ def copies(db: Session, lic: models.License, days: int, now: datetime.datetime) 
             "open_price": avg_in,
             "close_price": avg_out,
             "result": result,
+            "profit": round(sum(profits), 2) if profits else None,
             "failures": sum(1 for e in execs if e.retcode not in DONE),
         })
     out.sort(key=lambda c: c["opened_at"], reverse=True)

@@ -213,4 +213,50 @@ class Execution(Base):
     retcode = Column(Integer)
     seq = Column(BigInteger)
     latency_ms = Column(Integer, nullable=True) # Hub publishing the state -> this report; None when unmatched
+    profit = Column(Float, nullable=True) # Of a close, in the account's currency, swap and commission included (Slave 4.04+)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+class MasterDeal(Base):
+    """A deal on a Master account (V2DEAL, Master 4.01+): what each position realized, and deposits and withdrawals.
+    Kept past HUB_RETENTION_DAYS: it is the performance history."""
+    __tablename__ = "master_deals"
+    __table_args__ = (
+        UniqueConstraint("manager_id", "master_login", "deal_id", name="uq_master_deals_identity"),
+        Index("ix_master_deals_position", "manager_id", "master_login", "pos_id"),
+        Index("ix_master_deals_time", "manager_id", "time"),
+    )
+
+    id = Column(BigIntPK, primary_key=True)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    master_login = Column(BigInteger, nullable=False)
+    deal_id = Column(BigInteger, nullable=False) # DEAL_TICKET
+    pos_id = Column(BigInteger, nullable=False) # POSITION_IDENTIFIER; 0 for deposits and withdrawals
+    entry = Column(Integer, nullable=False) # DEAL_ENTRY: 0 in, 1 out, 2 in/out (reversal), 3 out by
+    type = Column(Integer, nullable=False) # DEAL_TYPE: 0 buy, 1 sell, 2 balance, 3 credit, ...
+    symbol = Column(String(64))
+    magic = Column(BigInteger)
+    volume = Column(Float)
+    price = Column(Float)
+    profit = Column(Float) # Account currency
+    swap = Column(Float)
+    commission = Column(Float)
+    time = Column(DateTime, nullable=False) # UTC
+    received_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class AccountSnapshot(Base):
+    """Balance and equity of a Master (V2ACC) or Slave (ACC) account, the last one of each hour."""
+    __tablename__ = "account_snapshots"
+    __table_args__ = (
+        UniqueConstraint("kind", "owner_id", "login", "hour", name="uq_account_snapshots_hour"),
+        Index("ix_account_snapshots_series", "kind", "owner_id", "hour"),
+    )
+
+    id = Column(BigIntPK, primary_key=True)
+    kind = Column(String(8), nullable=False) # master: owner_id is the manager; slave: owner_id is the license
+    owner_id = Column(Integer, nullable=False)
+    login = Column(BigInteger, nullable=False)
+    hour = Column(DateTime, nullable=False) # UTC, truncated to the hour
+    balance = Column(Float)
+    equity = Column(Float)
+    currency = Column(String(8))
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)

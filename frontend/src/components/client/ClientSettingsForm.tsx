@@ -48,9 +48,7 @@ export default function ClientSettingsForm({ license, onSaved }: ClientSettingsF
                 symbol_map: data.symbol_map.trim() || null,
                 suffix_map: data.suffix_map.trim() || null,
             });
-            toast.success('Ajustes salvos', {
-                description: license.hosting ? 'O terminal reinicia com eles em instantes.' : undefined,
-            });
+            toast.success('Ajustes salvos', { description: 'O EA recebe os ajustes em segundos.' });
             onSaved();
         } catch (e) {
             console.error(e);
@@ -129,11 +127,10 @@ export default function ClientSettingsForm({ license, onSaved }: ClientSettingsF
                     </div>
                 </details>
 
-                {!license.hosting && (
-                    <p className="text-xs text-muted-foreground">
-                        Com o EA no seu computador, configure as mesmas opções nas entradas do EA no MetaTrader.
-                    </p>
-                )}
+                <p className="text-xs text-muted-foreground">
+                    Os ajustes chegam ao EA em segundos, sem reiniciar o MetaTrader (EA 4.04 ou mais novo; os anteriores usam as
+                    próprias entradas). Eles valem para as próximas cópias: as abertas mantêm o tamanho com que abriram.
+                </p>
 
                 <div className="flex justify-end">
                     <Button size="sm" loading={isSubmitting} disabled={!isDirty}>

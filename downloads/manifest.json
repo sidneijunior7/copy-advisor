@@ -1,16 +1,16 @@
 {
     "master":  {
-                   "version":  "4.00",
+                   "version":  "4.01",
                    "file":  "Trademetric Copy Trader Master.ex5",
-                   "size":  45164,
-                   "sha256":  "5a6aa10363bd1c094b1122d55e6104824d9c540f8b5969a71cd412ac7e3a67d2",
-                   "built_at":  "2026-10-17T23:37:29Z"
+                   "size":  47174,
+                   "sha256":  "02c5a443256c4e5f6b72d6c45fa2471df6d14ffc6ba8175df10792d8657c6c7e",
+                   "built_at":  "2026-10-18T15:41:16Z"
                },
     "slave":  {
-                  "version":  "4.03",
+                  "version":  "4.04",
                   "file":  "Trademetric Copy Trader Slave.ex5",
-                  "size":  116482,
-                  "sha256":  "1c3a18319859b91e76d86126e00eef0ed49b9d7b64498cf2aaf222558b2c38c1",
-                  "built_at":  "2026-10-18T11:53:37Z"
+                  "size":  124572,
+                  "sha256":  "9d281d18820a2f1a5e37facb9025b81867b6ae659106b09a023f3373583bfa9e",
+                  "built_at":  "2026-10-18T15:41:16Z"
               }
 }

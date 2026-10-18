@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
-import { Briefcase, Check, Link as LinkIcon, Plus, Users, X } from 'lucide-react';
+import { Briefcase, Check, Link as LinkIcon, Plus, TrendingUp, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
@@ -179,6 +179,12 @@ export default function Portfolios() {
                                     <h3 className="text-lg font-semibold">{p.name}</h3>
                                     <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
                                         <span>{p.strategies.length} {p.strategies.length === 1 ? 'estratégia' : 'estratégias'}</span>
+                                        <Link
+                                            to={`/manager/portfolios/${p.id}/performance`}
+                                            className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+                                        >
+                                            <TrendingUp className="size-3.5" /> Desempenho
+                                        </Link>
                                         <Link
                                             to={`/manager/clients?portfolio=${p.id}`}
                                             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"

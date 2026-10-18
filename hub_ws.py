@@ -24,6 +24,7 @@ seq continuous without telling it anything. Revoking never opens nor closes anyt
 """
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import time
@@ -56,7 +57,7 @@ CLOSE_RATE = 4429
 CLOSE_BUSY = 4503
 
 PATHS = ("/v1/master", "/v1/slave")
-MASTER_MESSAGES = ("V2|", "V2SYNC|", "V2HELLO|")
+MASTER_MESSAGES = ("V2|", "V2SYNC|", "V2HELLO|", "V2DEAL|", "V2ACC|")
 
 
 def fmt(x: float) -> str:
@@ -110,6 +111,44 @@ class Outbox:
             self.ready.set()
 
 
+# Slave settings (hosting.SlaveInputs, on the license) as CFG|key=value|...: Slave 4.04 applies them over its own
+# inputs, and goes back to its inputs for any key left out. Older Slaves ignore the line.
+CFG_KEYS = {
+    "sizing_mode": ("sizing", lambda v: str({"factor": 0, "balance": 1, "equity": 2}[v])),
+    "reference_capital": ("capital", lambda v: f"{float(v):g}"),
+    "sltp_mode": ("sltp", lambda v: str({"distance": 0, "price": 1}[v])),
+    "copy_sltp": ("copysltp", lambda v: "1" if v else "0"),
+    "late_max_deviation_points": ("late", lambda v: str(int(v))),
+    "slippage_points": ("slip", lambda v: str(int(v))),
+    "symbol_map": ("symmap", str),
+    "suffix_map": ("sufmap", str),
+}
+
+
+def cfg_line(settings: str) -> str:
+    """The CFG message for a license's settings. A value that would not parse is left out, so the Slave keeps its
+    own input for it."""
+    try:
+        values = json.loads(settings or "{}")
+    except ValueError:
+        values = {}
+    if not isinstance(values, dict):
+        values = {}
+    fields = []
+    factor = values.get("lots_factor")
+    if isinstance(factor, (int, float)) and factor > 0:
+        fields.append(f"factor={(1 / factor if values.get('lots_divide') else factor):g}")
+    for key, (name, encode) in CFG_KEYS.items():
+        if values.get(key) is None:
+            continue
+        try:
+            value = encode(values[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        fields.append(f"{name}={value.replace('|', '/')}")
+    return "|".join(["CFG", *fields])
+
+
 class Session:
     def __init__(self, ws: ServerConnection, kind: str, ip: str, login: int, version: str, queue_size: int):
         self.ws = ws
@@ -127,6 +166,7 @@ class Session:
         self.key_hash: Optional[str] = None
         self.max_lots = 0.0
         self.allowed: Optional[Set[str]] = None  # None = full stream; a set = manage-only, these uids
+        self.settings = ""  # The license settings its last CFG carried
         self.last_ack_seq: Optional[int] = None
         self.last_ack_at: Optional[float] = None
         # Master
@@ -301,11 +341,13 @@ class Edge:
             self.kick(old, "replaced", "another terminal connected with this license", CLOSE_REPLACED)
         s = Session(ws, "slave", ip, login, f[5][:32], self.queue_size)
         s.license_id, s.portfolio_id, s.key_hash, s.max_lots = lic.id, lic.portfolio_id, lic.key_hash, lic.max_lots
+        s.settings = lic.settings
         since = self._inactive_since(lic)
         if since is not None:
             s.allowed = self.core.open_uids(lic.portfolio_id, opened_before=since)
         # Nothing is awaited from here to the registration: no published line can slip between them
         s.outbox.put(f"WELCOME|{self.core.epoch}|{self.heartbeat_seconds:g}|{lic.portfolio_id}|{int(s.active)}|{fmt(s.max_lots)}")
+        s.outbox.put(cfg_line(lic.settings))  # Before the SNAP: its late entries are sized with these settings
         if not self.core.warming:  # A SNAP is authoritative: a partial one would close copies
             s.outbox.put(s.view(self.core.snapshot(lic.portfolio_id)))
         self.slaves_by_portfolio.setdefault(lic.portfolio_id, set()).add(s)
@@ -367,6 +409,8 @@ class Edge:
                         s.last_ack_seq, s.last_ack_at = int(seq), self.clock()
                 elif msg.startswith("EXEC|"):
                     self.core.handle_exec(msg.split("|"), portfolio_id=s.portfolio_id, login=s.login)
+                elif msg.startswith("ACC|"):
+                    self.core.handle_account("slave", s.license_id, s.login, msg.split("|")[1:])
                 else:
                     self._warn(f"slave-msg:{s.license_id}", f"Unexpected message from slave {s.login}: {msg[:80]}")
                 return
@@ -419,6 +463,9 @@ class Edge:
                 self.stats["revoked"] += 1
                 self.kick(s, "revoked", "license key revoked or replaced", CLOSE_REVOKED)
                 continue
+            if lic.settings != s.settings:
+                s.settings = lic.settings
+                s.outbox.put(cfg_line(lic.settings))
             since = self._inactive_since(lic)
             changed = lic.max_lots != s.max_lots
             s.max_lots = lic.max_lots

@@ -31,6 +31,7 @@ import keys
 import models
 import auth
 import observability
+import performance
 
 observability.setup("api")
 logger = logging.getLogger(__name__)
@@ -975,8 +976,7 @@ def save_hosting(lic: models.License, changes: hosting.HostingUpdate, f, user: m
     db.refresh(t)
     logger.info(f"Hosting of license {lic.id} {'created' if created else 'updated'} by {user.role.lower()} {user.id}: "
                 f"server={t.server} enabled={t.enabled} version={t.config_version}")
-    if created:
-        notify_hub()  # The previous key stops working at once
+    notify_hub()  # A new key cuts the previous one off at once; new settings reach the Slave as CFG
     return hosting.terminal_out(t, now)
 
 @app.delete("/licenses/{license_id}/hosting")
@@ -1105,15 +1105,15 @@ def list_my_issues(license_id: int, days: int = 7, current_user: models.User = D
 @app.put("/me/licenses/{license_id}/settings")
 def update_my_settings(license_id: int, data: clients.ClientSettings, current_user: models.User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
-    """The client's Slave settings, inside the limits of the portfolio. A hosted terminal restarts with them."""
+    """The client's Slave settings, inside the limits of the portfolio. The hub sends them to the Slave (CFG)."""
     lic = own_license(license_id, current_user, db)
     error = clients.check_settings(data, clients.limits_of(lic.portfolio))
     if error:
         raise HTTPException(status_code=422, detail=error)
     if clients.apply_settings(lic, data.model_dump()):
-        hosting.restart_for(db, lic.id, datetime.datetime.utcnow())
         db.commit()
         logger.info(f"License {lic.id}: settings changed by client {current_user.id}")
+        notify_hub()
     db.refresh(lic)
     return my_license_view(lic, db)
 
@@ -1172,11 +1172,30 @@ def update_license_settings(license_id: int, data: hosting.SlaveInputs, current_
     new = json.dumps(data.model_dump(exclude_none=True), sort_keys=True)
     if new != (lic.settings or "{}"):
         lic.settings = new
-        hosting.restart_for(db, lic.id, datetime.datetime.utcnow())
         db.commit()
         logger.info(f"License {lic.id}: settings changed by manager {current_user.id}")
+        notify_hub()
     db.refresh(lic)
     return license_out(lic)
+
+@app.get("/portfolios/{portfolio_id}/performance")
+def portfolio_performance(portfolio_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """What the portfolio's strategies realized in the period, from the Master's deals (Master 4.01+)."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id,
+                                                  models.Portfolio.user_id == current_user.id).first()
+    if not portfolio: raise HTTPException(status_code=404)
+    return performance.portfolio(db, portfolio, days, datetime.datetime.utcnow())
+
+@app.get("/me/licenses/{license_id}/performance")
+def my_performance(license_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """The client's own result on this license next to what the portfolio realized in the same period."""
+    lic = own_license(license_id, current_user, db)
+    now = datetime.datetime.utcnow()
+    return {"copies": performance.copies(db, lic, days, now),
+            "portfolio": performance.portfolio(db, lic.portfolio, days, now) if lic.portfolio else None}
 
 @app.put("/portfolios/{portfolio_id}/limits")
 def update_client_limits(portfolio_id: int, data: clients.ClientLimits, current_user: models.User = Depends(get_current_user),

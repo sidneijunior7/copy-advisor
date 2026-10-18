@@ -54,3 +54,10 @@ export const SLTP_LABELS = {
     distance: 'Mesma distância da entrada',
     price: 'Mesmo preço do Master',
 } as const;
+
+export const PERIODS = [
+    { days: 30, label: 'Últimos 30 dias' },
+    { days: 90, label: 'Últimos 90 dias' },
+    { days: 180, label: 'Últimos 6 meses' },
+    { days: 365, label: 'Último ano' },
+];

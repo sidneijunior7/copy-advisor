@@ -4,6 +4,7 @@ import { ArrowLeft, Briefcase, KeyRound } from 'lucide-react';
 import api, { type MyLicenses } from '../../api';
 import Card from '../../components/Card';
 import ClientHosting from '../../components/client/ClientHosting';
+import ClientPerformance from '../../components/client/ClientPerformance';
 import ClientSettingsForm from '../../components/client/ClientSettingsForm';
 import { ClientIssues, CopiesTable } from '../../components/client/CopiesTable';
 import EmptyState from '../../components/EmptyState';
@@ -17,6 +18,7 @@ const POLL_MS = 15_000;
 
 const TABS = [
     { id: 'overview', label: 'Visão geral' },
+    { id: 'performance', label: 'Desempenho' },
     { id: 'copies', label: 'Cópias' },
     { id: 'settings', label: 'Ajustes' },
     { id: 'issues', label: 'Problemas' },
@@ -131,6 +133,7 @@ export default function LicenseDetail() {
                     />
                 </div>
             )}
+            {tab === 'performance' && <ClientPerformance license={license} />}
             {tab === 'copies' && <CopiesTable licenseId={license.id} />}
             {tab === 'settings' && <ClientSettingsForm key={JSON.stringify(license.settings)} license={license} onSaved={refresh} />}
             {tab === 'issues' && <ClientIssues licenseId={license.id} />}

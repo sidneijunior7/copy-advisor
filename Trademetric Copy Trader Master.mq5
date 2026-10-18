@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "4.00"
-#define VERSAO "4.00"
+#property version   "4.01"
+#define VERSAO "4.01"
 
 #include "Include/TDM/WsClient.mqh"
 
@@ -21,6 +21,12 @@ input int    InpSyncSeconds = 10;                            // Full position re
 //   V2|login|reason|pos_id|type|symbol|vol|price_open|sl|tp|magic
 //   V2SYNC|login|pos_id,type,symbol,vol,price_open,sl,tp,magic;...
 //   V2HELLO|login|trade_mode|server|company   (trade_mode: demo, contest, real)
+//   V2DEAL|login|pos_id|deal|entry|type|volume|price|profit|swap|commission|time_ms_utc|magic|symbol
+//   V2ACC|login|balance|equity|currency
+// V2DEAL carries every deal of the account (trades, deposits, withdrawals): it is what each position realized,
+// which the dashboard shows as the performance of the strategies. The deals go out from a cursor kept in a
+// terminal global variable, so after a disconnection or a restart the ones missed go out too; the hub keeps one of
+// each. V2ACC goes with V2HELLO.
 // pos_id is POSITION_IDENTIFIER, never the ticket: on netting accounts a reversal changes the
 // ticket but keeps the identifier.
 // Transport: wss://<InpWsHost>/v1/master. The first message authenticates
@@ -61,6 +67,11 @@ const int HELLO_MS  = 300000; // Account details are re-sent so a hub that resta
 // follows reports the position, and slaves apply their late-entry price guard to it
 const ulong FILA_MAX_MS = 10000;
 const int   FILA_MAX = 1000;
+const int   DEALS_MS = 2000;            // How often the deal history is read
+const int   DEALS_FIRST_DAYS = 7;       // How far back a terminal that never sent deals starts
+const int   DEALS_PER_ROUND = 200;      // A long backlog goes out over several rounds
+ulong       next_deals = 0;
+ulong       deals_at_cursor[];          // Deals sent at exactly the cursor's millisecond (ties)
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -105,6 +116,10 @@ void OnTimer()
       next_sync = GetTickCount64() + (ulong)MathMax(InpSyncSeconds, 1) * 1000;
    }
    if(seeded && Pronto() && GetTickCount64() >= next_hello) EnviarHello();
+   if(seeded && Pronto() && autenticado && GetTickCount64() >= next_deals) {
+      next_deals = GetTickCount64() + DEALS_MS;
+      EnviarDeals();
+   }
    MostrarEstado();
   }
 //+------------------------------------------------------------------+
@@ -291,7 +306,56 @@ void EnviarHello()
    string body = StringFormat("V2HELLO|%I64d|%s|%s|%s", login, ModoConta(),
                               SemPipe(AccountInfoString(ACCOUNT_SERVER)), SemPipe(AccountInfoString(ACCOUNT_COMPANY)));
    Transmitir(body, false);  // Dropped when it can't go out: the next one carries the same information
+   Transmitir(StringFormat("V2ACC|%I64d|%s|%s|%s", login, DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
+                           DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), AccountInfoString(ACCOUNT_CURRENCY)), false);
    next_hello = GetTickCount64() + HELLO_MS;
+  }
+//+------------------------------------------------------------------+
+//| Deals since the cursor (DEAL_TIME_MSC of the last one sent)      |
+//+------------------------------------------------------------------+
+void EnviarDeals()
+  {
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+   string cursor_var = StringFormat("TDM_DEALS_%I64d", login);
+   long cursor = GlobalVariableCheck(cursor_var) ? (long)GlobalVariableGet(cursor_var) : 0;
+   datetime from = cursor > 0 ? (datetime)(cursor / 1000) - 60 : TimeCurrent() - DEALS_FIRST_DAYS * 86400;
+   if(!HistorySelect(from, TimeCurrent() + 86400)) return;
+   // Deal times are the broker's clock: the hub gets UTC (the offset rounded to 15 minutes)
+   long offset_ms = (long)MathRound((double)(TimeTradeServer() - TimeGMT()) / 900.0) * 900000;
+   int enviados = 0;
+   for(int i = 0; i < HistoryDealsTotal() && enviados < DEALS_PER_ROUND; i++) {
+      ulong deal = HistoryDealGetTicket(i);
+      long msc = HistoryDealGetInteger(deal, DEAL_TIME_MSC);
+      if(msc < cursor || (msc == cursor && Sent(deal))) continue;
+      string symbol = HistoryDealGetString(deal, DEAL_SYMBOL);
+      StringReplace(symbol, "|", "/");
+      string body = StringFormat("V2DEAL|%I64d|%I64d|%I64u|%I64d|%I64d|%s|%s|%s|%s|%s|%I64d|%I64d|%s",
+                                 login, HistoryDealGetInteger(deal, DEAL_POSITION_ID), deal,
+                                 HistoryDealGetInteger(deal, DEAL_ENTRY), HistoryDealGetInteger(deal, DEAL_TYPE),
+                                 DoubleToString(HistoryDealGetDouble(deal, DEAL_VOLUME), 8),
+                                 DoubleToString(HistoryDealGetDouble(deal, DEAL_PRICE), 8),
+                                 DoubleToString(HistoryDealGetDouble(deal, DEAL_PROFIT), 2),
+                                 DoubleToString(HistoryDealGetDouble(deal, DEAL_SWAP), 2),
+                                 DoubleToString(HistoryDealGetDouble(deal, DEAL_COMMISSION), 2),
+                                 msc - offset_ms, HistoryDealGetInteger(deal, DEAL_MAGIC), symbol);
+      if(!Transmitir(body, false)) return;  // Disconnected: the next round starts from the same cursor
+      enviados++;
+      if(msc > cursor) {
+         cursor = msc;
+         GlobalVariableSet(cursor_var, (double)cursor);
+         ArrayResize(deals_at_cursor, 0);
+      }
+      int n = ArraySize(deals_at_cursor);
+      ArrayResize(deals_at_cursor, n + 1);
+      deals_at_cursor[n] = deal;
+   }
+  }
+//+------------------------------------------------------------------+
+bool Sent(ulong deal)
+  {
+   for(int i = ArraySize(deals_at_cursor) - 1; i >= 0; i--)
+      if(deals_at_cursor[i] == deal) return true;
+   return false;
   }
 //+------------------------------------------------------------------+
 //| Connection, authentication, hub messages                         |

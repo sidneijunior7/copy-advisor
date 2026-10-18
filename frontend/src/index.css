@@ -206,3 +206,19 @@
 ::-webkit-scrollbar-thumb {
     @apply rounded-full bg-muted-foreground/30 hover:bg-muted-foreground/50;
 }
+
+/* Chart colors: the data-viz reference palette, validated per chart against the card surface of each theme
+   (equity: series 1 + 2; monthly result: positive + negative). The dark steps are the default, like the theme. */
+:root {
+    --viz-series-1: #3987e5;
+    --viz-series-2: #d95926;
+    --viz-positive: #3987e5;
+    --viz-negative: #e66767;
+}
+
+.light {
+    --viz-series-1: #2a78d6;
+    --viz-series-2: #eb6834;
+    --viz-positive: #2a78d6;
+    --viz-negative: #e34948;
+}

@@ -114,6 +114,7 @@ async def test_slave_gets_welcome_snapshot_and_only_its_portfolio():
         env.v2("OPEN", 1)
         ws = await env.slave()
         assert await recv(ws) == "WELCOME|42|5|7|1|2.5"
+        assert await recv(ws) == "CFG"  # The license has no settings: the Slave keeps its inputs
         snap = await recv(ws)
         assert snap.startswith("SNAP|42|1|900_1,0,EURUSD,1,")
 
@@ -168,9 +169,9 @@ def test_health_and_unknown_paths_over_http():
 async def test_second_terminal_with_the_same_license_replaces_the_first():
     async with Env() as env:
         first = await env.slave()
-        await recv(first), await recv(first)
+        await recv(first), await recv(first), await recv(first)  # WELCOME, CFG, SNAP
         second = await env.slave()
-        await recv(second), await recv(second)
+        await recv(second), await recv(second), await recv(second)
         msgs, code = await until_closed(first)
         assert msgs == ["ERR|replaced|another terminal connected with this license"] and code == 4409
         env.v2("OPEN", 1)
@@ -185,7 +186,7 @@ async def test_revoked_license_follows_its_open_positions_and_nothing_new():
     async with Env() as env:
         env.v2("OPEN", 1)
         ws = await env.slave()
-        await recv(ws), await recv(ws)
+        await recv(ws), await recv(ws), await recv(ws)  # WELCOME, CFG, SNAP
 
         time.sleep(0.02)
         env.dir = make_directory(LicenseInfo(**{**LICENSE.__dict__, "is_active": False, "revoked_at": time.time()}))
@@ -221,6 +222,7 @@ async def test_expired_license_connects_manage_only_and_a_new_key_drops_it():
         env.dir = make_directory(LicenseInfo(**{**LICENSE.__dict__, "expires_at": 2000.0}))
         ws = await env.slave()
         assert await recv(ws) == "WELCOME|42|5|7|0|2.5"
+        assert await recv(ws) == "CFG"
         snap = await recv(ws)
         assert "900_1," in snap and "900_2," not in snap
 
@@ -234,7 +236,7 @@ async def test_expired_license_connects_manage_only_and_a_new_key_drops_it():
 async def test_lot_limit_change_reaches_the_connected_slave():
     async with Env() as env:
         ws = await env.slave()
-        await recv(ws), await recv(ws)
+        await recv(ws), await recv(ws), await recv(ws)  # WELCOME, CFG, SNAP
         env.dir = make_directory(LicenseInfo(**{**LICENSE.__dict__, "max_lots": 1.0}))
         env.edge.tick()
         assert await recv(ws) == "LIC|1|1"
@@ -247,7 +249,7 @@ async def test_lot_limit_change_reaches_the_connected_slave():
 async def test_slow_slave_is_dropped_without_holding_the_others():
     async with Env(queue_size=5) as env:
         ws = await env.slave()
-        await recv(ws), await recv(ws)
+        await recv(ws), await recv(ws), await recv(ws)  # WELCOME, CFG, SNAP
         for pos_id in range(1, 20):  # Published back to back: the writer can't drain in between
             env.v2("OPEN", pos_id)
         msgs, code = await until_closed(ws)
@@ -261,6 +263,7 @@ async def test_warming_hub_sends_no_snapshot_until_warm_up_ends():
         env.core.warming = True
         ws = await env.slave()
         assert (await recv(ws)).startswith("WELCOME|")
+        assert await recv(ws) == "CFG"
         await nothing(ws)
         env.core.warming = False
         env.core.publish_snapshots()
@@ -274,7 +277,7 @@ async def test_warming_hub_sends_no_snapshot_until_warm_up_ends():
 async def test_exec_and_ack_are_bound_to_the_session_license():
     async with Env() as env:
         ws = await env.slave()
-        await recv(ws), await recv(ws)
+        await recv(ws), await recv(ws), await recv(ws)  # WELCOME, CFG, SNAP
         env.v2("OPEN", 1)
         await recv(ws)
         await ws.send("EXEC|999|forged-key|900_1|OPEN|777|2.5|1.1|10009|1")
@@ -296,7 +299,7 @@ async def test_exec_and_ack_are_bound_to_the_session_license():
 async def test_master_publishes_over_ws_bound_to_its_login():
     async with Env() as env:
         slave = await env.slave()
-        await recv(slave), await recv(slave)
+        await recv(slave), await recv(slave), await recv(slave)  # WELCOME, CFG, SNAP
         master = await env.master()
         assert await recv(master) == "WELCOME|42|5"
 

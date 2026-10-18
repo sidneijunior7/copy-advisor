@@ -158,8 +158,29 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - gerar a chave do EA no computador (licenças hospedadas não, porque a chave fica com o pod);
   - ajustar o tamanho e o SL/TP dentro dos limites do portfólio.
 - **Limites dos ajustes:** cada portfólio define os seus em **Portfólios → limites dos clientes**. O padrão é fator de 0,01 a 1 e todos os modos. O limite de lotes da licença vale por cima de tudo.
-- **Onde ficam os ajustes:** na licença (`licenses.settings`). O terminal hospedado reinicia com eles; o EA no computador do cliente ainda usa as entradas locais.
+- **Onde ficam os ajustes:** na licença (`licenses.settings`). O hub os envia ao Slave em segundos (veja Resultados e ajustes), sem reiniciar o terminal.
 - A migração `0009` cria essas colunas, move os ajustes que estavam em `hosted_terminals.inputs` para a licença e dá como verificados os emails das contas que já existiam.
+
+## Resultados e ajustes pelo painel
+
+- **Slave 4.04:**
+  - Recebe os ajustes da licença do hub (`CFG|chave=valor|...`) logo depois do WELCOME e sempre que mudam, e os aplica por cima das próprias entradas. Uma chave que não vem volta à entrada do EA. Os ajustes valem para as próximas cópias.
+  - Informa o resultado de cada execução, com swap e comissão, no fim do `EXEC`.
+  - Informa os fechamentos que não fez (SL, TP, stop out, fechamento manual) como `CLOSE_EXT`.
+  - Envia saldo e patrimônio (`ACC`) a cada 5 minutos.
+- **Master 4.01:**
+  - Envia cada execução da conta (`V2DEAL`): operações, depósitos e saques, com lucro, swap, comissão e horário em UTC. Ele lê o histórico a partir de um cursor guardado na variável global `TDM_DEALS_<login>` do terminal; na primeira vez, desde 7 dias atrás. O que se perdeu numa queda sai na reconexão, e o hub descarta duplicatas pelo número da execução.
+  - Envia saldo e patrimônio (`V2ACC`) junto com o `V2HELLO`.
+- **Hub:**
+  - Aceita `EXEC` com 10 campos (EAs antigos) ou 11.
+  - Grava as execuções do Master em `master_deals` e o último saldo de cada hora em `account_snapshots`. O `HUB_RETENTION_DAYS` não apaga essas tabelas, porque são o histórico de desempenho.
+- **Painel:**
+  - **Portfólios → Desempenho:** resultado, retorno sobre o saldo do Master no início do período, acerto, fator de lucro, maior queda, resultado acumulado e resultado por mês, a partir das execuções do Master.
+  - **Licença → Desempenho**, para o cliente: o resultado das cópias dele, com o saldo e o patrimônio da conta, ao lado do desempenho do portfólio no mesmo período.
+- **Ordem de deploy:**
+  1. API (migração `0010`): o hub novo grava em colunas que ela cria.
+  2. Hub.
+  3. Os EAs (Master 4.01 no terminal do Master, Slave 4.04 nos clientes e no pod). Os EAs antigos continuam funcionando sem esses dados.
 
 ## Tipo da conta do Master
 

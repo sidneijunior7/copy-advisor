@@ -26,7 +26,7 @@ O EA **Trademetric Copy Trader Slave** copia para a sua conta do MetaTrader 5 as
 O canto do gráfico mostra:
 
 ```
-TDM Mirror Slave 4.03
+TDM Mirror Slave 4.04
 Hub: conectado, portfólio 3
 Licença: ativa, limite 2.00 lotes
 Cópias abertas: 0
@@ -45,6 +45,9 @@ Cópias abertas: 0
 Se o gráfico não mostra nada, o EA não carregou. O motivo aparece na aba **Experts** da Caixa de Ferramentas; o mais comum é a chave colada sem o `lic_` do começo.
 
 ## Tamanho das posições (aba Entradas)
+
+Se você tem conta no painel (**Minhas licenças**), prefira ajustar o tamanho e o SL/TP por lá: o EA recebe os ajustes em segundos, por cima das entradas abaixo, sem reiniciar o MetaTrader.
+
 
 - **Sizing = Fixed factor** (padrão): o lote da estratégia multiplicado por **inp_lots_factor**. Com **inp_lots_op** em *Divide*, o lote é dividido pelo fator. Exemplo: fator 2 copia o dobro, e fator 2 com *Divide* copia a metade.
 - **Sizing = Proportional to balance** ou **Proportional to equity**: o lote acompanha o seu saldo (ou patrimônio). Em **Proportional: capital...**, informe o capital que copia o lote da estratégia por inteiro. Exemplo: com 10000 nesse campo e saldo de 5000, você copia metade do lote. A proporção é fixada na abertura de cada posição.

@@ -1,0 +1,11 @@
+// In the account's currency when it is a known code; a broker's own code (cent accounts) shows after the number
+export const formatMoney = (value: number, currency: string | null) => {
+    if (currency) {
+        try {
+            return value.toLocaleString('pt-BR', { style: 'currency', currency, maximumFractionDigits: 2 });
+        } catch {
+            return `${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+        }
+    }
+    return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};

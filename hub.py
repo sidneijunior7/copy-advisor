@@ -120,6 +120,7 @@ class LicenseInfo:
     expires_at: Optional[float]  # Unix time; None = no expiry
     key_hash: str
     revoked_at: Optional[float] = None  # Unix time the license was deactivated
+    settings: str = ""  # licenses.settings (JSON): sent to the Slave as CFG
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ def load_directory(session) -> Directory:
     portfolio_ids = [pid for (pid,) in session.query(models.Portfolio.id)]
     licenses = [
         LicenseInfo(l.id, l.portfolio_id, int(l.client_mt5_login or 0), float(l.max_lots or 0), bool(l.is_active),
-                    _unix(l.expires_at), l.key_hash, _unix(l.revoked_at))
+                    _unix(l.expires_at), l.key_hash, _unix(l.revoked_at), l.settings or "")
         for l in session.query(models.License).filter(models.License.key_hash.isnot(None),
                                                       models.License.portfolio_id.isnot(None))
     ]
@@ -175,6 +176,13 @@ def load_directory(session) -> Directory:
         licenses_by_id={l.id: l for l in licenses},
         loaded_at=time.time(),
     )
+
+
+def _float(text: str) -> Optional[float]:
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 # --- Core logic (no sockets, no threads: unit-tested in tests/test_hub.py) ---
@@ -266,6 +274,14 @@ class HubCore:
             self._handle_sync(manager, int(login), entries, raw=raw)
         elif rest.startswith("V2HELLO|"):
             self._handle_hello(manager, rest, raw=raw)
+        elif rest.startswith("V2DEAL|"):
+            self._handle_deal(manager, rest)
+        elif rest.startswith("V2ACC|"):
+            f = rest.split("|")
+            if len(f) != 5:
+                self._warn("acc-size", f"Malformed V2ACC message: {raw[:120]}")
+                return
+            self.handle_account("master", manager.id, int(f[1]), f[2:])
         elif rest.startswith("V2|"):
             f = rest.split("|")
             if len(f) != 11:
@@ -325,6 +341,53 @@ class HubCore:
             "at": datetime.datetime.utcnow(),
         })
 
+    def _handle_deal(self, manager: ManagerInfo, rest: str):
+        """V2DEAL|login|pos_id|deal|entry|type|volume|price|profit|swap|commission|time_ms_utc|magic|symbol: one
+        deal of the Master account (Master 4.01+). A Master resends its recent deals when it reconnects, so the same
+        deal can come twice; the writer keeps one."""
+        f = rest.split("|", 13)
+        if len(f) != 14:
+            self._warn("deal-size", f"Malformed V2DEAL message: {rest[:120]}")
+            return
+        _, login, pos_id, deal, entry, type_, volume, price, profit, swap, commission, time_ms, magic, symbol = f
+        self.persist({
+            "kind": "master_deal",
+            "manager_id": manager.id,
+            "master_login": int(login),
+            "deal_id": int(deal),
+            "pos_id": int(pos_id),
+            "entry": int(entry),
+            "type": int(type_),
+            "volume": float(volume),
+            "price": float(price),
+            "profit": float(profit),
+            "swap": float(swap),
+            "commission": float(commission),
+            "time": datetime.datetime.utcfromtimestamp(int(time_ms) / 1000),
+            "magic": int(magic),
+            "symbol": symbol[:64],
+            "at": datetime.datetime.utcnow(),
+        })
+
+    def handle_account(self, kind: str, owner_id: int, login: int, f: List[str]):
+        """balance|equity|currency of a Master (V2ACC, owner = manager) or Slave (ACC, owner = license) account.
+        The writer keeps the last one of each hour."""
+        if len(f) != 3 or _float(f[0]) is None or _float(f[1]) is None:
+            self._warn(f"acc-format:{kind}", f"Malformed account message: {'|'.join(f)[:80]}")
+            return
+        now = datetime.datetime.utcnow()
+        self.persist({
+            "kind": "account_snapshot",
+            "account": kind,
+            "owner_id": owner_id,
+            "login": login,
+            "hour": now.replace(minute=0, second=0, microsecond=0),
+            "balance": _float(f[0]),
+            "equity": _float(f[1]),
+            "currency": f[2][:8],
+            "at": now,
+        })
+
     def master_key_used(self, master_key: MasterKeyInfo):
         now = self.clock()
         last = self.key_used_at.get(master_key.id)
@@ -334,12 +397,14 @@ class HubCore:
         self.persist({"kind": "master_key_used", "id": master_key.id, "at": datetime.datetime.utcnow()})
 
     def handle_exec(self, f: List[str], portfolio_id: int, login: int):
-        """EXEC|login|-|uid|action|position_id|volume|price|retcode|seq from a Slave session: the portfolio and
-        the login are those of its license, not what the message says."""
-        if len(f) != 10:
+        """EXEC|login|-|uid|action|position_id|volume|price|retcode|seq[|profit] from a Slave session: the portfolio
+        and the login are those of its license, not what the message says. Slave 4.04+ adds the profit of the deal
+        (swap and commission included, "-" when it could not read it)."""
+        if len(f) not in (10, 11):
             self._warn("exec-size", f"Malformed EXEC: {'|'.join(f)[:120]}")
             return
-        _, _, _, uid, action, position_id, volume, price, retcode, seq = f
+        _, _, _, uid, action, position_id, volume, price, retcode, seq = f[:10]
+        profit = _float(f[10]) if len(f) == 11 else None
         # The slave reports the last seq it applied. It only measures this execution when that POS was
         # about the same position; a late entry through SNAP still counts, from the POS it missed. A refused
         # order or a copy held back by the lot limit is no execution: it has no latency.
@@ -360,6 +425,7 @@ class HubCore:
             "retcode": int(retcode),
             "seq": int(seq),
             "latency_ms": latency_ms,
+            "profit": profit,
             "at": datetime.datetime.utcnow(),
         })
 
@@ -743,15 +809,23 @@ class Writer(threading.Thread):
         try:
             _statement_timeout(session)
             rows: Dict[Tuple[int, int, int], models.MasterPosition] = {}  # Read once per batch
+            snapshots: Dict[tuple, models.AccountSnapshot] = {}
+            deals: set = set()
             executions = []
             for job in batch:
                 kind = job["kind"]
                 if kind == "execution":
-                    executions.append({**{k: v for k, v in job.items() if k not in ("kind", "at")}, "created_at": job["at"]})
+                    # One executemany needs the same keys in every row: a job from before profit existed has none
+                    executions.append({**{k: v for k, v in job.items() if k not in ("kind", "at")},
+                                       "profit": job.get("profit"), "created_at": job["at"]})
                 elif kind == "master_account":
                     self._write_master_account(session, job)
                 elif kind == "master_key_used":
                     session.query(models.MasterKey).filter_by(id=job["id"]).update({"last_used_at": job["at"]})
+                elif kind == "master_deal":
+                    self._write_deal(session, job, deals)
+                elif kind == "account_snapshot":
+                    self._write_snapshot(session, job, snapshots)
                 else:
                     self._write_position(session, job, rows)
             if executions:
@@ -792,6 +866,26 @@ class Writer(threading.Thread):
         session.add(models.Signal(
             master_position_id=row.id, reason=job["reason"], type=job["type"], volume=job["volume"],
             price_open=job["price_open"], sl=job["sl"], tp=job["tp"], raw=job["raw"], received_at=at))
+
+    @staticmethod
+    def _write_deal(session, job: dict, seen: set):
+        key = (job["manager_id"], job["master_login"], job["deal_id"])
+        if key in seen or session.query(models.MasterDeal.id).filter_by(
+                manager_id=key[0], master_login=key[1], deal_id=key[2]).first() is not None:
+            return  # Resent after a reconnection
+        seen.add(key)
+        session.add(models.MasterDeal(**{k: v for k, v in job.items() if k not in ("kind", "at")}, received_at=job["at"]))
+
+    @staticmethod
+    def _write_snapshot(session, job: dict, rows: Dict[tuple, models.AccountSnapshot]):
+        key = (job["account"], job["owner_id"], job["login"], job["hour"])
+        row = rows.get(key) or session.query(models.AccountSnapshot).filter_by(
+            kind=key[0], owner_id=key[1], login=key[2], hour=key[3]).one_or_none()
+        if row is None:
+            row = models.AccountSnapshot(kind=key[0], owner_id=key[1], login=key[2], hour=key[3])
+            session.add(row)
+        rows[key] = row
+        row.balance, row.equity, row.currency, row.updated_at = job["balance"], job["equity"], job["currency"], job["at"]
 
     @staticmethod
     def _write_master_account(session, job: dict):

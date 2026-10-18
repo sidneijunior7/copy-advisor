@@ -35,6 +35,7 @@ POD_STATUSES = ("starting", "running", "login_failed", "key_refused", "error", "
 
 # Characters that would break a line of MT5's start.ini or .set
 ONE_LINE = r"^[^\r\n\x00]*$"
+MAP_PATTERN = r"^[^\r\n\x00|]*$"  # A pipe would split the CFG line the hub sends the Slave
 
 
 class SlaveInputs(BaseModel):
@@ -47,8 +48,8 @@ class SlaveInputs(BaseModel):
     copy_sltp: Optional[bool] = None
     late_max_deviation_points: Optional[int] = Field(default=None, ge=0, le=10_000_000)
     slippage_points: Optional[int] = Field(default=None, ge=0, le=10_000_000)
-    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=ONE_LINE)
-    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=ONE_LINE)
+    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=MAP_PATTERN)
+    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=MAP_PATTERN)
 
 
 class HostingUpdate(BaseModel):
@@ -124,8 +125,9 @@ def slave_inputs(raw: Optional[str]) -> Dict[str, str]:
 def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, now: datetime.datetime,
            make_key: Callable[[models.License], str]) -> Tuple[models.HostedTerminal, bool]:
     """Hosts the license, or changes its hosting: (terminal, created). Creating needs the server and the password
-    and gives the license a new key (make_key). Inputs replace the license's settings. Any change restarts the
-    terminal. ValueError when creating without the server or the password."""
+    and gives the license a new key (make_key). Inputs replace the license's settings, which reach the running Slave
+    through the hub (CFG); a new server, password or on/off restarts the terminal. ValueError when creating
+    without the server or the password."""
     settings = json.dumps(changes.inputs.model_dump(exclude_none=True), sort_keys=True) if changes.inputs else None
     t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
     if t is None:
@@ -144,8 +146,8 @@ def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, 
         t.server, changed = changes.server, True
     if changes.password is not None:
         t.password_enc, changed = encrypt(f, changes.password), True
-    if settings is not None and settings != (lic.settings or "{}"):
-        lic.settings, changed = settings, True
+    if settings is not None:
+        lic.settings = settings
     if changes.enabled is not None and changes.enabled != t.enabled:
         t.enabled, changed = changes.enabled, True
     if changed:
@@ -154,16 +156,6 @@ def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, 
         if t.pod_id is not None:
             t.status, t.status_detail, t.status_at = "starting", None, now
     return t, False
-
-
-def restart_for(db: Session, license_id: int, now: datetime.datetime):
-    """The license's settings changed: its hosted terminal, if it has one, restarts with them."""
-    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == license_id).first()
-    if t is not None:
-        t.config_version += 1
-        t.updated_at = now
-        if t.pod_id is not None and t.enabled:
-            t.status, t.status_detail, t.status_at = "starting", None, now
 
 
 def pod_online(pod: Optional[models.HostedPod], now: datetime.datetime) -> bool:

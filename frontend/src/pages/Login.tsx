@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { ArrowRight, Lock, Mail } from 'lucide-react';
@@ -9,8 +10,8 @@ import { Field, Input } from '../components/ui/Field';
 
 type LoginForm = { email: string; password: string };
 
-const loginError = (err: any): string => {
-    if (!err.response) return 'Não foi possível conectar ao servidor. Tente novamente.';
+const loginError = (err: unknown): string => {
+    if (!isAxiosError(err) || !err.response) return 'Não foi possível conectar ao servidor. Tente novamente.';
     if (err.response.status === 401) return 'Email ou senha inválidos.';
     if (err.response.status === 403) return 'Esta conta está suspensa. Fale com o suporte.';
     if (err.response.status === 429) return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
@@ -31,7 +32,7 @@ export default function Login() {
             const res = await api.post('/token', formData);
             login(res.data.access_token);
             navigate('/dashboard');
-        } catch (err: any) {
+        } catch (err) {
             setError('root', { message: loginError(err) });
         }
     };
