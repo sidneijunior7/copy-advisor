@@ -17,7 +17,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Callable, Dict, List, Literal, Optional, Tuple
 
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, Field
@@ -34,7 +34,7 @@ MAX_CAPACITY = 200
 POD_STATUSES = ("starting", "running", "login_failed", "key_refused", "error", "restarting", "stopped")
 
 # Characters that would break a line of MT5's start.ini or .set
-_LINE = r"^[^\r\n\x00]*$"
+ONE_LINE = r"^[^\r\n\x00]*$"
 
 
 class SlaveInputs(BaseModel):
@@ -47,13 +47,13 @@ class SlaveInputs(BaseModel):
     copy_sltp: Optional[bool] = None
     late_max_deviation_points: Optional[int] = Field(default=None, ge=0, le=10_000_000)
     slippage_points: Optional[int] = Field(default=None, ge=0, le=10_000_000)
-    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=_LINE)
-    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=_LINE)
+    symbol_map: Optional[str] = Field(default=None, max_length=500, pattern=ONE_LINE)
+    suffix_map: Optional[str] = Field(default=None, max_length=200, pattern=ONE_LINE)
 
 
 class HostingUpdate(BaseModel):
     server: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r"^[\w .\-]+$")
-    password: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=_LINE)  # Left out: unchanged
+    password: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=ONE_LINE)  # Left out: unchanged
     enabled: Optional[bool] = None
     inputs: Optional[SlaveInputs] = None
 
@@ -96,7 +96,7 @@ def encrypt(f: Fernet, value: str) -> str:
 
 def slave_inputs(raw: Optional[str]) -> Dict[str, str]:
     """Stored inputs as the Slave's .set lines (input name -> value)."""
-    inputs = SlaveInputs(**json.loads(raw or "{}"))
+    inputs = SlaveInputs(**json.loads(raw or "{}"))  # licenses.settings
     out = {}
     if inputs.sizing_mode is not None:
         out["inp_sizing_mode"] = str(("factor", "balance", "equity").index(inputs.sizing_mode))
@@ -119,6 +119,51 @@ def slave_inputs(raw: Optional[str]) -> Dict[str, str]:
     if inputs.suffix_map is not None:
         out["inp_suffix_map"] = inputs.suffix_map
     return out
+
+
+def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, now: datetime.datetime,
+           make_key: Callable[[models.License], str]) -> Tuple[models.HostedTerminal, bool]:
+    """Hosts the license, or changes its hosting: (terminal, created). Creating needs the server and the password
+    and gives the license a new key (make_key). Inputs replace the license's settings. Any change restarts the
+    terminal. ValueError when creating without the server or the password."""
+    settings = json.dumps(changes.inputs.model_dump(exclude_none=True), sort_keys=True) if changes.inputs else None
+    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    if t is None:
+        if not changes.server or not changes.password:
+            raise ValueError("Informe o servidor da corretora e a senha da conta")
+        if settings is not None:
+            lic.settings = settings
+        t = models.HostedTerminal(license_id=lic.id, server=changes.server, password_enc=encrypt(f, changes.password),
+                                  license_key_enc=encrypt(f, make_key(lic)), inputs="{}",
+                                  enabled=changes.enabled is not False, config_version=1, status="pending",
+                                  created_at=now, updated_at=now)
+        db.add(t)
+        return t, True
+    changed = False
+    if changes.server is not None and changes.server != t.server:
+        t.server, changed = changes.server, True
+    if changes.password is not None:
+        t.password_enc, changed = encrypt(f, changes.password), True
+    if settings is not None and settings != (lic.settings or "{}"):
+        lic.settings, changed = settings, True
+    if changes.enabled is not None and changes.enabled != t.enabled:
+        t.enabled, changed = changes.enabled, True
+    if changed:
+        t.config_version += 1
+        t.updated_at = now
+        if t.pod_id is not None:
+            t.status, t.status_detail, t.status_at = "starting", None, now
+    return t, False
+
+
+def restart_for(db: Session, license_id: int, now: datetime.datetime):
+    """The license's settings changed: its hosted terminal, if it has one, restarts with them."""
+    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == license_id).first()
+    if t is not None:
+        t.config_version += 1
+        t.updated_at = now
+        if t.pod_id is not None and t.enabled:
+            t.status, t.status_detail, t.status_at = "starting", None, now
 
 
 def pod_online(pod: Optional[models.HostedPod], now: datetime.datetime) -> bool:
@@ -144,7 +189,7 @@ def terminal_out(t: models.HostedTerminal, now: datetime.datetime, connected: bo
     """Never the password nor the key."""
     st, detail = state(t, now, connected)
     return {"license_id": t.license_id, "server": t.server, "enabled": t.enabled,
-            "inputs": json.loads(t.inputs or "{}"), "state": st, "detail": detail, "status_at": t.status_at,
+            "inputs": json.loads(t.license.settings or "{}"), "state": st, "detail": detail, "status_at": t.status_at,
             "pod": t.pod.name if t.pod else None, "created_at": t.created_at, "updated_at": t.updated_at}
 
 
@@ -199,7 +244,7 @@ def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: da
                 entry.update(server=t.server, login=t.license.client_mt5_login,
                              password=f.decrypt(t.password_enc.encode()).decode(),
                              license_key=f.decrypt(t.license_key_enc.encode()).decode(),
-                             inputs=slave_inputs(t.inputs))
+                             inputs=slave_inputs(t.license.settings))
             except InvalidToken:
                 t.status, t.status_detail, t.status_at = "error", "Credenciais ilegíveis: o HOSTING_SECRET mudou", now
                 entry["enabled"] = False

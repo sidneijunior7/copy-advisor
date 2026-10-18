@@ -23,6 +23,8 @@ class User(Base):
     password_hash = Column(String(255))
     role = Column(String(50), default="CLIENT") # MANAGER, CLIENT, TDM_DEV
     status = Column(String(20), default="active") # active, frozen, archived
+    name = Column(String(100), nullable=True) # Shown to the other side: a client's manager, a manager's clients
+    email_verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -48,6 +50,7 @@ class Portfolio(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String(100))
+    client_limits = Column(Text) # JSON (clients.ClientLimits): what a client may set on its own licenses
 
     owner = relationship("User", back_populates="portfolios")
     strategies = relationship("Strategy", secondary=portfolio_items, back_populates="portfolios")
@@ -69,9 +72,15 @@ class License(Base):
     key_prefix = Column(String(16), nullable=True)
     expires_at = Column(DateTime, nullable=True) # UTC; NULL = no expiry. Expired = revoked for the hub
     revoked_at = Column(DateTime, nullable=True) # UTC, set when is_active goes false: positions opened after it are never sent
+    # The client account it belongs to, linked with a one-time access code (clients.py)
+    client_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    claim_hash = Column(String(64), nullable=True, unique=True, index=True) # Pending access code, hashed; cleared once used
+    claim_expires_at = Column(DateTime, nullable=True)
+    settings = Column(Text) # JSON (hosting.SlaveInputs): how this license's Slave copies
 
     portfolio = relationship("Portfolio", back_populates="licenses")
     strategy = relationship("Strategy", back_populates="licenses")
+    client = relationship("User", foreign_keys=[client_user_id])
 
 class MasterKey(Base):
     """Key a Master EA authenticates with. A manager can hold several (one per Master/VPS) and revoke each."""

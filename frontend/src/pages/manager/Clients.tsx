@@ -2,10 +2,11 @@
 import { Fragment, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'react-router-dom';
-import { Ban, CalendarX, Check, KeyRound, Pencil, RefreshCw, RotateCcw, Search, Server, ShieldCheck, Users, X } from 'lucide-react';
+import { Ban, CalendarX, Check, KeyRound, Pencil, RefreshCw, RotateCcw, Search, Server, ShieldCheck, UserRound, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type HostedTerminal, type HostingList, type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
+import ClientLinkPanel from '../../components/ClientLinkPanel';
 import EmptyState from '../../components/EmptyState';
 import HostingPanel, { HostingBadge } from '../../components/HostingPanel';
 import InlineConfirm from '../../components/InlineConfirm';
@@ -22,7 +23,7 @@ type LicenseChanges = { max_lots?: number; is_active?: boolean; expires_at?: str
 // One inline action at a time across the list: the limit is edited in its cell, the rest in a panel under the row
 type RowAction =
     | { kind: 'limit' | 'expiry'; id: number; value: string }
-    | { kind: 'revoke' | 'rotate' | 'hosting'; id: number };
+    | { kind: 'revoke' | 'rotate' | 'hosting' | 'client'; id: number };
 
 const formatLots = (value: number) => Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
@@ -378,6 +379,11 @@ export default function Clients() {
                                                     <p className="text-xs text-muted-foreground">
                                                         {access.kind} <span className="text-foreground/80">{access.name}</span>
                                                     </p>
+                                                    {l.client && (
+                                                        <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground" title={l.client.email}>
+                                                            <UserRound className="size-3" /> {l.client.name ?? l.client.email}
+                                                        </p>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="text-right font-mono tabular-nums">
                                                     {mine?.kind === 'limit' ? (
@@ -482,6 +488,17 @@ export default function Clients() {
                                                     )}
                                                 </TableCell>
                                                 <TableCell className="text-right">
+                                                    {canHaveKey && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => setAction({ kind: 'client', id: l.id })}
+                                                            disabled={mine?.kind === 'client'}
+                                                            aria-label={`Acesso do cliente da conta ${l.client_mt5_login} ao painel`}
+                                                        >
+                                                            <UserRound /> Cliente
+                                                        </Button>
+                                                    )}
                                                     {canHaveKey && (hosting?.available || hosted) && (
                                                         <Button
                                                             variant="ghost"
@@ -546,6 +563,12 @@ export default function Clients() {
                                                                     </Button>
                                                                 </div>
                                                             </form>
+                                                        ) : panel?.kind === 'client' ? (
+                                                            <ClientLinkPanel
+                                                                license={l}
+                                                                onChange={updated => setLicenses(current => current.map(x => (x.id === l.id ? updated : x)))}
+                                                                onClose={() => setAction(null)}
+                                                            />
                                                         ) : panel?.kind === 'hosting' ? (
                                                             <HostingPanel
                                                                 license={l}

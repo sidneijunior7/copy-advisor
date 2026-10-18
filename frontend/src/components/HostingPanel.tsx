@@ -2,28 +2,16 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Check, Power, PowerOff, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type HostedTerminal, type HostingInputs, type HostingState, type License } from '../api';
+import api, { type HostedTerminal, type HostingInputs, type License } from '../api';
 import InlineConfirm from './InlineConfirm';
-import { Badge, type BadgeProps } from './ui/Badge';
+import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Field, Input, Select } from './ui/Field';
+import { HOSTING_STATES } from '../lib/labels';
 import { apiError } from '../lib/utils';
 
-const STATES: Record<HostingState, { label: string; variant: BadgeProps['variant'] }> = {
-    pending: { label: 'Na fila', variant: 'muted' },
-    starting: { label: 'Iniciando', variant: 'primary' },
-    running: { label: 'Copiando', variant: 'success' },
-    login_failed: { label: 'Login recusado', variant: 'destructive' },
-    key_refused: { label: 'Chave recusada', variant: 'destructive' },
-    error: { label: 'Erro', variant: 'destructive' },
-    restarting: { label: 'Reiniciando', variant: 'warning' },
-    stopped: { label: 'Parado', variant: 'muted' },
-    disabled: { label: 'Desligado', variant: 'muted' },
-    pod_offline: { label: 'Pod fora do ar', variant: 'destructive' },
-};
-
 export function HostingBadge({ terminal }: { terminal: HostedTerminal }) {
-    const { label, variant } = STATES[terminal.state] ?? { label: terminal.state, variant: 'muted' };
+    const { label, variant } = HOSTING_STATES[terminal.state] ?? { label: terminal.state, variant: 'muted' };
     return <Badge variant={variant} title={terminal.detail ?? undefined}>{label}</Badge>;
 }
 

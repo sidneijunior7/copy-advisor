@@ -6,9 +6,9 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './Layouts/AppLayout';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import NotFound from './pages/NotFound';
 import DevDashboard from './pages/DevDashboard';
-import ClientDashboard from './pages/ClientDashboard';
 
 // Manager Pages
 import ManagerOverview from './pages/manager/ManagerOverview';
@@ -17,6 +17,11 @@ import Portfolios from './pages/manager/Portfolios';
 import Clients from './pages/manager/Clients';
 import Connections from './pages/manager/Connections';
 import Install from './pages/manager/Install';
+
+// Client Pages
+import MyLicenses from './pages/client/MyLicenses';
+import LicenseDetail from './pages/client/LicenseDetail';
+import ClientInstall from './pages/client/ClientInstall';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -48,6 +53,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/cadastro" element={<Register />} />
 
             {/* TDM_DEV Routes */}
             <Route element={<ProtectedRoute allowedRoles={['TDM_DEV']} />}>
@@ -70,8 +76,10 @@ function App() {
 
             {/* Client Routes */}
             <Route element={<ProtectedRoute allowedRoles={['CLIENT']} />}>
-              <Route element={<AppLayout />}>
-                <Route path="/client" element={<ClientDashboard />} />
+              <Route path="/client" element={<AppLayout />}>
+                <Route index element={<MyLicenses />} />
+                <Route path="licenses/:id" element={<LicenseDetail />} />
+                <Route path="install" element={<ClientInstall />} />
               </Route>
             </Route>
 

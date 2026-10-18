@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, Download, Layers, LayoutDashboard, LogOut, Menu, Plug, Radio, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Download, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -29,7 +29,15 @@ const navByRole: Record<string, NavSection[]> = {
         },
     ],
     TDM_DEV: [{ title: 'Administração', items: [{ path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true }] }],
-    CLIENT: [{ title: 'Conta', items: [{ path: '/client', label: 'Meus Sinais', icon: Radio, end: true }] }],
+    CLIENT: [
+        {
+            title: 'Conta',
+            items: [
+                { path: '/client', label: 'Minhas licenças', icon: KeyRound, end: true },
+                { path: '/client/install', label: 'Instalação', icon: Download },
+            ],
+        },
+    ],
 };
 
 const roleLabels: Record<string, string> = {

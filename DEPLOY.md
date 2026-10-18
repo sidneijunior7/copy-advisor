@@ -143,6 +143,24 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
 
 **Teste local:** `tools/spike`, com `docker compose --profile hosting up -d tdm-spike-hosted`. O pod local usa a chave `pod_spike_local`, criada pelo `seed.py`.
 
+## Contas de cliente
+
+- **Cadastro aberto** em `/cadastro`, com até `SIGNUP_MAX_PER_HOUR` (5) cadastros por IP por hora. A conta começa vazia.
+- **Vínculo com a licença:** em Clientes, o gestor clica em **Cliente → Gerar código de acesso**.
+  - O código vale uma vez e por 7 dias; o banco guarda só o hash.
+  - O cliente digita o código em **Minhas licenças**.
+  - Códigos errados contam no limite de 10 tentativas por IP a cada 10 minutos.
+  - Gerar outro código invalida o anterior, e usar o código leva a licença para a conta de quem o usou.
+- **O que o cliente vê e faz,** só nas licenças dele:
+  - o estado da cópia (conta hospedada ou EA no computador, pelo hub), o limite e a validade;
+  - as cópias, com o resultado em diferença de preço, e as que falharam;
+  - hospedar a própria conta (o gestor não vê a senha);
+  - gerar a chave do EA no computador (licenças hospedadas não, porque a chave fica com o pod);
+  - ajustar o tamanho e o SL/TP dentro dos limites do portfólio.
+- **Limites dos ajustes:** cada portfólio define os seus em **Portfólios → limites dos clientes**. O padrão é fator de 0,01 a 1 e todos os modos. O limite de lotes da licença vale por cima de tudo.
+- **Onde ficam os ajustes:** na licença (`licenses.settings`). O terminal hospedado reinicia com eles; o EA no computador do cliente ainda usa as entradas locais.
+- A migração `0009` cria essas colunas, move os ajustes que estavam em `hosted_terminals.inputs` para a licença e dá como verificados os emails das contas que já existiam.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.

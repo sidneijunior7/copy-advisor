@@ -8,6 +8,7 @@ import api, { type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
+import PortfolioLimits from '../../components/PortfolioLimits';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Select } from '../../components/ui/Field';
@@ -231,6 +232,10 @@ export default function Portfolios() {
                                     )}
                                 </div>
 
+                                <PortfolioLimits
+                                    portfolio={p}
+                                    onSaved={limits => setPortfolios(current => current.map(x => (x.id === p.id ? { ...x, client_limits: limits } : x)))}
+                                />
                             </Card>
                         );
                     })}

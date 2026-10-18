@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -13,6 +14,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, H
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 import uvicorn
@@ -22,6 +24,7 @@ import zmq
 from pydantic import BaseModel, Field
 
 # Internal Imports
+import clients
 import database
 import hosting
 import keys
@@ -408,6 +411,9 @@ def license_out(lic: models.License, key: Optional[str] = None) -> dict:
         "client_mt5_login": lic.client_mt5_login, "max_lots": lic.max_lots, "is_active": lic.is_active,
         "created_at": lic.created_at, "expires_at": lic.expires_at, "revoked_at": lic.revoked_at,
         "key_prefix": lic.key_prefix, "has_key": lic.key_hash is not None,
+        "client": {"email": lic.client.email, "name": lic.client.name} if lic.client else None,
+        "claim_expires_at": lic.claim_expires_at if lic.claim_hash else None,
+        "settings": clients.settings_of(lic),
     }
     if key is not None:
         out["license_key"] = key
@@ -581,7 +587,7 @@ def health_check(db: Session = Depends(get_session)):
 def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     check_not_limited("login", request)
     logger.info(f"Login attempt for user: {form_data.username}")
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    user = db.query(models.User).filter(func.lower(models.User.email) == form_data.username.strip().lower()).first()
 
     if not user:
         failure_limiter.fail(f"login:{client_ip(request)}")
@@ -691,7 +697,8 @@ def list_portfolios(current_user: models.User = Depends(get_current_user), db: S
             "strategies": [
                 {"id": s.id, "name": s.name, "magic_number": s.magic_number}
                 for s in p.strategies
-            ]
+            ],
+            "client_limits": clients.limits_of(p).model_dump(),
         })
     return result
 
@@ -762,14 +769,18 @@ def list_connections(current_user: models.User = Depends(get_current_user), db: 
 
 @app.get("/ea/releases")
 def list_ea_releases(current_user: models.User = Depends(get_current_user)):
-    """The Master and Slave EAs a manager installs, and hands to clients with their license key."""
-    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    return ea_releases()
+    """The Master and Slave EAs a manager installs; a client gets the Slave only."""
+    kinds = ea_kinds_for(current_user)
+    return {kind: release for kind, release in ea_releases().items() if kind in kinds}
+
+def ea_kinds_for(user: models.User) -> Tuple[str, ...]:
+    if user.role == "MANAGER": return EA_KINDS
+    if user.role == "CLIENT": return ("slave",)
+    raise HTTPException(status_code=403)
 
 @app.get("/ea/releases/{kind}")
 def download_ea(kind: str, current_user: models.User = Depends(get_current_user)):
-    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
-    release = ea_releases().get(kind)
+    release = ea_releases().get(kind) if kind in ea_kinds_for(current_user) else None
     if release is None: raise HTTPException(status_code=404)
     # no-store: a browser would otherwise hand the cached file to a later request without the token
     return FileResponse(os.path.join(EA_DIR, release["file"]), media_type="application/octet-stream",
@@ -952,39 +963,19 @@ def update_hosting(license_id: int, changes: hosting.HostingUpdate, current_user
     lic = owned_license(license_id, current_user, db)
     if lic.portfolio_id is None:
         raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
+    return save_hosting(lic, changes, f, current_user, db)
+
+def save_hosting(lic: models.License, changes: hosting.HostingUpdate, f, user: models.User, db: Session):
     now = datetime.datetime.utcnow()
-    inputs = json.dumps(changes.inputs.model_dump(exclude_none=True), sort_keys=True) if changes.inputs else None
-    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
-    new_key = t is None
-    if new_key:
-        if not changes.server or not changes.password:
-            raise HTTPException(status_code=422, detail="Informe o servidor da corretora e a senha da conta")
-        t = models.HostedTerminal(license_id=lic.id, server=changes.server,
-                                  password_enc=hosting.encrypt(f, changes.password),
-                                  license_key_enc=hosting.encrypt(f, set_license_key(lic)), inputs=inputs or "{}",
-                                  enabled=changes.enabled is not False, config_version=1, status="pending",
-                                  created_at=now, updated_at=now)
-        db.add(t)
-    else:
-        changed = False
-        if changes.server is not None and changes.server != t.server:
-            t.server, changed = changes.server, True
-        if changes.password is not None:
-            t.password_enc, changed = hosting.encrypt(f, changes.password), True
-        if inputs is not None and inputs != (t.inputs or "{}"):
-            t.inputs, changed = inputs, True
-        if changes.enabled is not None and changes.enabled != t.enabled:
-            t.enabled, changed = changes.enabled, True
-        if changed:
-            t.config_version += 1
-            t.updated_at = now
-            if t.pod_id is not None:
-                t.status, t.status_detail, t.status_at = "starting", None, now
+    try:
+        t, created = hosting.upsert(db, lic, changes, f, now, set_license_key)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     db.refresh(t)
-    logger.info(f"Hosting of license {lic.id} {'created' if new_key else 'updated'} by manager {current_user.id}: "
+    logger.info(f"Hosting of license {lic.id} {'created' if created else 'updated'} by {user.role.lower()} {user.id}: "
                 f"server={t.server} enabled={t.enabled} version={t.config_version}")
-    if new_key:
+    if created:
         notify_hub()  # The previous key stops working at once
     return hosting.terminal_out(t, now)
 
@@ -992,13 +983,212 @@ def update_hosting(license_id: int, changes: hosting.HostingUpdate, current_user
 def remove_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Stops hosting: the pod closes the terminal and deletes its folder at its next sync. Nobody else has the
     license key the pod used: generate a new one to run the Slave elsewhere."""
-    lic = owned_license(license_id, current_user, db)
+    return delete_hosting(owned_license(license_id, current_user, db), current_user, db)
+
+def delete_hosting(lic: models.License, user: models.User, db: Session):
     t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
     if t is None: raise HTTPException(status_code=404)
     db.delete(t)
     db.commit()
-    logger.info(f"Hosting of license {lic.id} removed by manager {current_user.id}")
+    logger.info(f"Hosting of license {lic.id} removed by {user.role.lower()} {user.id}")
     return {"message": "Hospedagem removida"}
+
+# --- Client accounts (clients.py) ---
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Sign-ups per client IP per hour: an open form is the cheapest way to fill the users table
+signup_limiter = FailureLimiter(int(os.getenv("SIGNUP_MAX_PER_HOUR", "5")), 3600)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=100, pattern=hosting.ONE_LINE)
+
+
+class ClaimRequest(BaseModel):
+    code: str = Field(min_length=4, max_length=40)
+
+
+class ClientHosting(BaseModel):
+    """What a client sets on its own hosted terminal; the Slave settings go through /settings."""
+    server: Optional[str] = hosting.HostingUpdate.model_fields["server"]
+    password: Optional[str] = hosting.HostingUpdate.model_fields["password"]
+    enabled: Optional[bool] = None
+
+
+@app.post("/register")
+def register(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    """Open sign-up for clients, logged in at once. Licenses are linked afterwards with an access code."""
+    ip = client_ip(request)
+    if signup_limiter.blocked(f"signup:{ip}"):
+        raise HTTPException(status_code=429, detail="Muitos cadastros a partir desta rede. Tente de novo mais tarde.")
+    email = data.email.strip().lower()
+    if not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=422, detail="Email inválido")
+    if auth.validate_password(data.password):
+        raise HTTPException(status_code=422, detail=f"A senha precisa ter de {auth.PASSWORD_MIN_LENGTH} a "
+                                                    f"{auth.PASSWORD_MAX_BYTES} caracteres")
+    signup_limiter.fail(f"signup:{ip}")
+    if db.query(models.User).filter(func.lower(models.User.email) == email).first():
+        raise HTTPException(status_code=409, detail="Este email já tem conta: entre com ele")
+    user = models.User(email=email, name=data.name.strip(), password_hash=auth.get_password_hash(data.password),
+                       role="CLIENT", status="active")
+    db.add(user)
+    db.commit()
+    logger.info(f"Client {user.id} signed up")
+    return {"access_token": auth.create_access_token(data={"sub": user.email, "role": user.role}),
+            "token_type": "bearer"}
+
+def client_only(user: models.User):
+    if user.role != "CLIENT": raise HTTPException(status_code=403)
+
+def own_license(license_id: int, user: models.User, db: Session) -> models.License:
+    client_only(user)
+    lic = db.get(models.License, license_id)
+    if lic is None or lic.client_user_id != user.id: raise HTTPException(status_code=404)
+    return lic
+
+def my_license_view(lic: models.License, db: Session) -> dict:
+    terminal = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    session = next((s for s in (fetch_hub_sessions() or [])
+                    if s.get("kind") == "slave" and s.get("license_id") == lic.id), None)
+    return clients.license_view(lic, terminal, session, datetime.datetime.utcnow())
+
+@app.get("/me/licenses")
+def list_my_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The client's licenses, with how each one is copying right now."""
+    client_only(current_user)
+    now = datetime.datetime.utcnow()
+    lics = db.query(models.License).filter(models.License.client_user_id == current_user.id).order_by(models.License.id).all()
+    ids = [l.id for l in lics]
+    terminals = {t.license_id: t for t in db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id.in_(ids))} if ids else {}
+    sessions = {s.get("license_id"): s for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if ids else {}
+    available = hosting.cipher() is not None
+    return {"hosting_available": available, "servers": hosting.known_servers(db, now) if available else [],
+            "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) for l in lics]}
+
+@app.post("/me/licenses/claim")
+def claim_license(data: ClaimRequest, request: Request, current_user: models.User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """Links the license behind a manager's access code to this client. The code works once."""
+    client_only(current_user)
+    check_not_limited("claim", request)
+    lic = clients.find_claim(db, data.code, datetime.datetime.utcnow())
+    if lic is None:
+        failure_limiter.fail(f"claim:{client_ip(request)}")
+        raise HTTPException(status_code=404, detail="Código inválido ou vencido. Peça um novo a quem vendeu a licença.")
+    lic.client_user_id, lic.claim_hash, lic.claim_expires_at = current_user.id, None, None
+    db.commit()
+    db.refresh(lic)
+    logger.info(f"License {lic.id} claimed by client {current_user.id}")
+    return my_license_view(lic, db)
+
+@app.get("/me/licenses/{license_id}/copies")
+def list_my_copies(license_id: int, days: int = 30, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    lic = own_license(license_id, current_user, db)
+    return clients.copies(db, lic, days, datetime.datetime.utcnow())
+
+@app.get("/me/licenses/{license_id}/issues")
+def list_my_issues(license_id: int, days: int = 7, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Copies this license's Slave could not make, or made smaller (same as the manager's /me/copy-issues)."""
+    lic = own_license(license_id, current_user, db)
+    since = datetime.datetime.utcnow() - datetime.timedelta(days=max(1, min(days, 90)))
+    rows = (db.query(models.Execution)
+            .filter(models.Execution.portfolio_id == lic.portfolio_id, models.Execution.mt5_login == lic.client_mt5_login,
+                    models.Execution.created_at >= since, models.Execution.retcode.notin_(models.EXECUTION_DONE))
+            .order_by(models.Execution.created_at.desc(), models.Execution.id.desc()).limit(200).all())
+    return [{"at": r.created_at, "uid": r.uid, "action": r.action, "volume": r.volume, "retcode": r.retcode} for r in rows]
+
+@app.put("/me/licenses/{license_id}/settings")
+def update_my_settings(license_id: int, data: clients.ClientSettings, current_user: models.User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """The client's Slave settings, inside the limits of the portfolio. A hosted terminal restarts with them."""
+    lic = own_license(license_id, current_user, db)
+    error = clients.check_settings(data, clients.limits_of(lic.portfolio))
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+    if clients.apply_settings(lic, data.model_dump()):
+        hosting.restart_for(db, lic.id, datetime.datetime.utcnow())
+        db.commit()
+        logger.info(f"License {lic.id}: settings changed by client {current_user.id}")
+    db.refresh(lic)
+    return my_license_view(lic, db)
+
+@app.put("/me/licenses/{license_id}/hosting")
+def update_my_hosting(license_id: int, changes: ClientHosting, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """The client hosts its own license: the manager never sees the broker password."""
+    f = hosting_cipher()
+    lic = own_license(license_id, current_user, db)
+    return save_hosting(lic, hosting.HostingUpdate(**changes.model_dump()), f, current_user, db)
+
+@app.delete("/me/licenses/{license_id}/hosting")
+def remove_my_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return delete_hosting(own_license(license_id, current_user, db), current_user, db)
+
+@app.post("/me/licenses/{license_id}/key")
+def new_my_key(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A key for the Slave on the client's own computer, shown once; the previous one stops working."""
+    lic = own_license(license_id, current_user, db)
+    if db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first():
+        raise HTTPException(status_code=409, detail="Esta licença roda no nosso servidor e a chave fica com ele. "
+                                                    "Remova a hospedagem para usar o EA no seu computador.")
+    key = set_license_key(lic)
+    db.commit()
+    logger.info(f"License {lic.id} got a new key ({lic.key_prefix}) from client {current_user.id}")
+    notify_hub()
+    return {"license_key": key, "key_prefix": lic.key_prefix}
+
+@app.post("/licenses/{license_id}/claim-code")
+def create_claim_code(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A one-time code the client types after signing up to get this license; it replaces any earlier code.
+    Claiming a license linked to someone else moves it to the new account."""
+    lic = owned_license(license_id, current_user, db)
+    if lic.portfolio_id is None:
+        raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
+    code, expires_at = clients.set_claim(lic, datetime.datetime.utcnow())
+    db.commit()
+    logger.info(f"License {lic.id}: access code created by manager {current_user.id}")
+    return {"code": code, "expires_at": expires_at}
+
+@app.delete("/licenses/{license_id}/client")
+def unlink_client(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The license leaves the client's account (copying goes on: the Slave does not depend on it)."""
+    lic = owned_license(license_id, current_user, db)
+    lic.client_user_id, lic.claim_hash, lic.claim_expires_at = None, None, None
+    db.commit()
+    db.refresh(lic)
+    logger.info(f"License {lic.id}: client unlinked by manager {current_user.id}")
+    return license_out(lic)
+
+@app.put("/licenses/{license_id}/settings")
+def update_license_settings(license_id: int, data: hosting.SlaveInputs, current_user: models.User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """The manager sets any Slave setting of the license, outside the portfolio's client limits too."""
+    lic = owned_license(license_id, current_user, db)
+    new = json.dumps(data.model_dump(exclude_none=True), sort_keys=True)
+    if new != (lic.settings or "{}"):
+        lic.settings = new
+        hosting.restart_for(db, lic.id, datetime.datetime.utcnow())
+        db.commit()
+        logger.info(f"License {lic.id}: settings changed by manager {current_user.id}")
+    db.refresh(lic)
+    return license_out(lic)
+
+@app.put("/portfolios/{portfolio_id}/limits")
+def update_client_limits(portfolio_id: int, data: clients.ClientLimits, current_user: models.User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """What clients may set on this portfolio's licenses. Settings already saved keep working until changed."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id,
+                                                  models.Portfolio.user_id == current_user.id).first()
+    if not portfolio: raise HTTPException(status_code=404)
+    portfolio.client_limits = data.model_dump_json()
+    db.commit()
+    return clients.limits_of(portfolio).model_dump()
 
 @app.post("/pods/sync")
 def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(get_db)):

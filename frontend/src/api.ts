@@ -45,6 +45,7 @@ export type Portfolio = {
     id: number;
     name: string;
     strategies: Pick<Strategy, 'id' | 'name' | 'magic_number'>[];
+    client_limits: ClientLimits;
 };
 
 export type License = {
@@ -60,6 +61,9 @@ export type License = {
     key_prefix: string | null;
     has_key: boolean;
     license_key?: string; // Plain Slave key: only in the response that creates it
+    client: { email: string; name: string | null } | null; // The client account it is linked to
+    claim_expires_at: string | null; // An access code is waiting to be used until then
+    settings: HostingInputs;
 };
 
 export type MasterKey = {
@@ -159,3 +163,58 @@ export type HostedTerminal = {
 
 // available: false while the server has no HOSTING_SECRET. servers: the broker servers the pods can log into
 export type HostingList = { available: boolean; servers: string[]; terminals: HostedTerminal[] };
+
+// What a portfolio's clients may set on their own licenses
+export type ClientLimits = {
+    factor_min: number;
+    factor_max: number;
+    sizing_modes: NonNullable<HostingInputs['sizing_mode']>[];
+    sltp_modes: NonNullable<HostingInputs['sltp_mode']>[];
+};
+
+// The Slave settings a client may change
+export type ClientSettings = {
+    sizing_mode: NonNullable<HostingInputs['sizing_mode']>;
+    lots_factor: number;
+    reference_capital: number | null;
+    sltp_mode: NonNullable<HostingInputs['sltp_mode']>;
+    symbol_map: string | null;
+    suffix_map: string | null;
+};
+
+// A license as its client sees it. hosting: the terminal we run for it; connection: its Slave on the hub now
+export type ClientLicense = {
+    id: number;
+    portfolio: { id: number; name: string | null };
+    manager: string | null;
+    mt5_login: number;
+    max_lots: number;
+    is_active: boolean;
+    valid: boolean; // Active and not expired
+    expires_at: string | null;
+    has_key: boolean;
+    key_prefix: string | null;
+    settings: { [K in keyof ClientSettings]: ClientSettings[K] | null };
+    limits: ClientLimits;
+    hosting: { server: string; enabled: boolean; state: HostingState; detail: string | null; status_at: string | null } | null;
+    connection: { ea_version: string | null; connected_at: number | null; active: boolean; last_ack_age_s: number | null } | null;
+};
+
+export type MyLicenses = { hosting_available: boolean; servers: string[]; licenses: ClientLicense[] };
+
+// One copy on the client's account, from the Slave's reports. result: close minus open price, signed by direction
+export type CopyRow = {
+    uid: string;
+    symbol: string | null;
+    type: 'buy' | 'sell' | null;
+    status: 'open' | 'closed' | 'failed';
+    opened_at: string;
+    closed_at: string | null;
+    volume: number;
+    open_price: number | null;
+    close_price: number | null;
+    result: number | null;
+    failures: number;
+};
+
+export type ClientIssue = { at: string; uid: string; action: string; volume: number | null; retcode: number };
