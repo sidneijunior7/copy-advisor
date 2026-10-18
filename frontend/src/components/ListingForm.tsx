@@ -19,6 +19,7 @@ type ListingFormData = {
     default_max_lots: string;
     min_capital: string;
     hosting_allowed: boolean;
+    show_backtest: boolean;
 };
 
 interface ListingFormProps {
@@ -45,6 +46,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
             default_max_lots: String(listing?.default_max_lots ?? 1),
             min_capital: listing?.min_capital != null ? String(listing.min_capital) : '',
             hosting_allowed: listing?.hosting_allowed ?? true,
+            show_backtest: listing?.show_backtest ?? false,
         },
     });
 
@@ -63,6 +65,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
                 default_max_lots: parseFloat(data.default_max_lots),
                 min_capital: data.min_capital === '' ? null : parseFloat(data.min_capital),
                 hosting_allowed: data.hosting_allowed,
+                show_backtest: data.show_backtest,
             });
             onSaved(res.data);
             toast.success('Anúncio salvo', { description: res.data.status === 'published' ? 'Já aparece assim no marketplace.' : 'Publique quando estiver pronto.' });
@@ -136,6 +139,16 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
                     <input type="checkbox" {...register('hosting_allowed')} /> Aceita conta hospedada
                 </label>
             </div>
+            <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" {...register('show_backtest')} />
+                <span>
+                    Mostrar o backtest do Trademetric Dash
+                    <span className="block text-xs text-muted-foreground">
+                        Aparece como backtest declarado, com o resultado ao vivo desenhado no cone de Monte Carlo dele. Precisa do portfólio
+                        vinculado ao Dash, em Portfólios.
+                    </span>
+                </span>
+            </label>
             <div className="flex justify-end gap-1">
                 <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancelar</Button>
                 <Button size="sm" loading={isSubmitting}>{!isSubmitting && <Check />} Salvar anúncio</Button>

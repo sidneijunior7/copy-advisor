@@ -13,6 +13,8 @@ creator then runs one EA, the Master, for both products.
   send_since on: the moment it was made, or up to 90 days before when the manager asked for the history.
 - A token the Dash refuses (revoked, or a plan without live tracking) stops the link; it is tried again every
   ERROR_RETRY_SECONDS, so fixing the plan on the Dash is enough. Other failures are tried again the next round.
+- With the shared key, the link also keeps a copy of the Dash portfolio's declared backtest (GET
+  /api/mirror/backtest), refreshed every BACKTEST_REFRESH_SECONDS, for the listing page (backtest.py).
 """
 import datetime
 import json
@@ -33,7 +35,9 @@ import models
 logger = logging.getLogger(__name__)
 
 INGEST_URL = os.getenv("DASH_INGEST_URL", "https://webrequest.trademetric.com.br/api/ingest")
+BACKTEST_URL = INGEST_URL.rsplit("/api/ingest", 1)[0] + "/api/mirror/backtest"
 MIRROR_KEY = os.getenv("DASH_MIRROR_KEY", "").strip()
+BACKTEST_REFRESH_SECONDS = 6 * 3600
 INTERVAL = int(os.getenv("DASH_BRIDGE_SECONDS", "30"))  # 0 turns the bridge off
 ERROR_RETRY_SECONDS = 3600
 BATCH = 100  # master_deals read per step, so at most this many items per request
@@ -60,6 +64,54 @@ def send(token: str, items: list) -> Tuple[int, str]:
         return 0, str(e)[:200]
 
 
+def fetch_backtest(token: str) -> Tuple[int, str]:
+    """GET the linked Dash portfolio's backtest: (HTTP status, body); status 0 when the Dash did not answer."""
+    req = urllib.request.Request(BACKTEST_URL, method="GET", headers={
+        "x-api-token": token, "x-mirror-key": MIRROR_KEY, "User-Agent": "TrademetricMirror/1"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.read(5_000_000).decode(errors="replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(500).decode(errors="replace")
+    except (urllib.error.URLError, OSError) as e:
+        return 0, str(e)[:200]
+
+
+def compact_backtest(body: str) -> dict:
+    """What the Mirror keeps of the Dash answer: the net result of each trade, in order, and what describes them."""
+    data = json.loads(body)
+    trades = [t for t in data.get("trades") or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
+    return {
+        "name": str((data.get("portfolio") or {}).get("name") or "")[:100],
+        "initial_balance": float(data.get("initial_balance") or 0),
+        "currency": (str(data["currency"])[:3] if data.get("currency") else None),
+        "strategies": [{"name": str(s.get("name") or "")[:100], "magic_number": s.get("magic_number")}
+                       for s in (data.get("strategies") or [])[:50] if isinstance(s, dict)],
+        "pnl": [round(float(t["pnl"]), 2) for t in trades],
+        "from": trades[0].get("t") if trades else None,
+        "to": trades[-1].get("t") if trades else None,
+        "truncated": bool(data.get("truncated")),
+    }
+
+
+def refresh_backtest(db: Session, link: models.DashLink, token: str, fetch: Callable[[str], Tuple[int, str]],
+                     now: datetime.datetime):
+    """Keeps a fresh copy of the backtest on the link; a failure keeps the last copy and says why."""
+    status, body = fetch(token)
+    link.backtest_fetched_at = now  # Also on failure: the next try waits for the next refresh
+    if status == 200:
+        try:
+            link.backtest = json.dumps(compact_backtest(body), separators=(",", ":"))
+            link.backtest_error = None
+        except (ValueError, TypeError, KeyError) as e:
+            link.backtest_error = f"O Dash mandou um backtest que o Mirror não entendeu ({type(e).__name__})."
+    elif status == 403:
+        link.backtest_error = "O Dash não reconheceu a chave do Mirror (DASH_MIRROR_KEY)."
+    else:
+        link.backtest_error = refusal(status) or failure(status, body)
+    db.commit()
+
+
 def refusal(status: int) -> Optional[str]:
     """What to tell the manager when the Dash refuses the token itself; None for anything else."""
     if status == 401:
@@ -84,9 +136,18 @@ def failure(status: int, body: str) -> str:
 def link_out(link: Optional[models.DashLink]) -> Optional[dict]:
     if link is None:
         return None
+    backtest = None
+    if link.backtest:
+        try:
+            data = json.loads(link.backtest)
+            backtest = {"name": data.get("name"), "trades": len(data.get("pnl") or []),
+                        "initial_balance": data.get("initial_balance") or None, "currency": data.get("currency")}
+        except ValueError:
+            pass
     return {"token_hint": link.token_hint, "status": link.status, "last_error": link.last_error,
             "last_sent_at": link.last_sent_at, "sent_count": link.sent_count, "send_since": link.send_since,
-            "created_at": link.created_at}
+            "created_at": link.created_at, "backtest": backtest, "backtest_fetched_at": link.backtest_fetched_at,
+            "backtest_error": link.backtest_error}
 
 
 def _vwap(deals: List[models.MasterDeal]) -> Tuple[float, Optional[float]]:
@@ -176,8 +237,9 @@ def advance(db: Session, link: models.DashLink, token: str, post: Send, now: dat
 
 
 def run_once(session_factory=database.SessionLocal, post: Optional[Send] = None,
-             now: Optional[datetime.datetime] = None) -> int:
+             now: Optional[datetime.datetime] = None, fetch: Optional[Callable[[str], Tuple[int, str]]] = None) -> int:
     post = post or send
+    fetch = fetch or fetch_backtest
     now = now or datetime.datetime.utcnow()
     fernet = hosting.cipher()
     if fernet is None:
@@ -192,6 +254,10 @@ def run_once(session_factory=database.SessionLocal, post: Optional[Send] = None,
             try:
                 token = fernet.decrypt(link.token_encrypted.encode()).decode()
                 total += advance(db, link, token, post, now)
+                stale = (link.backtest_fetched_at is None
+                         or (now - link.backtest_fetched_at).total_seconds() >= BACKTEST_REFRESH_SECONDS)
+                if MIRROR_KEY and link.status == "active" and stale:
+                    refresh_backtest(db, link, token, fetch, now)
             except Exception as e:
                 db.rollback()
                 logger.error(f"Dash link {link.id} failed this round: {type(e).__name__}: {str(e)[:200]}")

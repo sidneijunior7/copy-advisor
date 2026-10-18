@@ -238,6 +238,24 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - **Faça o deploy dela, com a migração e o `MIRROR_INGEST_KEY`, antes de vincular o primeiro portfólio.**
 - **Deploy:** a migração `0013` cria a tabela `dash_links`. Só a API muda.
 
+### Backtest declarado e cone de Monte Carlo
+
+- **De onde vem:** com o `DASH_MIRROR_KEY`, a ponte também guarda uma cópia do backtest do portfólio do Dash (`GET /api/mirror/backtest`), atualizada a cada 6 horas: o resultado líquido de cada operação, o capital declarado e as estratégias. Uma falha mantém a última cópia, e o painel do vínculo, em Portfólios, mostra o motivo.
+- **Onde aparece:**
+  - Em **Portfólios → Desempenho**, para o gestor, sempre que houver backtest.
+  - No anúncio, só quando o gestor marca **Mostrar o backtest do Trademetric Dash**. Ele aparece com o selo "Backtest declarado".
+- **Comparação, em % da conta** (`backtest.py`):
+  - Cada operação do backtest é dividida pelo saldo antes dela, a partir do capital declarado no Dash.
+  - Cada operação ao vivo é dividida pelo saldo do Master na hora anterior (snapshots do V2ACC).
+  - O cone é o bootstrap das operações do backtest, com tantas operações quanto o Master fechou no período, juntando os juros. Mostra as faixas de 50% e 90% e a mediana.
+  - O veredito compara o ponto final: abaixo do percentil 5, dentro, ou acima do percentil 95.
+- **Sem cone** quando:
+  - o backtest não tem capital declarado;
+  - o portfólio tem mais de uma conta Master;
+  - ainda não há saldo do Master (4.01);
+  - há menos de 5 operações fechadas no período ou menos de 30 no backtest.
+- **Deploy:** a migração `0014` cria as colunas. O Dash precisa da rota `/api/mirror/backtest` (branch `mirror-bridge`) e da mesma chave compartilhada.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.

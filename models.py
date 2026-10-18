@@ -120,6 +120,7 @@ class Listing(Base):
     default_max_lots = Column(Float, default=1.0)
     min_capital = Column(Float)
     hosting_allowed = Column(Boolean, default=True)
+    show_backtest = Column(Boolean, nullable=False, default=False) # The Dash backtest next to the live result
     status = Column(String(16), nullable=False, default="draft") # draft, published, suspended
     suspended_reason = Column(String(255))
     published_at = Column(DateTime)
@@ -194,6 +195,9 @@ class DashLink(Base):
     last_sent_at = Column(DateTime)
     sent_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    backtest = Column(Text) # JSON: the Dash portfolio's declared backtest (backtest.py), refreshed every few hours
+    backtest_fetched_at = Column(DateTime)
+    backtest_error = Column(String(300))
 
     portfolio = relationship("Portfolio")
 

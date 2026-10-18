@@ -46,6 +46,7 @@ services:
       # Never the real Dash: a stand-in on the host when testing the bridge (nothing listens there otherwise)
       DASH_INGEST_URL: http://host.docker.internal:18555/api/ingest
       DASH_BRIDGE_SECONDS: "10"
+      DASH_MIRROR_KEY: spike-local-mirror-key  # Local only
     command: sh -c "python migrate.py && python spike/seed.py && exec uvicorn server:app --host 0.0.0.0 --port 8000"
     depends_on:
       tdm-spike-db:

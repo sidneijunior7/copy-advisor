@@ -13,3 +13,6 @@ export const formatMoney = (value: number, currency: string | null) => {
 // What a listing costs, per period of validity
 export const priceLabel = (l: { price: number | null; currency: string; default_days: number }) =>
     l.price == null ? 'Preço sob consulta' : l.price === 0 ? 'Gratuito' : `${formatMoney(l.price, l.currency)} / ${l.default_days} dias`;
+
+// A percentage with its sign: +1,25% or -0,4%
+export const signedPct = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;

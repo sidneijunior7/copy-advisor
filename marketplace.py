@@ -16,6 +16,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+import backtest
 import followers
 import hosting
 import models
@@ -43,6 +44,7 @@ class ListingIn(BaseModel):
     default_max_lots: float = Field(default=1.0, gt=0, le=1000)
     min_capital: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
     hosting_allowed: bool = True
+    show_backtest: bool = False  # The declared backtest from a linked Trademetric Dash portfolio
 
 
 class SubscriptionIn(BaseModel):
@@ -91,6 +93,7 @@ def apply(listing: models.Listing, data: ListingIn, slug: str, now: datetime.dat
     listing.default_max_lots = data.default_max_lots
     listing.min_capital = data.min_capital
     listing.hosting_allowed = data.hosting_allowed
+    listing.show_backtest = data.show_backtest
     listing.updated_at = now
 
 
@@ -103,7 +106,7 @@ def listing_out(listing: models.Listing) -> dict:
         "price": listing.price, "currency": listing.currency or "BRL", "checkout_url": listing.checkout_url,
         "default_days": listing.default_days, "default_max_lots": listing.default_max_lots,
         "min_capital": listing.min_capital, "hosting_allowed": bool(listing.hosting_allowed),
-        "status": listing.status, "suspended_reason": listing.suspended_reason,
+        "show_backtest": bool(listing.show_backtest), "status": listing.status, "suspended_reason": listing.suspended_reason,
         "published_at": listing.published_at, "updated_at": listing.updated_at,
     }
 
@@ -134,6 +137,16 @@ def _cached(key: Tuple[str, int, int], compute) -> dict:
 
 def public_performance(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
     return _cached(("performance", listing.id, days), lambda: performance.portfolio(db, listing.portfolio, days, now))
+
+
+def public_backtest(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
+    """The declared backtest and the cone, when the manager chose to show them."""
+    def compute():
+        if not listing.show_backtest:
+            return {"available": False}
+        link = db.query(models.DashLink).filter(models.DashLink.portfolio_id == listing.portfolio_id).first()
+        return backtest.view(db, listing.portfolio, link, days, now, seed=listing.id)
+    return _cached(("backtest", listing.id, days), compute)
 
 
 def public_followers(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:

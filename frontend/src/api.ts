@@ -279,9 +279,39 @@ export type DashLink = {
     sent_count: number;
     send_since: string;
     created_at: string;
+    backtest: { name: string | null; trades: number; initial_balance: number | null; currency: string | null } | null;
+    backtest_fetched_at: string | null;
+    backtest_error: string | null;
 };
 
 export type DashLinkState = { available: boolean; link: DashLink | null };
+
+// The backtest declared on the Trademetric Dash, and the live result in its Monte Carlo cone (percent of the account)
+export type ConeBand = { k: number; live: number; p5: number; p25: number; p50: number; p75: number; p95: number };
+
+export type BacktestView =
+    | { available: false }
+    | {
+          available: true;
+          fetched_at: string | null;
+          backtest: {
+              trades: number;
+              from: string | null;
+              to: string | null;
+              currency: string | null;
+              initial_balance: number | null;
+              net: number;
+              win_rate: number | null;
+              profit_factor: number | null;
+              return_pct: number | null;
+              max_drawdown_pct: number | null;
+              curve: { k: number; v: number }[];
+              strategies: string[];
+              truncated: boolean;
+          };
+          cone: { trades: number; simulations: number; bands: ConeBand[]; verdict: 'inside' | 'below' | 'above' } | null;
+          cone_missing: 'capital' | 'accounts' | 'balance' | 'no-trades' | 'few-trades' | null;
+      };
 
 // The marketplace shows the figures only past a minimum of followers and copies
 export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
@@ -307,6 +337,7 @@ export type Listing = {
     default_max_lots: number;
     min_capital: number | null;
     hosting_allowed: boolean;
+    show_backtest: boolean;
     status: 'draft' | 'published' | 'suspended';
     suspended_reason: string | null;
     published_at: string | null;

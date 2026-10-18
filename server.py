@@ -34,6 +34,7 @@ import mailer
 import marketplace
 import models
 import auth
+import backtest
 import observability
 import performance
 
@@ -1249,10 +1250,19 @@ def save_dash_link(portfolio_id: int, data: DashLinkIn, current_user: models.Use
     link.deal_cursor = 0  # The Dash drops what it already has (external_id): going through again is safe
     link.send_since = now - datetime.timedelta(days=data.history_days)
     link.status, link.last_error = "active", None
+    link.backtest_fetched_at = None  # The next round reads this portfolio's backtest
     db.commit()
     db.refresh(link)
     logger.info(f"Portfolio {portfolio.id}: linked to the Dash (history {data.history_days} days)")
     return dash_bridge.link_out(link)
+
+@app.get("/portfolios/{portfolio_id}/backtest")
+def portfolio_backtest(portfolio_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """The linked Dash portfolio's backtest and the cone, for the manager, whether or not the listing shows it."""
+    portfolio = own_portfolio(portfolio_id, current_user, db)
+    link = db.query(models.DashLink).filter(models.DashLink.portfolio_id == portfolio.id).first()
+    return backtest.view(db, portfolio, link, days, datetime.datetime.utcnow(), seed=portfolio.id)
 
 @app.delete("/portfolios/{portfolio_id}/dash")
 def delete_dash_link(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1410,6 +1420,12 @@ def public_days(days: int) -> int:
 @app.get("/api/marketplace/{slug}/performance")
 def get_marketplace_performance(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
     return marketplace.public_performance(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
+
+@app.get("/api/marketplace/{slug}/backtest")
+def get_marketplace_backtest(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
+    """The backtest the manager declared on the Trademetric Dash and the live result in its Monte Carlo cone, when
+    the manager chose to show it (backtest.py)."""
+    return marketplace.public_backtest(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
 
 @app.get("/api/marketplace/{slug}/followers")
 def get_marketplace_followers(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):

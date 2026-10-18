@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import api, { type DashLink, type DashLinkState } from '../api';
 import { Button } from './ui/Button';
 import { Field, Input } from './ui/Field';
+import { formatMoney } from '../lib/money';
 import { apiError, formatDateTime } from '../lib/utils';
 
 type LinkForm = { token: string; history: boolean };
@@ -116,6 +117,14 @@ export default function DashLinkPanel({ portfolioId, portfolioName }: { portfoli
                                 {link.last_error}
                             </span>
                         )}
+                        {link.backtest && (
+                            <span className="block">
+                                Backtest do Dash{link.backtest.name ? ` (${link.backtest.name})` : ''}: {link.backtest.trades.toLocaleString('pt-BR')} operações
+                                {link.backtest.initial_balance ? `, capital de ${formatMoney(link.backtest.initial_balance, link.backtest.currency)}` : ', sem capital declarado'}
+                                {link.backtest_fetched_at ? `, lido em ${formatDateTime(link.backtest_fetched_at)}` : ''}.
+                            </span>
+                        )}
+                        {link.backtest_error && <span className="block text-warning">{link.backtest_error}</span>}
                     </span>
                 )}
             </div>

@@ -82,12 +82,12 @@ def _first_balance(db: Session, kind: str, owner_id: int, logins: List[int], sta
     return (snap.balance, snap.currency) if snap else (None, None)
 
 
-def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetime) -> dict:
-    """The closed positions of the portfolio's strategies in the period, as the Master's deals tell them."""
-    start = since(days, now)
+def _results(db: Session, p: models.Portfolio, start: datetime.datetime):
+    """(close time, result, strategy id) of each position of the portfolio's strategies that closed since start,
+    and the Master accounts behind them."""
     strategy_ids = [s.id for s in p.strategies]
     if not strategy_ids:
-        return {**stats([]), "strategies": []}
+        return [], []
     positions = (db.query(models.MasterPosition)
                  .filter(models.MasterPosition.manager_id == p.user_id,
                          models.MasterPosition.strategy_id.in_(strategy_ids),
@@ -95,26 +95,41 @@ def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetim
                          models.MasterPosition.closed_at >= start)
                  .all())
     by_key = {(mp.master_login, mp.pos_id): mp for mp in positions}
-    results: List[Tuple[datetime.datetime, float]] = []
+    if not by_key:
+        return [], []
+    out = []
+    deals: Dict[Tuple[int, int], List[models.MasterDeal]] = {}
+    logins = sorted({k[0] for k in by_key})
+    for d in (db.query(models.MasterDeal)
+              .filter(models.MasterDeal.manager_id == p.user_id, models.MasterDeal.master_login.in_(logins),
+                      models.MasterDeal.pos_id.in_([k[1] for k in by_key]))):
+        if (d.master_login, d.pos_id) in by_key:
+            deals.setdefault((d.master_login, d.pos_id), []).append(d)
+    for key, ds in deals.items():
+        outs = [d for d in ds if d.entry in DEAL_OUT]
+        if not outs:
+            continue  # The hub has the close but not its deal yet (a Master before 4.01)
+        result = sum((d.profit or 0) + (d.swap or 0) + (d.commission or 0) for d in ds)
+        out.append((max(d.time for d in outs), result, by_key[key].strategy_id))
+    return out, logins
+
+
+def portfolio_results(db: Session, p: models.Portfolio, start: datetime.datetime):
+    """(close time, result) of each closed position since start, and the Master accounts behind them."""
+    rows, logins = _results(db, p, start)
+    return [(at, result) for at, result, _ in rows], logins
+
+
+def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetime) -> dict:
+    """The closed positions of the portfolio's strategies in the period, as the Master's deals tell them."""
+    start = since(days, now)
+    if not p.strategies:
+        return {**stats([]), "strategies": []}
+    rows, logins = _results(db, p, start)
+    results: List[Tuple[datetime.datetime, float]] = [(at, result) for at, result, _ in rows]
     by_strategy: Dict[int, List[Tuple[datetime.datetime, float]]] = {}
-    if by_key:
-        deals: Dict[Tuple[int, int], List[models.MasterDeal]] = {}
-        logins = sorted({k[0] for k in by_key})
-        for d in (db.query(models.MasterDeal)
-                  .filter(models.MasterDeal.manager_id == p.user_id, models.MasterDeal.master_login.in_(logins),
-                          models.MasterDeal.pos_id.in_([k[1] for k in by_key]))):
-            if (d.master_login, d.pos_id) in by_key:
-                deals.setdefault((d.master_login, d.pos_id), []).append(d)
-        for key, ds in deals.items():
-            outs = [d for d in ds if d.entry in DEAL_OUT]
-            if not outs:
-                continue  # The hub has the close but not its deal yet (a Master before 4.01)
-            result = sum((d.profit or 0) + (d.swap or 0) + (d.commission or 0) for d in ds)
-            at = max(d.time for d in outs)
-            results.append((at, result))
-            by_strategy.setdefault(by_key[key].strategy_id, []).append((at, result))
-    else:
-        logins = []
+    for at, result, strategy_id in rows:
+        by_strategy.setdefault(strategy_id, []).append((at, result))
     balance, currency = _first_balance(db, "master", p.user_id, logins, start)
     names = {s.id: s.name for s in p.strategies}
     return {

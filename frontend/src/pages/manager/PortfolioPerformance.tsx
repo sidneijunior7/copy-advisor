@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, TrendingUp } from 'lucide-react';
-import api, { type FollowerStats, type Portfolio, type PortfolioPerformance as Performance } from '../../api';
+import api, { type BacktestView, type FollowerStats, type Portfolio, type PortfolioPerformance as Performance } from '../../api';
+import BacktestSection from '../../components/BacktestSection';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PageHeader from '../../components/PageHeader';
 import PerformanceView from '../../components/PerformanceView';
@@ -16,6 +17,7 @@ export default function PortfolioPerformance() {
     const [name, setName] = useState<string | null>(null);
     const [data, setData] = useState<Performance | null>(null);
     const [followers, setFollowers] = useState<FollowerStats | null>(null);
+    const [backtestView, setBacktestView] = useState<BacktestView | null>(null);
     const [loading, setLoading] = useState(true);
     const [failed, setFailed] = useState(false);
 
@@ -38,6 +40,9 @@ export default function PortfolioPerformance() {
             .finally(() => { if (!cancelled) setLoading(false); });
         api.get<FollowerStats>(`/portfolios/${id}/followers`, { params: { days } })
             .then(res => { if (!cancelled) setFollowers(res.data); })
+            .catch(e => console.error(e));
+        api.get<BacktestView>(`/portfolios/${id}/backtest`, { params: { days } })
+            .then(res => { if (!cancelled) setBacktestView(res.data); })
             .catch(e => console.error(e));
         return () => { cancelled = true; };
     }, [id, days]);
@@ -67,6 +72,17 @@ export default function PortfolioPerformance() {
                         emptyDescription="O desempenho aparece quando as operações fecham na conta do Master, com o EA Master 4.01 ou mais novo."
                     />
                 </div>
+            )}
+            {backtestView?.available && (
+                <section className={cn('space-y-4 transition-opacity', loading && 'opacity-60')}>
+                    <div>
+                        <h2 className="text-xl font-semibold">Backtest do Dash e resultado ao vivo</h2>
+                        <p className="text-sm text-muted-foreground">
+                            Do portfólio vinculado ao Trademetric Dash. No marketplace, só aparece se o anúncio marcar "Mostrar o backtest do Trademetric Dash".
+                        </p>
+                    </div>
+                    <BacktestSection view={backtestView} />
+                </section>
             )}
             {followers && (
                 <section className={cn('space-y-4 transition-opacity', loading && 'opacity-60')}>

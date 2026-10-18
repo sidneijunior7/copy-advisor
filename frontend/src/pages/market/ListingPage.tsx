@@ -3,7 +3,8 @@ import { useForm } from 'react-hook-form';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, ExternalLink, MailCheck, Store } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
+import api, { type BacktestView, type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
+import BacktestSection from '../../components/BacktestSection';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
@@ -109,6 +110,7 @@ export default function ListingPage() {
     const [days, setDays] = useState(90);
     const [stats, setStats] = useState<PortfolioPerformance | null>(null);
     const [followers, setFollowers] = useState<PublicFollowerStats | null>(null);
+    const [backtestView, setBacktestView] = useState<BacktestView | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -129,6 +131,8 @@ export default function ListingPage() {
                 .then(res => { if (!cancelled) setStats(res.data); }),
             api.get<PublicFollowerStats>(`/api/marketplace/${slug}/followers`, { params: { days } })
                 .then(res => { if (!cancelled) setFollowers(res.data); }),
+            api.get<BacktestView>(`/api/marketplace/${slug}/backtest`, { params: { days } })
+                .then(res => { if (!cancelled) setBacktestView(res.data); }),
         ])
             .catch(e => console.error(e))
             .finally(() => { if (!cancelled) setLoading(false); });
@@ -195,6 +199,18 @@ export default function ListingPage() {
                     </div>
                 )}
             </section>
+
+            {backtestView?.available && (
+                <section className="space-y-4">
+                    <div>
+                        <h2 className="text-xl font-semibold">Backtest e resultado ao vivo</h2>
+                        <p className="text-sm text-muted-foreground">O que o gestor testou antes de operar, e se a conta real está se comportando como o teste previa.</p>
+                    </div>
+                    <div className={cn('transition-opacity', loading && 'opacity-60')}>
+                        <BacktestSection view={backtestView} />
+                    </div>
+                </section>
+            )}
 
             <section className="space-y-4">
                 <div>
