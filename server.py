@@ -915,7 +915,7 @@ def update_license(license_id: int, changes: LicenseUpdate, current_user: models
 def hosting_cipher():
     f = hosting.cipher()
     if f is None:
-        raise HTTPException(status_code=503, detail="Hospedagem não configurada no servidor (HOSTING_SECRET)")
+        raise HTTPException(status_code=503, detail="Hospedagem não configurada no servidor (HOSTING_SECRET ausente ou inválido)")
     return f
 
 def pod_from_request(request: Request, db: Session) -> models.HostedPod:

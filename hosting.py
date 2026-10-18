@@ -15,6 +15,7 @@ pod deletes its folder.
 """
 import datetime
 import json
+import logging
 import os
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -23,6 +24,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import models
+
+logger = logging.getLogger(__name__)
 
 SYNC_SECONDS = 15
 POD_OFFLINE_SECONDS = 120  # A pod silent for longer is shown as offline
@@ -69,9 +72,22 @@ class PodSync(BaseModel):
 
 
 def cipher() -> Optional[Fernet]:
-    """None while HOSTING_SECRET is not set: hosting is off."""
-    secret = os.getenv("HOSTING_SECRET", "")
-    return Fernet(secret.encode()) if secret else None
+    """None while HOSTING_SECRET is not set, or is not a Fernet key: hosting is off (the log says which)."""
+    global _bad_secret_logged
+    secret = os.getenv("HOSTING_SECRET", "").strip()
+    if not secret:
+        return None
+    try:
+        return Fernet(secret.encode())
+    except ValueError:
+        if not _bad_secret_logged:
+            _bad_secret_logged = True
+            logger.error("HOSTING_SECRET is not a Fernet key (44 url-safe base64 characters ending in '=', no quotes "
+                         "and no b'...'): hosting is off")
+        return None
+
+
+_bad_secret_logged = False
 
 
 def encrypt(f: Fernet, value: str) -> str:

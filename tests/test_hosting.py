@@ -78,14 +78,24 @@ def free_pods():
         db.close()
 
 
-def test_hosting_off_without_secret(client, monkeypatch):
-    monkeypatch.delenv("HOSTING_SECRET")
+@pytest.mark.parametrize("value", [None, "b'" + Fernet.generate_key().decode() + "'", "not-a-key"])
+def test_hosting_off_without_a_valid_secret(client, monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("HOSTING_SECRET")
+    else:
+        monkeypatch.setenv("HOSTING_SECRET", value)
     manager_id, headers = make_manager()
     portfolio_id, _ = make_portfolio(manager_id)
     lic = make_license(client, headers, portfolio_id)
     r = client.put(f"/licenses/{lic['id']}/hosting", headers=headers, json={"server": "Demo", "password": "x"})
     assert r.status_code == 503
     assert client.get("/hosting", headers=headers).json()["available"] is False
+    assert client.post("/pods/sync", json={"capacity": 0}).status_code == 503
+
+
+def test_secret_with_surrounding_spaces_works(client, monkeypatch):
+    monkeypatch.setenv("HOSTING_SECRET", f"  {Fernet.generate_key().decode()}\n")
+    assert hosting.cipher() is not None
 
 
 def test_pod_gets_credentials_and_a_new_license_key(client):
