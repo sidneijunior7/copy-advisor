@@ -7,10 +7,10 @@
                    "built_at":  "2026-10-17T23:37:29Z"
                },
     "slave":  {
-                  "version":  "4.02",
+                  "version":  "4.03",
                   "file":  "Trademetric Copy Trader Slave.ex5",
-                  "size":  112308,
-                  "sha256":  "10209b6ca3755caa4b679b3a0190b1fcc83ae2348e0ffb475a6de6c58f34ed16",
-                  "built_at":  "2026-10-17T23:37:29Z"
+                  "size":  116482,
+                  "sha256":  "1c3a18319859b91e76d86126e00eef0ed49b9d7b64498cf2aaf222558b2c38c1",
+                  "built_at":  "2026-10-18T11:53:37Z"
               }
 }

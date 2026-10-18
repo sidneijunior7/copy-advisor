@@ -120,6 +120,7 @@ FROM master_accounts a JOIN users u ON u.id = a.manager_id ORDER BY a.last_seen_
 | `inp_suffix_map` | vazio | Troca de sufixo, ex.: `.a=m` (EURUSD.a → EURUSDm) ou `=.raw` (acrescenta) |
 | `inp_sizing_mode` | Fixed factor | `Fixed factor`: lote do master × fator. `Proportional to balance/equity`: lote do master × fator × capital da conta ÷ `inp_reference_capital` |
 | `inp_reference_capital` | 10000 | Capital, na moeda da conta, que copia 1× os lotes do master (ex.: master opera 1 lote para cada 10 mil) |
+| `inp_sltp_mode` | Same distance from entry | `Same distance from entry`: o SL/TP fica à mesma distância da entrada que no master. O desvio entre a entrada local e a do master é fixado na primeira execução da cópia e somado a cada SL/TP que o master define. Serve para corretoras com cotações diferentes (cripto, forex), onde o mesmo preço deixaria o stop longe demais ou do lado errado da entrada; na B3 o desvio é só o slippage. `Same price as master`: o mesmo preço do master |
 
 No modo proporcional a escala é calculada quando a cópia abre e fica gravada no mapeamento: o equity oscilando depois não aumenta nem reduz a posição. O volume nunca fica abaixo do mínimo do símbolo, então contas muito pequenas copiam o lote mínimo. O limite de lotes da licença vale para a soma das cópias abertas, e uma cópia cortada por ele guarda a proporção que recebeu.
 
@@ -133,6 +134,7 @@ Faça isto antes de liberar para clientes. Use uma conta hedging, uma netting e 
 - [ ] Slave desligado enquanto o master abre e fecha: ao voltar, a posição órfã fecha; a entrada perdida só abre se o preço estiver dentro do desvio.
 - [ ] SL batendo só no slave: a posição **não** reabre.
 - [ ] Duas estratégias no mesmo símbolo numa conta netting: não entra em ciclo de fecha e reabre.
+- [ ] Master e slave em corretoras com cotações diferentes (ex.: BTCUSD): o SL/TP do slave fica à mesma distância da entrada que o do master, também depois de mover o SL/TP, da parcial e de reiniciar o terminal.
 - [ ] Linhas aparecem em `master_positions`, `signals` e `executions`.
 
 **EAs v4 (WSS)**, com "Allow DLL imports" desligado e `https://signals.trademetric.com.br` na lista de WebRequest:

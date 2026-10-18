@@ -41,15 +41,30 @@ const ACTIONS: Record<string, string> = {
 const formatVolume = (value: number) =>
     Number(value).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
 
+type IssueRow = CopyIssue & { count: number };
+
+// A Slave reports a failure once per value: an SL/TP refused at two prices is the same problem, so it is one row
+// with a count. The API sends the newest first, so each row keeps the latest time.
+const groupIssues = (issues: CopyIssue[]): IssueRow[] => {
+    const rows = new Map<string, IssueRow>();
+    for (const issue of issues) {
+        const key = [issue.portfolio_id, issue.login, issue.uid, issue.action, issue.retcode, issue.volume].join('|');
+        const row = rows.get(key);
+        if (row) row.count += 1;
+        else rows.set(key, { ...issue, count: 1 });
+    }
+    return [...rows.values()];
+};
+
 export default function CopyIssues() {
-    const [issues, setIssues] = useState<CopyIssue[] | null>(null);
+    const [issues, setIssues] = useState<IssueRow[] | null>(null);
     const [failed, setFailed] = useState(false);
 
     useEffect(() => {
         const refresh = async () => {
             try {
                 const res = await api.get<CopyIssue[]>('/me/copy-issues', { params: { days: DAYS } });
-                setIssues(res.data);
+                setIssues(groupIssues(res.data));
                 setFailed(false);
             } catch (e) {
                 console.error(e);
@@ -101,7 +116,7 @@ export default function CopyIssues() {
                                 <TableCell className="font-mono text-xs text-muted-foreground">{issue.uid}</TableCell>
                                 <TableCell>{ACTIONS[issue.action] ?? issue.action}</TableCell>
                                 <TableCell className="text-right font-mono tabular-nums">
-                                    {issue.volume == null ? '—' : formatVolume(issue.volume)}
+                                    {issue.volume == null || issue.action === 'MODIFY' ? '—' : formatVolume(issue.volume)}
                                     {issue.retcode === LOT_LIMIT && (
                                         <span className="ml-1 font-sans text-xs text-muted-foreground">de fora</span>
                                     )}
@@ -110,6 +125,11 @@ export default function CopyIssues() {
                                     <Badge variant={issue.retcode === LOT_LIMIT ? 'warning' : 'destructive'} title={`Código ${issue.retcode}`}>
                                         {REASONS[issue.retcode] ?? `Recusada (código ${issue.retcode})`}
                                     </Badge>
+                                    {issue.count > 1 && (
+                                        <span className="ml-1 text-xs text-muted-foreground" title={`${issue.count} ocorrências`}>
+                                            {issue.count}×
+                                        </span>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         ))}

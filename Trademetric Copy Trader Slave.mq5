@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Trademetric Inc."
 #property link      "https://www.trademetric.com.br"
-#property version   "4.02"
-#define VERSAO "4.02"
+#property version   "4.03"
+#define VERSAO "4.03"
 
 #include <Trade\Trade.mqh>
 #include "Include/TDM/WsClient.mqh"
@@ -37,6 +37,12 @@ enum ENUM_SIZING
       sizing_equity = 2   //Proportional to equity
    };
 
+enum ENUM_SLTP_MODE
+   {
+      sltp_distance = 0, //Same distance from entry
+      sltp_price = 1     //Same price as master
+   };
+
 sinput string inp_connection_key = "YOUR_LICENSE_KEY"; // License key (lic_..., dashboard: Clients)
 sinput string inp_ws_host = "signals.trademetric.com.br"; // Server
 sinput int inp_ws_port = 443; // Port
@@ -45,6 +51,7 @@ sinput int inp_timer = 100; // Timer (ms)
 sinput ulong inp_standard_magic_number = 5457873;
 sinput bool inp_keep_original_magic = true;
 sinput bool inp_copy_sltp = true;
+sinput ENUM_SLTP_MODE inp_sltp_mode = sltp_distance; // SL/TP
 sinput double inp_lots_factor = 1;
 sinput ENUM_OPERATOR_LOTS inp_lots_op = 0;
 sinput ENUM_SIZING inp_sizing_mode = sizing_factor; // Sizing
@@ -64,6 +71,7 @@ struct Copia {
    double escala;  // Volume local por lote do master, fixada na abertura (o equity oscilando não mexe na posição)
    long   magic;   // Magic do master
    bool   done;    // Fechada fora do EA (SL/TP/manual): nunca reabre
+   double desvio;  // Entrada local menos a do master, fixada na primeira execução (EMPTY_VALUE = ainda sem posição)
 };
 // Hedging: posições locais (POSITION_IDENTIFIER) de cada cópia
 struct Vinculo {
@@ -459,9 +467,10 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
       c = NovaCopia(uid, sym, type, magic, escala);
    }
    copias[c].escala = escala;
+   if(copias[c].type != type) copias[c].desvio = EMPTY_VALUE;  // Reversão: a entrada nova fixa outro desvio
 
    bool pode_abrir = licenca_ativa && (ao_vivo || PrecoPerto(sym, type, price_open));
-   bool ok = hedging ? AjustarHedging(c, type, alvo, pode_abrir, sl, tp) : AjustarNetting(c, type, alvo, pode_abrir);
+   bool ok = hedging ? AjustarHedging(c, type, alvo, pode_abrir, price_open, sl, tp) : AjustarNetting(c, type, alvo, pode_abrir);
 
    if(alvo <= 0) {
       if(ok) RemoverCopia(c);
@@ -469,14 +478,14 @@ void AplicarEstado(string uid, int type, string master_symbol, double vol, doubl
    else if(!TemExposicao(c)) {
       RemoverCopia(c);  // Nada aberto (recusado ou fora do desvio): o próximo snapshot tenta de novo
    }
-   else if(inp_copy_sltp) AjustarSLTP(c, sl, tp);
+   else if(inp_copy_sltp) AjustarSLTP(c, price_open, sl, tp);
    dirty = true;
 }
 
 //+------------------------------------------------------------------+
 //| Hedging: uma ou mais posições locais por cópia                   |
 //+------------------------------------------------------------------+
-bool AjustarHedging(int c, int type, double alvo, bool pode_abrir, double sl, double tp) {
+bool AjustarHedging(int c, int type, double alvo, bool pode_abrir, double price_open, double sl, double tp) {
    string uid = copias[c].uid;
    string sym = copias[c].symbol;
    double half_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP) / 2.0;
@@ -491,9 +500,9 @@ bool AjustarHedging(int c, int type, double alvo, bool pode_abrir, double sl, do
    copias[c].alvo = alvo;
 
    if(alvo > atual + half_step) {
-      if(atual <= 0 && AdotarPorComentario(c)) return AjustarHedging(c, type, alvo, pode_abrir, sl, tp);
+      if(atual <= 0 && AdotarPorComentario(c)) return AjustarHedging(c, type, alvo, pode_abrir, price_open, sl, tp);
       if(!pode_abrir) {AvisarAtrasada(c); return true;}
-      return Abrir(c, type, NormalizarVolume(sym, alvo - atual, true), sl, tp, atual > 0 ? "ADD" : "OPEN");
+      return Abrir(c, type, NormalizarVolume(sym, alvo - atual, true), price_open, sl, tp, atual > 0 ? "ADD" : "OPEN");
    }
    if(alvo < atual - half_step) {
       if(alvo <= 0) return FecharTudo(c);
@@ -557,10 +566,15 @@ bool FecharTudo(int c) {
    return true;
 }
 
-bool Abrir(int c, int type, double vol, double sl, double tp, string action) {
+bool Abrir(int c, int type, double vol, double price_open, double sl, double tp, string action) {
    if(vol <= 0) return true;
    string sym = copias[c].symbol;
    ENUM_ORDER_TYPE ot = type == 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   // Antes da execução o desvio é estimado pelo preço atual; AjustarSLTP o fixa pela entrada real
+   double desvio = copias[c].desvio;
+   if(desvio == EMPTY_VALUE) desvio = price_open > 0 ? PrecoDeEntrada(sym, type) - price_open : 0;
+   sl = inp_copy_sltp ? NivelLocal(sym, sl, desvio) : 0;
+   tp = inp_copy_sltp ? NivelLocal(sym, tp, desvio) : 0;
    if(!TemMargem(sym, ot, vol)) {
       if(AvisarUmaVez("margin:" + copias[c].uid, StringFormat("Margem insuficiente para %s %s %s", action, sym, DoubleToString(vol, 2))))
          Reportar(copias[c].uid, action, 0, vol, 0, TRADE_RETCODE_NO_MONEY);
@@ -569,7 +583,7 @@ bool Abrir(int c, int type, double vol, double sl, double tp, string action) {
    trade.SetExpertMagicNumber(inp_keep_original_magic ? (ulong)copias[c].magic : standard_magic_number);
    PrintFormat("Abrindo cópia %s: %s %s %s", copias[c].uid, action, sym, DoubleToString(vol, VolumeDigits(sym)));
    long pos; ulong order;
-   if(!Executar(copias[c].uid, sym, ot, vol, inp_copy_sltp ? sl : 0, inp_copy_sltp ? tp : 0, Comentario(copias[c].uid), action, pos, order))
+   if(!Executar(copias[c].uid, sym, ot, vol, sl, tp, Comentario(copias[c].uid), action, pos, order))
       return false;
    if(pos > 0) AdicionarVinculo(copias[c].uid, pos);
    else AdicionarPendente(copias[c].uid, sym, type == 0 ? 1 : -1, vol, order);
@@ -662,15 +676,8 @@ bool TemExposicao(int c) {
 //+------------------------------------------------------------------+
 //| SL/TP                                                            |
 //+------------------------------------------------------------------+
-void AjustarSLTP(int c, double sl, double tp) {
+void AjustarSLTP(int c, double price_open, double sl, double tp) {
    string sym = copias[c].symbol;
-   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
-   double half_point = SymbolInfoDouble(sym, SYMBOL_POINT) / 2.0;
-   sl = NormalizeDouble(sl, digits);
-   tp = NormalizeDouble(tp, digits);
-   string chave = copias[c].uid + "|" + DoubleToString(sl, digits) + "|" + DoubleToString(tp, digits);
-   if(Contem(falhas_sltp, chave)) return;
-
    ulong tickets[];
    if(hedging) {
       for(int i = 0; i < ArraySize(vinculos); i++) {
@@ -687,6 +694,19 @@ void AjustarSLTP(int c, double sl, double tp) {
       }
       if(PositionSelect(sym)) {ArrayResize(tickets, 1); tickets[0] = (ulong)PositionGetInteger(POSITION_TICKET);}
    }
+   if(ArraySize(tickets) == 0) return;
+
+   if(copias[c].desvio == EMPTY_VALUE && price_open > 0) {
+      double entrada = EntradaLocal(tickets);
+      if(entrada > 0) {copias[c].desvio = entrada - price_open; dirty = true;}
+   }
+   double desvio = copias[c].desvio == EMPTY_VALUE ? 0 : copias[c].desvio;
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double half_point = SymbolInfoDouble(sym, SYMBOL_POINT) / 2.0;
+   sl = NormalizeDouble(NivelLocal(sym, sl, desvio), digits);
+   tp = NormalizeDouble(NivelLocal(sym, tp, desvio), digits);
+   string chave = copias[c].uid + "|" + DoubleToString(sl, digits) + "|" + DoubleToString(tp, digits);
+   if(Contem(falhas_sltp, chave)) return;
 
    for(int i = 0; i < ArraySize(tickets); i++) {
       if(!PositionSelectByTicket(tickets[i])) continue;
@@ -701,6 +721,29 @@ void AjustarSLTP(int c, double sl, double tp) {
       }
       Reportar(copias[c].uid, "MODIFY", (long)tickets[i], 0, 0, trade.ResultRetcode());
    }
+}
+
+// Nível de SL/TP do master levado à conta local. Corretoras com cotações diferentes (cripto, forex) deixariam o
+// mesmo preço longe demais ou do lado errado da entrada: na mesma distância, o risco por operação é o do master.
+// Na B3 o desvio é só o slippage
+double NivelLocal(string sym, double nivel, double desvio) {
+   if(nivel <= 0) return 0;
+   if(inp_sltp_mode == sltp_price || desvio == 0) return nivel;
+   double local = nivel + desvio;
+   double tick = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   if(tick > 0) local = MathRound(local / tick) * tick;
+   return local > 0 ? NormalizeDouble(local, (int)SymbolInfoInteger(sym, SYMBOL_DIGITS)) : 0;
+}
+
+// Preço médio de entrada das posições locais de uma cópia
+double EntradaLocal(const ulong &tickets[]) {
+   double vol = 0, soma = 0;
+   for(int i = 0; i < ArraySize(tickets); i++) {
+      if(!PositionSelectByTicket(tickets[i])) continue;
+      vol += PositionGetDouble(POSITION_VOLUME);
+      soma += PositionGetDouble(POSITION_VOLUME) * PositionGetDouble(POSITION_PRICE_OPEN);
+   }
+   return vol > 0 ? soma / vol : 0;
 }
 
 //+------------------------------------------------------------------+
@@ -1032,8 +1075,11 @@ double VolumeDasOutrasCopias(string uid) {
 
 bool PrecoPerto(string sym, int type, double price_open) {
    if(inp_late_max_deviation_points <= 0 || price_open <= 0) return false;
-   double price = type == 0 ? SymbolInfoDouble(sym, SYMBOL_ASK) : SymbolInfoDouble(sym, SYMBOL_BID);
-   return MathAbs(price - price_open) <= inp_late_max_deviation_points * SymbolInfoDouble(sym, SYMBOL_POINT);
+   return MathAbs(PrecoDeEntrada(sym, type) - price_open) <= inp_late_max_deviation_points * SymbolInfoDouble(sym, SYMBOL_POINT);
+}
+
+double PrecoDeEntrada(string sym, int type) {
+   return type == 0 ? SymbolInfoDouble(sym, SYMBOL_ASK) : SymbolInfoDouble(sym, SYMBOL_BID);
 }
 
 bool MagicPermitido(long magic) {
@@ -1058,6 +1104,10 @@ void SalvarMapa() {
       FileWriteString(h, StringFormat("V|%s|%I64d\r\n", vinculos[i].uid, vinculos[i].pos));
    for(int i = 0; i < ArraySize(liquidos); i++)
       FileWriteString(h, StringFormat("N|%s|%I64d\r\n", liquidos[i].symbol, liquidos[i].pos));
+   // Linha própria, depois das cópias: o 4.02 ignora o tipo que não conhece, então voltar a ele não perde o mapeamento
+   for(int i = 0; i < ArraySize(copias); i++)
+      if(copias[i].desvio != EMPTY_VALUE)
+         FileWriteString(h, StringFormat("D|%s|%s\r\n", copias[i].uid, DoubleToString(copias[i].desvio, 8)));
    FileClose(h);
    // Troca atômica: um terminal que cai no meio da gravação não corrompe o arquivo
    if(!FileMove(tmp, 0, map_file, FILE_REWRITE)) {Print("Falha ao gravar o mapeamento: ", GetLastError()); return;}
@@ -1083,6 +1133,11 @@ void CarregarMapa() {
       }
       else if(n == 3 && f[0] == "V") AdicionarVinculo(f[1], StringToInteger(f[2]));
       else if(n == 3 && f[0] == "N") DefinirLiquido(f[1], StringToInteger(f[2]));
+      else if(n == 3 && f[0] == "D") {
+         // Sem a linha (mapeamento do 4.02), o desvio é fixado pela posição aberta no próximo SL/TP
+         int c = BuscarCopia(f[1]);
+         if(c >= 0) copias[c].desvio = StringToDouble(f[2]);
+      }
    }
    FileClose(h);
    dirty = false;
@@ -1119,6 +1174,7 @@ int NovaCopia(string uid, string sym, int type, long magic, double escala) {
    copias[c].escala = escala;
    copias[c].magic = magic;
    copias[c].done = false;
+   copias[c].desvio = EMPTY_VALUE;
    return c;
 }
 
