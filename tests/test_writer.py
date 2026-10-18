@@ -231,7 +231,9 @@ def test_retention_deletes_only_what_is_older_than_the_cutoff(monkeypatch):
     jobs = [position_job(manager_id, strategy_id, 1.0, "OPEN", pos_id=41)]
     jobs += [dict(position_job(manager_id, strategy_id, 1.0 + n, "ADD", pos_id=41), at=old) for n in range(1, 16)]
     jobs += [dict(position_job(manager_id, strategy_id, 99.0, "ADD", pos_id=41), at=recent)]
-    jobs += [execution_job(portfolio_id, uid=f"old_{n}", at=old) for n in range(20)]
+    jobs += [dict(execution_job(portfolio_id, uid=f"old_{n}", at=old), retcode=10019) for n in range(20)]  # Refusals
+    jobs += [dict(execution_job(portfolio_id, uid=f"old_mod_{n}", at=old), action="MODIFY") for n in range(3)]
+    jobs += [execution_job(portfolio_id, uid=f"old_copy_{n}", at=old) for n in range(3)]  # A copy's result: kept
     jobs += [execution_job(portfolio_id, uid=f"new_{n}", at=recent) for n in range(3)]
     Writer().write(jobs)
 
@@ -243,8 +245,8 @@ def test_retention_deletes_only_what_is_older_than_the_cutoff(monkeypatch):
         position = db.query(models.MasterPosition).filter_by(manager_id=manager_id, pos_id=41).one()
         left = [s.volume for s in db.query(models.Signal).filter_by(master_position_id=position.id)]
         assert 99.0 in left and not any(1.0 < v < 99.0 for v in left)
-        assert db.query(models.Execution).filter(models.Execution.uid.like("old_%")).count() == 0
-        assert db.query(models.Execution).filter(models.Execution.uid.like("new_%")).count() == 3
+        left = {e.uid for e in db.query(models.Execution).filter(models.Execution.portfolio_id == portfolio_id)}
+        assert left == {f"old_copy_{n}" for n in range(3)} | {f"new_{n}" for n in range(3)}
     finally:
         db.close()
 

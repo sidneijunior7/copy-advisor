@@ -15,7 +15,7 @@ const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1]}/
 
 const pct = (value: number | null) => (value == null ? '—' : `${value.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`);
 
-function Tile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'up' | 'down' }) {
+export function Tile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'up' | 'down' }) {
     return (
         <div className="rounded-lg border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground">{label}</p>

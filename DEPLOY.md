@@ -201,6 +201,19 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
 - **Pagamento:** por enquanto é o link do gestor e a aprovação manual.
 - **Deploy:** a migração `0011` cria as tabelas. Configure as variáveis do SMTP na API antes de anunciar o cadastro: sem elas, quem esquecer a senha depende do suporte.
 
+### Como os seguidores copiaram
+
+- A seção aparece na página do anúncio e em **Portfólios → Desempenho**. Para cada cópia que fechou, compara o preço que o Slave conseguiu com o do Master, em pontos (diferença de preço). Assim, contas de qualquer tamanho se comparam.
+- **Os números:**
+  - **Captura:** os pontos dos seguidores sobre os do Master, por ativo, ponderada pelas cópias. Só aparece quando o Master ganhou pontos no período.
+  - **Custo na entrada e na saída:** quanto o preço do seguidor foi pior que o do Master, em média. Um custo negativo é um preço melhor.
+  - **Taxa de cópia:** das ordens de abertura enviadas aos seguidores, quantas abriram. O limite de lotes da licença não conta como falha.
+  - **Tempo de cópia:** a mediana, do Master à ordem do seguidor.
+- **O que fica de fora:** cópias ainda abertas, posições revertidas (de um lado ou do outro) e posições do Master sem as execuções do Master 4.01. As cópias precisam do Slave 4.04 ou mais novo.
+- **No marketplace,** os números só aparecem com pelo menos `FOLLOWER_STATS_MIN_FOLLOWERS` seguidores (5) e `FOLLOWER_STATS_MIN_COPIES` cópias fechadas (20) no período; abaixo disso, a seção diz que ainda não há seguidores suficientes. Assim, nenhum cliente é identificado. O gestor vê os dos próprios portfólios com qualquer número.
+- **Por ativo,** porque pontos de ativos diferentes não se somam. O ativo é o do Master.
+- **Deploy:** a migração `0012` cria um índice em `executions` (portfólio e data). A retenção do hub passou a guardar as execuções que formam o resultado das cópias; veja Observabilidade. Mesma ordem de sempre: API, depois o hub.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.
@@ -253,7 +266,7 @@ Para testar o hub sem MT5, use `tools/hub_probe.py`: `listen --key lic_... --log
 
 - **Latência de cópia:** o hub guarda o instante em que publicou cada `POS` e, quando o `EXEC` do slave chega com o mesmo `uid` e `seq`, grava a diferença em `executions.latency_ms` (migração `0004`). O `/health` do hub mostra `exec_latency_ms` com p50, p95 e máximo das últimas 1000 execuções. A medida começa no hub: o trecho master → hub não entra, porque o Master não envia horário confiável.
 - **Gravação do hub:** em lotes de até 500 jobs por transação, com o que acumulou desde a anterior: uma rajada de `EXEC` custa poucas idas ao banco, e não cerca de 5 por relatório. O estado das posições tem fila própria (10 mil) e os `EXEC` outra (20 mil): se o banco não acompanhar, são os `EXEC` que se perdem, nunca o estado que o hub relê ao reiniciar. Com o banco fora, o hub espera o tempo que for; um erro de schema (hub publicado antes da migração) espera até 10 min e depois descarta. O `/health` do hub mostra `db_queue`, `db_dropped` e `db_failed`.
-- **Retenção:** com `HUB_RETENTION_DAYS=N` no `mirror-hub`, o hub apaga uma vez por dia, em blocos de 5 mil linhas, os `signals` e `executions` com mais de N dias. A primeira rodada é 10 min depois de subir. `master_positions` fica inteiro (uma linha por posição). O padrão é 0, que guarda tudo.
+- **Retenção:** com `HUB_RETENTION_DAYS=N` no `mirror-hub`, o hub apaga uma vez por dia, em blocos de 5 mil linhas, os `signals` e `executions` com mais de N dias. A primeira rodada é 10 min depois de subir. `master_positions` fica inteiro (uma linha por posição). Das `executions`, ficam as concluídas que formam o resultado de uma cópia (abertura, aumento, reversão e fechamento), porque são o histórico de "Como os seguidores copiaram". Vão as recusas e as mudanças de SL/TP. O padrão é 0, que guarda tudo.
 - **Cópias com problema:** a página Conexões lista os últimos 7 dias do que os Slaves não copiaram, ou copiaram menor: recusa da corretora (mercado fechado, volume inválido...), falta de margem e o volume que o limite de lotes deixou de fora (código 10034). Vem da tabela `executions`, das linhas com `retcode` fora de 10008/10009/10010. Desde o Slave 4.02, cada terminal informa cada falha uma vez; antes, uma entrada atrasada recusada voltava a cada snapshot. A latência de cópia conta só as ordens executadas.
 - **Logs:** `LOG_FORMAT=json` nos dois serviços produz uma linha JSON por evento, com os campos passados em `extra=`. Os logs de acesso do uvicorn continuam em texto.
 - **Erros:** com `SENTRY_DSN` definido, exceções não tratadas e logs `ERROR` vão para o Sentry.

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, TrendingUp } from 'lucide-react';
-import api, { type Portfolio, type PortfolioPerformance as Performance } from '../../api';
+import api, { type FollowerStats, type Portfolio, type PortfolioPerformance as Performance } from '../../api';
+import FollowerStatsView from '../../components/FollowerStatsView';
 import PageHeader from '../../components/PageHeader';
 import PerformanceView from '../../components/PerformanceView';
 import { Select } from '../../components/ui/Field';
@@ -14,6 +15,7 @@ export default function PortfolioPerformance() {
     const [days, setDays] = useState(90);
     const [name, setName] = useState<string | null>(null);
     const [data, setData] = useState<Performance | null>(null);
+    const [followers, setFollowers] = useState<FollowerStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [failed, setFailed] = useState(false);
 
@@ -34,6 +36,9 @@ export default function PortfolioPerformance() {
             .then(res => { if (!cancelled) { setData(res.data); setFailed(false); } })
             .catch(e => { console.error(e); if (!cancelled) setFailed(true); })
             .finally(() => { if (!cancelled) setLoading(false); });
+        api.get<FollowerStats>(`/portfolios/${id}/followers`, { params: { days } })
+            .then(res => { if (!cancelled) setFollowers(res.data); })
+            .catch(e => console.error(e));
         return () => { cancelled = true; };
     }, [id, days]);
 
@@ -47,9 +52,11 @@ export default function PortfolioPerformance() {
                 description="As operações fechadas das estratégias do portfólio, na conta do Master. Vem do EA Master 4.01 ou mais novo."
                 icon={<TrendingUp />}
             />
-            <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9 w-48" aria-label="Período">
-                {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
-            </Select>
+            <div className="w-48">{/* The chevron sits at the wrapper's edge: the wrapper takes the width */}
+                <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9" aria-label="Período">
+                    {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
+                </Select>
+            </div>
             {data === null ? (
                 <p className="text-sm text-muted-foreground">{failed ? 'Não foi possível carregar o desempenho.' : 'Carregando...'}</p>
             ) : (
@@ -60,6 +67,17 @@ export default function PortfolioPerformance() {
                         emptyDescription="O desempenho aparece quando as operações fecham na conta do Master, com o EA Master 4.01 ou mais novo."
                     />
                 </div>
+            )}
+            {followers && (
+                <section className={cn('space-y-4 transition-opacity', loading && 'opacity-60')}>
+                    <div>
+                        <h2 className="text-xl font-semibold">Como os seguidores copiaram</h2>
+                        <p className="text-sm text-muted-foreground">
+                            O que as contas dos clientes conseguiram nas mesmas operações. No marketplace, só aparece a partir de um mínimo de seguidores.
+                        </p>
+                    </div>
+                    <FollowerStatsView stats={followers} />
+                </section>
             )}
         </div>
     );

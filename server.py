@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 # Internal Imports
 import clients
 import database
+import followers
 import hosting
 import keys
 import mailer
@@ -1199,6 +1200,17 @@ def portfolio_performance(portfolio_id: int, days: int = 90, current_user: model
     if not portfolio: raise HTTPException(status_code=404)
     return performance.portfolio(db, portfolio, days, datetime.datetime.utcnow())
 
+@app.get("/portfolios/{portfolio_id}/followers")
+def portfolio_followers(portfolio_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """How the portfolio's followers copied it. The manager sees it with any number of followers: he already sees
+    each client's copies."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    portfolio = db.query(models.Portfolio).filter(models.Portfolio.id == portfolio_id,
+                                                  models.Portfolio.user_id == current_user.id).first()
+    if not portfolio: raise HTTPException(status_code=404)
+    return followers.portfolio(db, portfolio, days, datetime.datetime.utcnow())
+
 @app.get("/me/licenses/{license_id}/performance")
 def my_performance(license_id: int, days: int = 90, current_user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
@@ -1330,10 +1342,17 @@ def list_marketplace(db: Session = Depends(get_db)):
 def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
     return marketplace.public_listing(db, published_listing(slug, db), datetime.datetime.utcnow())
 
+def public_days(days: int) -> int:
+    return min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds
+
 @app.get("/api/marketplace/{slug}/performance")
 def get_marketplace_performance(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
-    days = min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds
-    return marketplace.public_performance(db, published_listing(slug, db), days, datetime.datetime.utcnow())
+    return marketplace.public_performance(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
+
+@app.get("/api/marketplace/{slug}/followers")
+def get_marketplace_followers(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
+    """How the followers copied the portfolio (followers.py), once there are enough of them to show."""
+    return marketplace.public_followers(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
 
 # Requests per client per day: each one emails the manager, and cancelling frees the pending slot again
 subscribe_limiter = FailureLimiter(int(os.getenv("SUBSCRIBE_MAX_PER_DAY", "20")), 86400)

@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
-from sqlalchemy import delete, insert, select, text
+from sqlalchemy import delete, insert, or_, select, text
 from sqlalchemy.exc import DBAPIError, DataError, IntegrityError, InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from websockets.asyncio.server import serve
@@ -910,7 +910,9 @@ class Writer(threading.Thread):
 
 class Retention(threading.Thread):
     """Deletes signals and execution reports older than HUB_RETENTION_DAYS, once a day, in chunks that each
-    stay well under the statement timeout. master_positions (one row per position) is kept."""
+    stay well under the statement timeout. master_positions (one row per position) is kept, and so are the
+    executions that make a copy's result (the followers' figures in the marketplace): only refusals and SL/TP
+    changes go."""
 
     def __init__(self, days: int):
         super().__init__(name="retention", daemon=True)
@@ -928,13 +930,16 @@ class Retention(threading.Thread):
     @staticmethod
     def purge(cutoff: datetime.datetime, pause: float = 0.2) -> Dict[str, int]:
         deleted = {}
-        for table, column in ((models.Signal, models.Signal.received_at), (models.Execution, models.Execution.created_at)):
+        copy_result = or_(models.Execution.retcode.is_(None), models.Execution.retcode.notin_(models.EXECUTION_DONE),
+                          models.Execution.action.notin_(models.COPY_ACTIONS))
+        for table, condition in ((models.Signal, models.Signal.received_at < cutoff),
+                                 (models.Execution, (models.Execution.created_at < cutoff) & copy_result)):
             total = 0
             while True:
                 session = database.SessionLocal()
                 try:
                     _statement_timeout(session)
-                    oldest = select(table.id).where(column < cutoff).order_by(table.id).limit(RETENTION_CHUNK)
+                    oldest = select(table.id).where(condition).order_by(table.id).limit(RETENTION_CHUNK)
                     n = session.execute(delete(table).where(table.id.in_(oldest.scalar_subquery()))
                                         .execution_options(synchronize_session=False)).rowcount
                     session.commit()

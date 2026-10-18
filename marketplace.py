@@ -16,6 +16,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+import followers
 import hosting
 import models
 import performance
@@ -114,22 +115,30 @@ def manager_profile(listing: models.Listing) -> dict:
 
 # --- Public performance, cached: the catalog must not compute every listing on every visit ---
 
-_cache: Dict[Tuple[int, int], Tuple[float, dict]] = {}
+_cache: Dict[Tuple[str, int, int], Tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
 
 
-def public_performance(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
-    key = (listing.id, days)
+def _cached(key: Tuple[str, int, int], compute) -> dict:
     with _cache_lock:
         hit = _cache.get(key)
         if hit and hit[0] > time.monotonic():
             return hit[1]
-    stats = performance.portfolio(db, listing.portfolio, days, now)
+    value = compute()
     with _cache_lock:
         if len(_cache) > 2000:
             _cache.clear()
-        _cache[key] = (time.monotonic() + CACHE_SECONDS, stats)
-    return stats
+        _cache[key] = (time.monotonic() + CACHE_SECONDS, value)
+    return value
+
+
+def public_performance(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
+    return _cached(("performance", listing.id, days), lambda: performance.portfolio(db, listing.portfolio, days, now))
+
+
+def public_followers(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
+    return _cached(("followers", listing.id, days),
+                   lambda: followers.public(followers.portfolio(db, listing.portfolio, days, now)))
 
 
 def clear_cache():

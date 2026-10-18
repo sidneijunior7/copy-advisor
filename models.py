@@ -261,11 +261,14 @@ class Signal(Base):
 # is a copy the Slave could not make, or made smaller: the broker's refusal, NO_MONEY (10019) from the Slave's
 # own margin check, or LIMIT_VOLUME (10034) for the volume the license's lot limit held back.
 EXECUTION_DONE = (10008, 10009, 10010)
+# A done execution with one of these is part of a copy's result (followers.py): kept past HUB_RETENTION_DAYS
+COPY_ACTIONS = ("OPEN", "ADD", "REVERSE", "PARTIAL", "CLOSE", "CLOSE_EXT")
 
 
 class Execution(Base):
     """Execution reports sent by Slave EAs."""
     __tablename__ = "executions"
+    __table_args__ = (Index("ix_executions_portfolio_created", "portfolio_id", "created_at"),)
 
     id = Column(BigIntPK, primary_key=True)
     uid = Column(String(64), nullable=False, index=True) # <master_login>_<pos_id>

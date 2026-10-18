@@ -3,8 +3,9 @@ import { useForm } from 'react-hook-form';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, ExternalLink, MailCheck, Store } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type Me, type PortfolioPerformance, type PublicListing, type Subscription } from '../../api';
+import api, { type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
 import EmptyState from '../../components/EmptyState';
+import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -107,6 +108,7 @@ export default function ListingPage() {
     const [missing, setMissing] = useState(false);
     const [days, setDays] = useState(90);
     const [stats, setStats] = useState<PortfolioPerformance | null>(null);
+    const [followers, setFollowers] = useState<PublicFollowerStats | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -122,8 +124,12 @@ export default function ListingPage() {
 
     useEffect(() => {
         let cancelled = false;
-        api.get<PortfolioPerformance>(`/api/marketplace/${slug}/performance`, { params: { days } })
-            .then(res => { if (!cancelled) setStats(res.data); })
+        Promise.all([
+            api.get<PortfolioPerformance>(`/api/marketplace/${slug}/performance`, { params: { days } })
+                .then(res => { if (!cancelled) setStats(res.data); }),
+            api.get<PublicFollowerStats>(`/api/marketplace/${slug}/followers`, { params: { days } })
+                .then(res => { if (!cancelled) setFollowers(res.data); }),
+        ])
             .catch(e => console.error(e))
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
@@ -186,6 +192,19 @@ export default function ListingPage() {
                     <div className={cn('transition-opacity', loading && 'opacity-60')}>
                         <PerformanceView stats={stats} emptyTitle="Sem operações fechadas no período"
                             emptyDescription="Escolha um período maior, ou volte quando o gestor fechar as primeiras operações." />
+                    </div>
+                )}
+            </section>
+
+            <section className="space-y-4">
+                <div>
+                    <h2 className="text-xl font-semibold">Como os seguidores copiaram</h2>
+                    <p className="text-sm text-muted-foreground">O que as contas dos clientes conseguiram nas mesmas operações, no mesmo período.
+                        Corretora, horário e tamanho mudam o preço de cada cópia.</p>
+                </div>
+                {followers && (
+                    <div className={cn('transition-opacity', loading && 'opacity-60')}>
+                        <FollowerStatsView stats={followers} />
                     </div>
                 )}
             </section>

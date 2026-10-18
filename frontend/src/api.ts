@@ -250,6 +250,29 @@ export type CopiesPerformance = PerformanceStats & { equity: { t: string; balanc
 
 export type MyPerformance = { copies: CopiesPerformance; portfolio: PortfolioPerformance | null };
 
+// How the followers copied a portfolio, in points (price difference): accounts of any size compare
+export type FollowerSymbol = {
+    symbol: string;
+    copies: number;
+    master_points: number;
+    follower_points: number;
+    entry_cost: number; // Positive: the follower got a worse price than the Master
+    exit_cost: number;
+    capture: number | null; // Followers' points over the Master's, in %; null when the Master did not gain
+};
+
+export type FollowerStats = {
+    followers: number;
+    copies: number;
+    capture: number | null;
+    copy_rate: number | null;
+    latency_ms: number | null;
+    symbols: FollowerSymbol[];
+};
+
+// The marketplace shows the figures only past a minimum of followers and copies
+export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
+
 export type Me = { email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null; email_verified: boolean; email_enabled: boolean };
 
 export const MARKETS = ['B3', 'Forex', 'Cripto', 'Índices', 'Commodities'] as const;
