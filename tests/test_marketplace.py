@@ -59,26 +59,26 @@ def test_listing_drafts_slugs_and_publishing(client):
 
 def test_public_catalog_shows_only_published(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Catálogo {uuid.uuid4().hex[:6]}")
-    slugs = [l["slug"] for l in client.get("/marketplace").json()]
+    slugs = [l["slug"] for l in client.get("/api/marketplace").json()]
     assert listing["slug"] in slugs
-    detail = client.get(f"/marketplace/{listing['slug']}").json()
+    detail = client.get(f"/api/marketplace/{listing['slug']}").json()
     assert detail["manager"] == {"name": "Gestor Teste", "bio": "Opera índice"} and detail["strategies"] == ["Scalper"]
     assert "portfolio_id" not in detail and detail["stats"]["trades"] == 0
-    assert client.get(f"/marketplace/{listing['slug']}/performance", params={"days": 100}).status_code == 200
+    assert client.get(f"/api/marketplace/{listing['slug']}/performance", params={"days": 100}).status_code == 200
     client.post(f"/portfolios/{portfolio_id}/listing/unpublish", headers=mgr)
-    assert client.get(f"/marketplace/{listing['slug']}").status_code == 404
-    assert listing["slug"] not in [l["slug"] for l in client.get("/marketplace").json()]
+    assert client.get(f"/api/marketplace/{listing['slug']}").status_code == 404
+    assert listing["slug"] not in [l["slug"] for l in client.get("/api/marketplace").json()]
 
 
 def test_subscription_approved_creates_the_linked_license_and_renewal_extends_it(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Assinatura {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
     login = uuid.uuid4().int % 10**8
-    assert client.post(f"/marketplace/{listing['slug']}/subscribe", headers=mgr, json={"mt5_login": login}).status_code == 403
-    r = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login, "note": "Paguei"})
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=mgr, json={"mt5_login": login}).status_code == 403
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login, "note": "Paguei"})
     assert r.status_code == 200 and r.json()["status"] == "pending" and r.json()["kind"] == "new"
     assert r.json()["listing"]["checkout_url"] == LISTING["checkout_url"]
-    assert client.post(f"/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login}).status_code == 409
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login}).status_code == 409
 
     [pending] = client.get("/me/subscriptions", headers=mgr, params={"status_filter": "pending"}).json()
     assert pending["client"]["name"] == "Cliente" and pending["note"] == "Paguei"
@@ -104,17 +104,17 @@ def test_reject_cancel_and_someone_elses_account(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Recusa {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
     other, _ = client_headers(client)
-    a = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 111}).json()
-    b = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 222}).json()
+    a = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 111}).json()
+    b = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 222}).json()
     r = client.post(f"/subscriptions/{a['id']}/reject", headers=mgr, json={"note": "Conta errada"})
     assert r.json()["status"] == "rejected" and r.json()["decision_note"] == "Conta errada"
     assert client.post(f"/me/subscriptions/{b['id']}/cancel", headers=other).status_code == 404
     assert client.post(f"/me/subscriptions/{b['id']}/cancel", headers=cli).json()["status"] == "cancelled"
     assert client.post(f"/subscriptions/{b['id']}/approve", headers=mgr, json={}).status_code == 409
     # An account already licensed to another client cannot be taken over by asking for it
-    c = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 333}).json()
+    c = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 333}).json()
     client.post(f"/subscriptions/{c['id']}/approve", headers=mgr, json={})
-    r = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=other, json={"mt5_login": 333})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"mt5_login": 333})
     assert r.status_code == 409
 
 
@@ -124,7 +124,7 @@ def test_admin_suspends_and_the_manager_cannot_republish(client):
     assert client.post(f"/admin/listings/{listing['id']}/suspend", headers=mgr, json={"reason": "x" * 5}).status_code == 403
     r = client.post(f"/admin/listings/{listing['id']}/suspend", headers=admin, json={"reason": "Desempenho falso"})
     assert r.json()["status"] == "suspended"
-    assert client.get(f"/marketplace/{listing['slug']}").status_code == 404
+    assert client.get(f"/api/marketplace/{listing['slug']}").status_code == 404
     r = client.post(f"/portfolios/{portfolio_id}/listing/publish", headers=mgr)
     assert r.status_code == 409 and "Desempenho falso" in r.json()["detail"]
     assert client.post(f"/admin/listings/{listing['id']}/restore", headers=admin).json()["status"] == "draft"

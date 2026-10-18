@@ -61,3 +61,10 @@ export const PERIODS = [
     { days: 180, label: 'Últimos 6 meses' },
     { days: 365, label: 'Último ano' },
 ];
+
+export const SUBSCRIPTION_STATUS = {
+    pending: { label: 'Esperando', variant: 'warning' },
+    approved: { label: 'Aprovada', variant: 'success' },
+    rejected: { label: 'Recusada', variant: 'destructive' },
+    cancelled: { label: 'Cancelada', variant: 'muted' },
+} as const;

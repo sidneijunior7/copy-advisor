@@ -95,8 +95,10 @@ export default function LineChart({ series, ariaLabel, formatValue, formatTime, 
                 {zeroLine && y0 < 0 && y1 > 0 && (
                     <line x1={MARGIN.left} x2={MARGIN.left + innerW} y1={y(0)} y2={y(0)} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.6} strokeWidth={1} />
                 )}
-                {xTicks.map(t => (
-                    <text key={t} x={x(t)} y={height - 8} textAnchor="middle" className="fill-muted-foreground text-[11px] tabular-nums">
+                {xTicks.map((t, i) => (
+                    // The first and last labels stay inside the plot instead of spilling over its edges
+                    <text key={t} x={x(t)} y={height - 8} textAnchor={xTicks.length > 1 && i === 0 ? 'start' : i === xTicks.length - 1 && xTicks.length > 1 ? 'end' : 'middle'}
+                        className="fill-muted-foreground text-[11px] tabular-nums">
                         {formatTime(t)}
                     </text>
                 ))}

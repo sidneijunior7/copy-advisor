@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, Download, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, ShieldCheck, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Download, Inbox, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, ShieldCheck, Store, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -27,14 +27,28 @@ const navByRole: Record<string, NavSection[]> = {
                 { path: '/manager/install', label: 'Instalação', icon: Download },
             ],
         },
+        {
+            title: 'Vendas',
+            items: [
+                { path: '/manager/marketplace', label: 'Marketplace', icon: Store },
+                { path: '/manager/subscriptions', label: 'Assinaturas', icon: Inbox },
+            ],
+        },
     ],
-    TDM_DEV: [{ title: 'Administração', items: [{ path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true }] }],
+    TDM_DEV: [{
+        title: 'Administração',
+        items: [
+            { path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true },
+            { path: '/dev/marketplace', label: 'Marketplace', icon: Store },
+        ],
+    }],
     CLIENT: [
         {
             title: 'Conta',
             items: [
                 { path: '/client', label: 'Minhas licenças', icon: KeyRound, end: true },
                 { path: '/client/install', label: 'Instalação', icon: Download },
+                { path: '/marketplace', label: 'Marketplace', icon: Store },
             ],
         },
     ],

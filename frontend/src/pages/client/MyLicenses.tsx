@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import api, { type ClientLicense, type MyLicenses as MyLicensesData } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
+import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -56,6 +57,9 @@ export default function MyLicenses() {
                 icon={<KeyRound />}
             />
 
+            <EmailReminder />
+            <MySubscriptions />
+
             <Card
                 title="Adicionar licença"
                 description="Quem vendeu a licença envia um código de acesso. Ele vale uma vez só."
@@ -88,7 +92,7 @@ export default function MyLicenses() {
                     <EmptyState
                         icon={<KeyRound />}
                         title="Nenhuma licença ainda"
-                        description="Adicione a licença com o código de acesso que você recebeu de quem vendeu o portfólio."
+                        description="Assine um portfólio no Marketplace, ou adicione a licença com o código de acesso que você recebeu de quem a vendeu."
                     />
                 </div>
             ) : (

@@ -182,6 +182,25 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   2. Hub.
   3. Os EAs (Master 4.01 no terminal do Master, Slave 4.04 nos clientes e no pod). Os EAs antigos continuam funcionando sem esses dados.
 
+## Marketplace e emails
+
+- **Páginas públicas,** sem login: o catálogo em `/marketplace` e a página de cada portfólio em `/marketplace/<endereço>`. São páginas do painel; os dados vêm de `/api/marketplace`, com o desempenho guardado em memória por 5 minutos.
+- **Gestor:**
+  - em **Vendas → Marketplace**, preenche o perfil público (nome e apresentação) e cria o anúncio de cada portfólio: título, resumo, descrição, mercados, preço, link de pagamento (só `https`), dias e lotes padrão da licença, capital recomendado e se aceita hospedagem;
+  - só publica com um nome no perfil e uma estratégia no portfólio;
+  - em **Vendas → Assinaturas**, aprova ou recusa os pedidos. Aprovar cria a licença já ligada à conta do cliente, ou estende a validade a partir do vencimento atual, se for renovação.
+- **Cliente:** pede a assinatura na página do portfólio com o número da conta MT5, paga pelo link do gestor e acompanha o pedido em **Minhas licenças**, onde também pede a renovação. Uma conta MT5 com licença de outro cliente não pode ser pedida.
+- **TDM_DEV:** em **Marketplace**, suspende um anúncio com o motivo, que o gestor vê ao tentar publicar de novo, e o devolve como rascunho.
+- **Emails** (`mailer.py`), por qualquer servidor SMTP (o email da Hostinger serve):
+  - `SMTP_HOST`, `SMTP_PORT` (465 usa SSL, as outras STARTTLS), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` e `PUBLIC_URL`, a base dos links;
+  - enviam a confirmação do cadastro (link de 72 horas), a recuperação de senha (link de 1 hora), o aviso de pedido novo ao gestor e a decisão ao cliente;
+  - com o SMTP configurado, só quem confirmou o email assina;
+  - sem `SMTP_HOST` e `SMTP_FROM`, nada é enviado, a recuperação de senha responde que não está disponível e qualquer cliente assina;
+  - os links valem uma vez, e o banco guarda só o hash. Trocar a senha encerra as sessões abertas antes da troca;
+  - o pedido de recuperação responde igual para emails com e sem conta, e conta no limite de tentativas por IP.
+- **Pagamento:** por enquanto é o link do gestor e a aprovação manual.
+- **Deploy:** a migração `0011` cria as tabelas. Configure as variáveis do SMTP na API antes de anunciar o cadastro: sem elas, quem esquecer a senha depende do suporte.
+
 ## Tipo da conta do Master
 
 O Master envia `V2HELLO` ao conectar e a cada 5 minutos. A mensagem leva o tipo da conta (`demo`, `contest` ou `real`), o servidor e a corretora. O hub grava isso em `master_accounts` (migração `0005`) e não bloqueia nada. A regra de conta demo para estratégias da B3 ainda vai ser definida.

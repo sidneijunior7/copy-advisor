@@ -1,12 +1,13 @@
 import { isAxiosError } from 'axios';
 import { useForm } from 'react-hook-form';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Lock, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api';
 import AuthShell from '../components/AuthShell';
 import { Button } from '../components/ui/Button';
 import { Field, Input } from '../components/ui/Field';
+import { safeNext } from '../lib/utils';
 
 type LoginForm = { email: string; password: string };
 
@@ -22,6 +23,8 @@ export default function Login() {
     const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useForm<LoginForm>();
     const { login, token } = useAuth();
     const navigate = useNavigate();
+    const [params] = useSearchParams();
+    const next = safeNext(params.get('next'), '/dashboard');
 
     const onSubmit = async (data: LoginForm) => {
         try {
@@ -31,13 +34,13 @@ export default function Login() {
 
             const res = await api.post('/token', formData);
             login(res.data.access_token);
-            navigate('/dashboard');
+            navigate(next);
         } catch (err) {
             setError('root', { message: loginError(err) });
         }
     };
 
-    if (token) return <Navigate to="/dashboard" replace />;
+    if (token) return <Navigate to={next} replace />;
 
     return (
         <AuthShell title="Bem-vindo de volta" subtitle="Insira suas credenciais para acessar o painel.">
@@ -80,9 +83,9 @@ export default function Login() {
             <div className="space-y-2 text-center text-sm text-muted-foreground">
                 <p>
                     Ainda não tem conta?{' '}
-                    <Link to="/cadastro" className="font-medium text-primary underline-offset-4 hover:underline">Cadastre-se</Link>
+                    <Link to={`/cadastro${params.get('next') ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-medium text-primary underline-offset-4 hover:underline">Cadastre-se</Link>
                 </p>
-                <p>Esqueceu a senha? Fale com o suporte.</p>
+                <p><Link to="/recuperar-senha" className="font-medium text-primary underline-offset-4 hover:underline">Esqueceu a senha?</Link></p>
             </div>
         </AuthShell>
     );

@@ -1,4 +1,4 @@
-import { forwardRef, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
+import { forwardRef, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -21,6 +21,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, icon
     );
 });
 Input.displayName = 'Input';
+
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => (
+    <textarea ref={ref} className={cn(control, 'h-auto min-h-24 resize-y', className)} {...props} />
+));
+Textarea.displayName = 'Textarea';
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
     ({ className, children, ...props }, ref) => (

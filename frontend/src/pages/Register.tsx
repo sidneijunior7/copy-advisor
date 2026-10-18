@@ -1,12 +1,12 @@
 import { useForm } from 'react-hook-form';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Lock, Mail, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api';
 import AuthShell from '../components/AuthShell';
 import { Button } from '../components/ui/Button';
 import { Field, Input } from '../components/ui/Field';
-import { apiError } from '../lib/utils';
+import { apiError, safeNext } from '../lib/utils';
 
 type RegisterForm = { name: string; email: string; password: string; confirm: string };
 
@@ -17,18 +17,20 @@ export default function Register() {
     const { register, handleSubmit, setError, watch, formState: { errors, isSubmitting } } = useForm<RegisterForm>();
     const { login, token } = useAuth();
     const navigate = useNavigate();
+    const [params] = useSearchParams();
+    const next = safeNext(params.get('next'), '/client');
 
     const onSubmit = async (data: RegisterForm) => {
         try {
             const res = await api.post('/register', { name: data.name.trim(), email: data.email.trim(), password: data.password });
             login(res.data.access_token);
-            navigate('/client');
+            navigate(next);
         } catch (err) {
             setError('root', { message: apiError(err, 'Não foi possível criar a conta. Tente novamente.') });
         }
     };
 
-    if (token) return <Navigate to="/dashboard" replace />;
+    if (token) return <Navigate to={next} replace />;
 
     return (
         <AuthShell title="Crie sua conta" subtitle="Acompanhe suas cópias e configure como elas entram na sua conta.">
@@ -94,7 +96,7 @@ export default function Register() {
 
             <p className="text-center text-sm text-muted-foreground">
                 Já tem conta?{' '}
-                <Link to="/login" className="font-medium text-primary underline-offset-4 hover:underline">Entrar</Link>
+                <Link to={`/login${params.get('next') ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-medium text-primary underline-offset-4 hover:underline">Entrar</Link>
             </p>
         </AuthShell>
     );

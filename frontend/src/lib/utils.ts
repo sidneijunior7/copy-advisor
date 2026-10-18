@@ -48,6 +48,10 @@ export const formatAgo = (seconds: number) => {
     return `há ${days} ${days === 1 ? 'dia' : 'dias'}`;
 };
 
+// A ?next= the login and sign-up pages go back to: only a path of this site, never another origin
+export const safeNext = (next: string | null, fallback: string) =>
+    next && /^\/(?![/\\])/.test(next) ? next : fallback;
+
 // FastAPI sends `detail` as a string for our own errors and as a list for validation errors
 export const apiError = (err: unknown, fallback: string): string => {
     const detail = isAxiosError(err) ? err.response?.data?.detail : undefined;

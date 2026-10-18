@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Briefcase, KeyRound } from 'lucide-react';
-import api, { type MyLicenses } from '../../api';
+import { ArrowLeft, Briefcase, ExternalLink, KeyRound, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+import api, { type MyLicenses, type Subscription } from '../../api';
 import Card from '../../components/Card';
 import ClientHosting from '../../components/client/ClientHosting';
 import ClientPerformance from '../../components/client/ClientPerformance';
@@ -10,9 +11,10 @@ import { ClientIssues, CopiesTable } from '../../components/client/CopiesTable';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import { copyState } from '../../lib/clientLicense';
 import { SIZING_LABELS, SLTP_LABELS } from '../../lib/labels';
-import { cn, formatDate } from '../../lib/utils';
+import { apiError, cn, formatDate } from '../../lib/utils';
 
 const POLL_MS = 15_000;
 
@@ -32,6 +34,8 @@ export default function LicenseDetail() {
     const [tab, setTab] = useState<Tab>('overview');
     const [reload, setReload] = useState(0); // Bumped to load again now, after a change
     const refresh = () => setReload(n => n + 1);
+    const [renewal, setRenewal] = useState<Subscription | null>(null);
+    const [renewing, setRenewing] = useState(false);
 
     useEffect(() => {
         const load = () => api.get<MyLicenses>('/me/licenses')
@@ -62,6 +66,19 @@ export default function LicenseDetail() {
     }
 
     const state = copyState(license);
+
+    const renew = async () => {
+        setRenewing(true);
+        try {
+            const res = await api.post<Subscription>(`/me/licenses/${license.id}/renew`);
+            setRenewal(res.data);
+            toast.success('Pedido de renovação enviado', { description: 'O gestor estende a validade depois do pagamento.' });
+        } catch (e) {
+            toast.error(apiError(e, 'Não foi possível pedir a renovação.'));
+        } finally {
+            setRenewing(false);
+        }
+    };
     const s = license.settings;
 
     return (
@@ -123,6 +140,22 @@ export default function LicenseDetail() {
                                     <dd>{SLTP_LABELS[s.sltp_mode ?? 'distance']}</dd>
                                 </div>
                             </dl>
+                            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                                {renewal ? (
+                                    <>
+                                        <p className="text-sm text-muted-foreground">Renovação pedida.</p>
+                                        {renewal.listing.checkout_url && (
+                                            <a href={renewal.listing.checkout_url} target="_blank" rel="noopener noreferrer">
+                                                <Button size="sm"><ExternalLink /> Pagar</Button>
+                                            </a>
+                                        )}
+                                    </>
+                                ) : (
+                                    <Button size="sm" variant="outline" loading={renewing} onClick={renew}>
+                                        {!renewing && <RefreshCw />} Renovar
+                                    </Button>
+                                )}
+                            </div>
                         </Card>
                     </div>
                     <ClientHosting

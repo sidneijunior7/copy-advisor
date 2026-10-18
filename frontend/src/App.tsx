@@ -5,8 +5,13 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './Layouts/AppLayout';
+import PublicLayout from './Layouts/PublicLayout';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import { ForgotPassword, ResetPassword, VerifyEmail } from './pages/EmailLinks';
+import Catalog from './pages/market/Catalog';
+import ListingPage from './pages/market/ListingPage';
+import AdminListings from './pages/dev/AdminListings';
 import NotFound from './pages/NotFound';
 import DevDashboard from './pages/DevDashboard';
 
@@ -18,6 +23,8 @@ import Clients from './pages/manager/Clients';
 import Connections from './pages/manager/Connections';
 import Install from './pages/manager/Install';
 import PortfolioPerformance from './pages/manager/PortfolioPerformance';
+import ManagerMarketplace from './pages/manager/ManagerMarketplace';
+import Subscriptions from './pages/manager/Subscriptions';
 
 // Client Pages
 import MyLicenses from './pages/client/MyLicenses';
@@ -55,11 +62,21 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/cadastro" element={<Register />} />
+            <Route path="/recuperar-senha" element={<ForgotPassword />} />
+            <Route path="/redefinir-senha" element={<ResetPassword />} />
+            <Route path="/verificar-email" element={<VerifyEmail />} />
+
+            {/* Public: anyone can open the marketplace */}
+            <Route element={<PublicLayout />}>
+              <Route path="/marketplace" element={<Catalog />} />
+              <Route path="/marketplace/:slug" element={<ListingPage />} />
+            </Route>
 
             {/* TDM_DEV Routes */}
             <Route element={<ProtectedRoute allowedRoles={['TDM_DEV']} />}>
               <Route element={<AppLayout />}>
                 <Route path="/dev" element={<DevDashboard />} />
+                <Route path="/dev/marketplace" element={<AdminListings />} />
               </Route>
             </Route>
 
@@ -73,6 +90,8 @@ function App() {
                 <Route path="portfolios/:id/performance" element={<PortfolioPerformance />} />
                 <Route path="clients" element={<Clients />} />
                 <Route path="install" element={<Install />} />
+                <Route path="marketplace" element={<ManagerMarketplace />} />
+                <Route path="subscriptions" element={<Subscriptions />} />
               </Route>
             </Route>
 

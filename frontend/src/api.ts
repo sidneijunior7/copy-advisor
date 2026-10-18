@@ -249,3 +249,57 @@ export type PortfolioPerformance = PerformanceStats & { strategies: { id: number
 export type CopiesPerformance = PerformanceStats & { equity: { t: string; balance: number | null; equity: number | null }[] };
 
 export type MyPerformance = { copies: CopiesPerformance; portfolio: PortfolioPerformance | null };
+
+export type Me = { email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null; email_verified: boolean; email_enabled: boolean };
+
+export const MARKETS = ['B3', 'Forex', 'Cripto', 'Índices', 'Commodities'] as const;
+export type Market = typeof MARKETS[number];
+
+// A portfolio's listing as its manager edits it
+export type Listing = {
+    id: number;
+    portfolio_id: number;
+    slug: string;
+    title: string;
+    summary: string | null;
+    description: string | null;
+    markets: Market[];
+    price: number | null;
+    currency: 'BRL' | 'USD';
+    checkout_url: string | null;
+    default_days: number;
+    default_max_lots: number;
+    min_capital: number | null;
+    hosting_allowed: boolean;
+    status: 'draft' | 'published' | 'suspended';
+    suspended_reason: string | null;
+    published_at: string | null;
+    updated_at: string | null;
+};
+
+export type MyListing = { portfolio: { id: number; name: string; strategies: number }; listing: Listing | null };
+
+// What anyone sees in the marketplace: the last 90 days in stats, the manager's public profile
+export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended_reason' | 'default_max_lots'> & {
+    manager: { name: string; bio: string | null };
+    strategies: string[];
+    stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & { curve: number[] };
+};
+
+export type SubscriptionStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export type Subscription = {
+    id: number;
+    listing: { id: number; slug: string; title: string; checkout_url: string | null; price: number | null; currency: string; default_days: number };
+    mt5_login: number;
+    kind: 'new' | 'renewal';
+    status: SubscriptionStatus;
+    note: string | null;
+    decision_note: string | null;
+    license_id: number | null;
+    created_at: string;
+    decided_at: string | null;
+    client?: { name: string | null; email: string }; // Only for the manager
+};
+
+export type AdminListing = Listing & { manager: string | null };

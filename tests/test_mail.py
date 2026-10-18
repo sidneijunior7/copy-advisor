@@ -46,7 +46,7 @@ def test_confirm_email_before_subscribing(client, outbox):
     [verify] = outbox
     assert verify["to"] == email and "/verificar-email?token=" in verify["body"]
     assert client.get("/me", headers=me).json()["email_verified"] is False
-    r = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242})
     assert r.status_code == 403 and "Confirme" in r.json()["detail"]
 
     token = link_token(verify["body"])
@@ -54,7 +54,7 @@ def test_confirm_email_before_subscribing(client, outbox):
     assert client.post("/email/verify", json={"token": token}).status_code == 400  # Used up
     assert client.get("/me", headers=me).json()["email_verified"] is True
 
-    r = client.post(f"/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242, "note": "Oi"})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242, "note": "Oi"})
     assert r.status_code == 200
     notice = outbox[-1]
     assert notice["subject"].startswith("Novo pedido de assinatura") and "4242" in notice["body"] and "Oi" in notice["body"]

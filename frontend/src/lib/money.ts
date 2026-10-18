@@ -9,3 +9,7 @@ export const formatMoney = (value: number, currency: string | null) => {
     }
     return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+
+// What a listing costs, per period of validity
+export const priceLabel = (l: { price: number | null; currency: string; default_days: number }) =>
+    l.price == null ? 'Preço sob consulta' : l.price === 0 ? 'Gratuito' : `${formatMoney(l.price, l.currency)} / ${l.default_days} dias`;

@@ -1319,23 +1319,23 @@ def published_listing(slug: str, db: Session) -> models.Listing:
     if listing is None: raise HTTPException(status_code=404, detail="Portfólio não encontrado")
     return listing
 
-@app.get("/marketplace")
+@app.get("/api/marketplace")  # /marketplace itself is the dashboard's page
 def list_marketplace(db: Session = Depends(get_db)):
     """Published listings with the headline numbers of the last 90 days. Public."""
     now = datetime.datetime.utcnow()
     listings = db.query(models.Listing).filter(models.Listing.status == "published").order_by(models.Listing.published_at).all()
     return [marketplace.public_listing(db, l, now) for l in listings]
 
-@app.get("/marketplace/{slug}")
+@app.get("/api/marketplace/{slug}")
 def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
     return marketplace.public_listing(db, published_listing(slug, db), datetime.datetime.utcnow())
 
-@app.get("/marketplace/{slug}/performance")
+@app.get("/api/marketplace/{slug}/performance")
 def get_marketplace_performance(slug: str, days: int = marketplace.PUBLIC_DAYS, db: Session = Depends(get_db)):
     days = min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds
     return marketplace.public_performance(db, published_listing(slug, db), days, datetime.datetime.utcnow())
 
-@app.post("/marketplace/{slug}/subscribe")
+@app.post("/api/marketplace/{slug}/subscribe")
 def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.User = Depends(get_current_user),
               db: Session = Depends(get_db)):
     """A client asks for a listing with the MT5 account that will copy. The manager approves it once paid."""
