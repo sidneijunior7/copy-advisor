@@ -22,6 +22,7 @@ const CONE_MISSING: Record<string, string> = {
     capital: 'O backtest não tem o capital inicial declarado no Dash. Sem ele, não dá para comparar em % da conta.',
     accounts: 'O portfólio opera em mais de uma conta Master. A comparação em % da conta precisa de uma só.',
     balance: 'Ainda sem o saldo da conta Master. Ele vem do EA Master 4.01 ou mais novo.',
+    currency: 'O capital do backtest está numa moeda e a conta Master em outra. A comparação precisa das duas na mesma moeda.',
     'no-trades': 'Sem operações fechadas no período para comparar com o backtest.',
     'few-trades': 'A comparação aparece a partir de 5 operações fechadas no período.',
 };
@@ -38,6 +39,8 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
     if (!view.available) return null;
     const b = view.backtest;
     const period = b.from && b.to ? `${formatDate(parseUtc(b.from))} a ${formatDate(parseUtc(b.to))}` : undefined;
+    const inc = view.incubation;
+    const incPeriod = inc?.from && inc.to ? `${formatDate(parseUtc(inc.from))} a ${formatDate(parseUtc(inc.to))}` : undefined;
     const cone = view.cone;
     const rows = cone ? cone.bands.filter((_, i) => i % Math.max(1, Math.ceil(cone.bands.length / 15)) === 0 || i === cone.bands.length - 1) : [];
 
@@ -57,6 +60,28 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                 <Tile label="Operações" value={b.trades.toLocaleString('pt-BR')} hint={b.truncated ? 'as primeiras 20 mil' : undefined} />
                 <Tile label="Período" value={years(b.from, b.to)} hint={period} />
             </div>
+            {inc && (
+                <div className="space-y-3">
+                    <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                        <Badge variant={inc.verified === inc.trades ? 'success' : 'primary'}>Incubação no Dash</Badge>
+                        {inc.verified === inc.trades
+                            ? 'Acompanhamento ao vivo no Trademetric Dash, verificado pela OnTick.'
+                            : inc.verified > 0
+                                ? `Acompanhamento ao vivo no Trademetric Dash: ${inc.verified} de ${inc.trades} operações verificadas pela OnTick, as outras informadas pelo EA do gestor.`
+                                : 'Acompanhamento ao vivo no Trademetric Dash, informado pelo EA do gestor.'}
+                        {' '}Nenhum cliente do Mirror recebeu estas operações.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                        <Tile label="Retorno" value={pct(inc.return_pct)}
+                            hint={inc.initial_balance != null ? `sobre ${formatMoney(inc.initial_balance, inc.currency)}` : 'sem o capital declarado'} />
+                        <Tile label="Maior queda" value={inc.max_drawdown_pct == null ? '—' : pct(-inc.max_drawdown_pct)} hint="do saldo" />
+                        <Tile label="Acerto" value={pct(inc.win_rate)} />
+                        <Tile label="Fator de lucro" value={inc.profit_factor == null ? '—' : inc.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />
+                        <Tile label="Operações" value={inc.trades.toLocaleString('pt-BR')} hint={inc.truncated ? 'as primeiras 20 mil' : undefined} />
+                        <Tile label="Período" value={incPeriod ?? '—'} />
+                    </div>
+                </div>
+            )}
             <Card title="Ao vivo dentro do backtest" icon={<FlaskConical />}
                 description="Mil caminhos sorteados das operações do backtest, com tantas operações quanto o Master fechou no período, em % da conta. A faixa mostra onde caíram 50% e 90% deles.">
                 <div className="mt-4 space-y-4">

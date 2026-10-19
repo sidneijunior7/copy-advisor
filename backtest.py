@@ -1,17 +1,18 @@
 """
-The backtest a manager declared on the Trademetric Dash, next to the live result: its numbers, and a Monte Carlo cone
-the live result is drawn in.
+The backtest a manager declared on the Trademetric Dash, next to the live result: its numbers, the Dash portfolio's
+own live tracking (the incubation, shown apart from the Mirror's track record), and a Monte Carlo cone the live
+result is drawn in.
 
 Both sides are in percent of the account, so a backtest of one size compares with a live account of another:
 - a backtest trade is its net result over the balance before it, from the capital declared on the Dash;
-- a live trade (a closed Master position, performance.py) is its result over the Master's balance before it, from
-  the hourly snapshots (V2ACC). It needs a single Master account behind the portfolio.
+- a live trade (a closed Master position, performance.py) is its result over the balance before it: the same declared
+  capital plus the live trades before it, or, without a declared capital, the Master's own balance then (from the
+  latest V2ACC and the deals since, performance.balance_at). It needs a single Master account behind the portfolio.
 
 The cone: SIMULATION_BUDGET steps of bootstrap (backtest returns drawn with replacement), as many trades as the live
 result has, compounded. At each point, the 5/25/50/75/95 percentiles of the cumulative return. The live result
 below the 5th percentile at the end is worse than 95% of what the backtest allowed for.
 """
-import bisect
 import datetime
 import json
 import random
@@ -98,26 +99,29 @@ def stats(bt: dict) -> dict:
 
 
 def live_returns(db: Session, p: models.Portfolio, days: int, now: datetime.datetime) -> Tuple[List[float], Optional[str]]:
-    """The portfolio's closed trades in the period as percent of the Master's balance before each; or the reason
-    there are none."""
+    """The portfolio's closed trades in the period as percent of the balance before each; or the reason there are
+    none."""
     results, logins = performance.portfolio_results(db, p, performance.since(days, now))
     if not results:
         return [], "no-trades"
     if len(logins) != 1:
         return [], "accounts"
-    snaps = (db.query(models.AccountSnapshot.hour, models.AccountSnapshot.balance)
-             .filter(models.AccountSnapshot.kind == "master", models.AccountSnapshot.owner_id == p.user_id,
-                     models.AccountSnapshot.login == logins[0], models.AccountSnapshot.balance.isnot(None))
-             .order_by(models.AccountSnapshot.hour).all())
-    if not snaps:
-        return [], "balance"
-    # A snapshot holds the last balance of its hour: the one before a trade is from an earlier hour
-    ends = [h + datetime.timedelta(hours=1) for h, _ in snaps]
+    track = performance.track_capital(db, p, logins)
+    if track["source"] == "currency-mismatch":
+        return [], "currency"
     out = []
+    if track["capital"]:  # Declared: the live account compounds from the same capital the backtest does
+        balance = track["capital"]
+        for _, result in sorted(results):
+            if balance > 0:
+                out.append(result / balance)
+            balance += result
+        return out, None
+    if track["balance_at"] is None:
+        return [], "balance"
     for at, result in sorted(results):
-        i = bisect.bisect_right(ends, at) - 1
-        balance = snaps[max(i, 0)][1]
-        if balance and balance > 0:
+        balance = track["balance_at"](at)  # Just before its closing deal
+        if balance > 0:
             out.append(result / balance)
     return out, None
 
@@ -162,14 +166,26 @@ def cone(bt_returns: List[float], live: List[float], seed: int = 0) -> Optional[
     return {"trades": n, "simulations": sims, "bands": bands, "verdict": verdict}
 
 
+def incubation(bt: dict) -> Optional[dict]:
+    """The Dash portfolio's live tracking, before or beside the Mirror: the same numbers as the backtest, over the same
+    capital. verified: how many of its trades came from OnTick, the rest from the manager's own EA. None without."""
+    pnls = bt.get("live_pnl") or []
+    if not pnls:
+        return None
+    out = stats({"pnl": pnls, "initial_balance": bt.get("initial_balance"), "currency": bt.get("currency"),
+                 "from": bt.get("live_from"), "to": bt.get("live_to"), "truncated": bt.get("live_truncated")})
+    del out["strategies"]
+    return {**out, "verified": int(bt.get("live_verified") or 0)}
+
+
 def view(db: Session, p: models.Portfolio, link: Optional[models.DashLink], days: int, now: datetime.datetime,
          seed: int = 0) -> dict:
     """What the listing page shows: the declared backtest and the cone, or why there is none."""
     bt = parse(link.backtest) if link is not None else None
     if bt is None or not bt["pnl"]:
         return {"available": False}
-    out = {"available": True, "fetched_at": link.backtest_fetched_at, "backtest": stats(bt), "cone": None,
-           "cone_missing": None}
+    out = {"available": True, "fetched_at": link.backtest_fetched_at, "backtest": stats(bt),
+           "incubation": incubation(bt), "cone": None, "cone_missing": None}
     initial = float(bt.get("initial_balance") or 0)
     if initial <= 0:
         out["cone_missing"] = "capital"

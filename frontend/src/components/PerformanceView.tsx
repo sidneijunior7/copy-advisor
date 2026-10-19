@@ -13,6 +13,13 @@ const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', '
 // "2026-10" as "out/26"
 const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1]}/${month.slice(2, 4)}`;
 
+// What the return is over, after the amount
+const CAPITAL_SOURCE: Record<string, string> = { dash: 'capital do Dash', account: 'saldo da conta' };
+const NO_CAPITAL: Record<string, string> = {
+    accounts: 'operações de mais de uma conta Master',
+    'currency-mismatch': 'capital do Dash em outra moeda',
+};
+
 const pct = (value: number | null) => (value == null ? '—' : `${value.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`);
 
 export function Tile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'up' | 'down' }) {
@@ -36,11 +43,26 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
     const money = (v: number) => formatMoney(v, stats.currency);
     const equity = 'equity' in stats ? stats.equity.filter(e => e.balance != null && e.equity != null) : [];
     const strategies = 'strategies' in stats ? stats.strategies : [];
+    const source = 'capital_source' in stats ? stats.capital_source : null;
+    const returnHint = stats.start_balance != null
+        ? `sobre ${money(stats.start_balance)}${source && CAPITAL_SOURCE[source] ? ` (${CAPITAL_SOURCE[source]})` : ''}`
+        : (source && NO_CAPITAL[source]) || 'sem o saldo inicial';
+    const before = 'before_mirror' in stats ? stats.before_mirror : null;
+    const beforeNote = before && before.trades > 0 && (
+        <p className="text-xs text-muted-foreground">
+            Fora destes números: {before.trades} {before.trades === 1 ? 'operação' : 'operações'} de antes do Master
+            se conectar ao Mirror{before.until ? ` (até ${formatDate(parseUtc(before.until))})` : ''}, com resultado
+            de {money(before.net)}. Nenhum cliente as recebeu, então não fazem parte do histórico.
+        </p>
+    );
 
     if (stats.trades === 0 && equity.length === 0) {
         return (
-            <div className="panel">
-                <EmptyState icon={<TrendingUp />} title={emptyTitle} description={emptyDescription} />
+            <div className="space-y-3">
+                <div className="panel">
+                    <EmptyState icon={<TrendingUp />} title={emptyTitle} description={emptyDescription} />
+                </div>
+                {beforeNote}
             </div>
         );
     }
@@ -50,10 +72,11 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
 
     return (
         <div className="space-y-6">
+            {beforeNote}
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                 <Tile label="Resultado" value={money(stats.net)} tone={stats.net > 0 ? 'up' : stats.net < 0 ? 'down' : undefined} />
                 <Tile label="Retorno" value={pct(stats.return_pct)}
-                    hint={stats.start_balance != null ? `sobre ${money(stats.start_balance)}` : 'sem o saldo inicial'} />
+                    hint={returnHint} />
                 <Tile label="Acerto" value={pct(stats.win_rate)} hint={`${stats.wins} de ${stats.trades} operações`} />
                 <Tile label="Fator de lucro" value={stats.profit_factor == null ? '—' : stats.profit_factor.toLocaleString('pt-BR')}
                     hint="ganhos ÷ perdas" />

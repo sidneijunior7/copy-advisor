@@ -712,6 +712,7 @@ def list_portfolios(current_user: models.User = Depends(get_current_user), db: S
                 for s in p.strategies
             ],
             "client_limits": clients.limits_of(p).model_dump(),
+            "master_login": p.master_login,
         })
     return result
 
@@ -1291,6 +1292,54 @@ def my_performance(license_id: int, days: int = 90, current_user: models.User = 
     now = datetime.datetime.utcnow()
     return {"copies": performance.copies(db, lic, days, now),
             "portfolio": performance.portfolio(db, lic.portfolio, days, now) if lic.portfolio else None}
+
+class PortfolioOriginIn(BaseModel):
+    master_login: Optional[int] = Field(default=None, ge=1)
+
+@app.get("/me/master-accounts")
+def list_master_accounts(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The accounts the manager's Masters ever ran on (V2HELLO), with their currency and latest balance (V2ACC)."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    out = []
+    for a in (db.query(models.MasterAccount).filter(models.MasterAccount.manager_id == current_user.id)
+              .order_by(models.MasterAccount.last_seen_at.desc())):
+        snap = (db.query(models.AccountSnapshot)
+                .filter(models.AccountSnapshot.kind == "master", models.AccountSnapshot.owner_id == current_user.id,
+                        models.AccountSnapshot.login == a.master_login)
+                .order_by(models.AccountSnapshot.hour.desc()).first())
+        out.append({"master_login": a.master_login, "trade_mode": a.trade_mode, "server": a.server,
+                    "company": a.company, "last_seen_at": a.last_seen_at,
+                    "currency": snap.currency if snap else None, "balance": snap.balance if snap else None})
+    return out
+
+@app.put("/portfolios/{portfolio_id}/origin")
+def update_portfolio_origin(portfolio_id: int, data: PortfolioOriginIn, current_user: models.User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """The Master account the portfolio copies from (None: every account). The hub sends its clients only that
+    account's positions; what they already got stays in the track record (portfolio_trades). An open position from
+    an account left out would vanish from the clients' snapshot and close their copies, so it has to close first."""
+    portfolio = own_portfolio(portfolio_id, current_user, db)
+    if data.master_login is not None and db.query(models.MasterAccount).filter(
+            models.MasterAccount.manager_id == current_user.id,
+            models.MasterAccount.master_login == data.master_login).first() is None:
+        raise HTTPException(status_code=422, detail="Nenhum Master seu se conectou com essa conta")
+    if data.master_login is not None and data.master_login != portfolio.master_login:
+        open_elsewhere = (db.query(models.MasterPosition.master_login)
+                          .filter(models.MasterPosition.manager_id == current_user.id,
+                                  models.MasterPosition.closed_at.is_(None),
+                                  models.MasterPosition.master_login != data.master_login,
+                                  models.MasterPosition.strategy_id.in_([s.id for s in portfolio.strategies] or [0]))
+                          .first())
+        if open_elsewhere is not None:
+            raise HTTPException(status_code=409, detail=(
+                f"A conta {open_elsewhere[0]} tem posições abertas deste portfólio. Trocar agora fecharia as cópias "
+                "dos clientes: espere elas fecharem."))
+    portfolio.master_login = data.master_login
+    db.commit()
+    notify_hub()
+    marketplace.clear_cache()
+    logger.info(f"Portfolio {portfolio.id}: copies from account {data.master_login}")
+    return {"master_login": portfolio.master_login}
 
 @app.put("/portfolios/{portfolio_id}/limits")
 def update_client_limits(portfolio_id: int, data: clients.ClientLimits, current_user: models.User = Depends(get_current_user),

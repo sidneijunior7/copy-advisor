@@ -258,3 +258,18 @@ def test_retention_deletes_only_what_is_older_than_the_cutoff(monkeypatch):
 ])
 def test_only_connection_errors_count_as_the_database_being_down(error, expected):
     assert hub._is_connection_error(error) is expected
+
+
+def test_writer_records_each_trade_sent_to_a_portfolio_once():
+    manager_id, strategy_id, portfolio_id = seed()
+    job = {"kind": "portfolio_trade", "portfolio_id": portfolio_id, "manager_id": manager_id,
+           "master_login": 5_000_000_000, "pos_id": 77, "strategy_id": strategy_id, "at": datetime.datetime.utcnow()}
+    w = Writer()
+    w.write([job, dict(job)])  # Twice in one batch
+    w.write([dict(job)])  # And again after a hub restart
+    db = database.SessionLocal()
+    try:
+        assert db.query(models.PortfolioTrade).filter_by(portfolio_id=portfolio_id).count() == 1
+    finally:
+        db.close()
+    assert load_directory(database.SessionLocal()).portfolio_logins.get(portfolio_id) is None

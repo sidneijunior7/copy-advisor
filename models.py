@@ -53,6 +53,9 @@ class Portfolio(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String(100))
     client_limits = Column(Text) # JSON (clients.ClientLimits): what a client may set on its own licenses
+    # The Master account the portfolio copies from: the hub sends its clients only that account's positions. NULL =
+    # every account of the manager, test accounts running the same magic numbers included.
+    master_login = Column(BigInteger, nullable=True)
 
     owner = relationship("User", back_populates="portfolios")
     strategies = relationship("Strategy", secondary=portfolio_items, back_populates="portfolios")
@@ -250,6 +253,20 @@ class MasterPosition(Base):
     opened_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     closed_at = Column(DateTime, nullable=True)
+
+class PortfolioTrade(Base):
+    """A Master position the hub sent to a portfolio's clients, recorded the first time it went. It is the portfolio's
+    track record (performance.py): later changes to the portfolio's strategies or account do not take it back."""
+    __tablename__ = "portfolio_trades"
+    __table_args__ = (UniqueConstraint("portfolio_id", "master_login", "pos_id", name="uq_portfolio_trades_identity"),)
+
+    id = Column(BigIntPK, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False, index=True)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    master_login = Column(BigInteger, nullable=False)
+    pos_id = Column(BigInteger, nullable=False)
+    strategy_id = Column(Integer, ForeignKey("strategies.id"), nullable=False) # The strategy it went for
+    sent_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
 
 class MasterAccount(Base):
     """Trading account a Master EA runs on, as reported by its V2HELLO."""

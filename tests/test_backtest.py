@@ -107,6 +107,8 @@ def seed_live(manager_id, portfolio_id, results):
             closed = NOW - datetime.timedelta(days=len(results) - i)
             db.add(models.MasterPosition(manager_id=manager_id, strategy_id=strategy.id, master_login=login, pos_id=i + 1,
                                          symbol="WIN", type=0, volume=1, price_open=1, closed_at=closed))
+            db.add(models.PortfolioTrade(portfolio_id=portfolio_id, manager_id=manager_id, master_login=login, pos_id=i + 1,
+                                         strategy_id=strategy.id))
             db.add(models.MasterDeal(manager_id=manager_id, master_login=login, deal_id=i * 2 + 1, pos_id=i + 1, entry=1,
                                      type=1, symbol="WIN", volume=1, price=1, profit=result, swap=0, commission=0,
                                      time=closed))
@@ -154,3 +156,18 @@ def test_without_capital_there_is_no_cone(client, monkeypatch):
     view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr).json()
     assert view["available"] and view["cone"] is None and view["cone_missing"] == "capital"
     assert view["backtest"]["return_pct"] is None and view["backtest"]["net"] == 500.0
+
+
+def test_the_dash_live_tracking_is_the_incubation():
+    """The Dash portfolio's live tracking comes with the backtest and shows apart, over the same capital, with how
+    much of it OnTick verified."""
+    answer = json.loads(dash_answer([100.0, -50.0]))
+    answer["live"] = {"trades": [{"t": "2026-06-01T10:00:00", "pnl": 200.0, "verified": True},
+                                 {"t": "2026-07-01T10:00:00", "pnl": -100.0, "verified": False},
+                                 {"t": "2026-08-01T10:00:00", "pnl": "x"}],  # Not a number: left out
+                      "truncated": False}
+    bt = dash_bridge.compact_backtest(json.dumps(answer))
+    assert (bt["live_pnl"], bt["live_verified"], bt["live_from"]) == ([200.0, -100.0], 1, "2026-06-01T10:00:00")
+    inc = backtest.incubation(bt)
+    assert (inc["trades"], inc["net"], inc["verified"], inc["return_pct"], inc["currency"]) == (2, 100.0, 1, 1.0, "BRL")
+    assert backtest.incubation(dash_bridge.compact_backtest(dash_answer([1.0]))) is None  # A Dash without it

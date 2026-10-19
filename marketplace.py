@@ -136,7 +136,11 @@ def _cached(key: Tuple[str, int, int], compute) -> dict:
 
 
 def public_performance(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
-    return _cached(("performance", listing.id, days), lambda: performance.portfolio(db, listing.portfolio, days, now))
+    def compute():
+        # Which account it copies from is the manager's business, and the trades from before the Mirror are unverified
+        out = performance.portfolio(db, listing.portfolio, days, now)
+        return {k: v for k, v in out.items() if k not in ("master_login", "before_mirror")}
+    return _cached(("performance", listing.id, days), compute)
 
 
 def public_backtest(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:

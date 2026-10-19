@@ -131,9 +131,15 @@ class Directory:
     strategies_by_id: Dict[int, StrategyInfo] = field(default_factory=dict)
     portfolios_by_strategy: Dict[int, Tuple[int, ...]] = field(default_factory=dict)
     portfolio_ids: Tuple[int, ...] = ()
+    portfolio_logins: Dict[int, int] = field(default_factory=dict)  # The account a portfolio copies from, when set
     licenses_by_hash: Dict[str, LicenseInfo] = field(default_factory=dict)  # Licenses with a key only
     licenses_by_id: Dict[int, LicenseInfo] = field(default_factory=dict)
     loaded_at: float = 0.0
+
+    def portfolios_for(self, pos: "Position") -> Tuple[int, ...]:
+        """The portfolios a position goes to: those holding its strategy that copy from its account (or from any)."""
+        return tuple(pid for pid in self.portfolios_by_strategy.get(pos.strategy_id, ())
+                     if self.portfolio_logins.get(pid, pos.master_login) == pos.master_login)
 
     def master_for_key(self, key: str) -> Optional[Tuple[ManagerInfo, MasterKeyInfo]]:
         mk = self.master_keys_by_hash.get(keys.key_hash(key))
@@ -158,7 +164,11 @@ def load_directory(session) -> Directory:
     by_strategy: Dict[int, List[int]] = {}
     for portfolio_id, strategy_id in session.execute(models.portfolio_items.select()).fetchall():
         by_strategy.setdefault(strategy_id, []).append(portfolio_id)
-    portfolio_ids = [pid for (pid,) in session.query(models.Portfolio.id)]
+    portfolio_ids, portfolio_logins = [], {}
+    for pid, login in session.query(models.Portfolio.id, models.Portfolio.master_login):
+        portfolio_ids.append(pid)
+        if login is not None:
+            portfolio_logins[pid] = int(login)
     licenses = [
         LicenseInfo(l.id, l.portfolio_id, int(l.client_mt5_login or 0), float(l.max_lots or 0), bool(l.is_active),
                     _unix(l.expires_at), l.key_hash, _unix(l.revoked_at), l.settings or "")
@@ -172,6 +182,7 @@ def load_directory(session) -> Directory:
         strategies_by_id=by_id,
         portfolios_by_strategy={k: tuple(sorted(v)) for k, v in by_strategy.items()},
         portfolio_ids=tuple(sorted(portfolio_ids)),
+        portfolio_logins=portfolio_logins,
         licenses_by_hash={l.key_hash: l for l in licenses},
         licenses_by_id={l.id: l for l in licenses},
         loaded_at=time.time(),
@@ -207,6 +218,7 @@ class Position:
     state: PositionState
     missing_syncs: int = 0
     opened_at: float = 0.0  # Unix time; what a revoked license may still follow is decided on it
+    sent_to: set = field(default_factory=set)  # Portfolios already recorded in portfolio_trades by this hub
 
     @property
     def uid(self) -> str:
@@ -500,7 +512,8 @@ class HubCore:
     def _emit(self, pos: Position, reason: str, raw: Optional[str]):
         s = pos.state
         directory = self.directory()
-        for portfolio_id in directory.portfolios_by_strategy.get(pos.strategy_id, ()):
+        portfolios = directory.portfolios_for(pos)
+        for portfolio_id in portfolios:
             seq = self._next_seq(portfolio_id)
             self.sent[(portfolio_id, seq)] = (pos.uid, self.clock())
             while len(self.sent) > SENT_MEMORY:
@@ -547,24 +560,29 @@ class HubCore:
             "closed": s.volume <= 0,
             "at": datetime.datetime.utcnow(),
         })
+        for portfolio_id in portfolios:
+            if portfolio_id not in pos.sent_to:  # The portfolio's track record: the writer keeps the first one
+                pos.sent_to.add(portfolio_id)
+                self.persist({"kind": "portfolio_trade", "portfolio_id": portfolio_id, "manager_id": pos.manager_id,
+                              "master_login": pos.master_login, "pos_id": pos.pos_id, "strategy_id": pos.strategy_id,
+                              "at": datetime.datetime.utcnow()})
 
     def snapshot(self, portfolio_id: int) -> str:
         """Full state of one portfolio, as published every SNAPSHOT_SECONDS (a WSS Slave gets one on connect)."""
         directory = self.directory()
-        entries = [self._entry(p) for p in self.positions.values()
-                   if portfolio_id in directory.portfolios_by_strategy.get(p.strategy_id, ())]
+        entries = [self._entry(p) for p in self.positions.values() if portfolio_id in directory.portfolios_for(p)]
         return f"SNAP|{self.epoch}|{self.seq.get(portfolio_id, 0)}|{';'.join(entries)}"
 
     def open_uids(self, portfolio_id: int, opened_before: float = float("inf")) -> set:
         directory = self.directory()
         return {p.uid for p in self.positions.values()
-                if p.opened_at < opened_before and portfolio_id in directory.portfolios_by_strategy.get(p.strategy_id, ())}
+                if p.opened_at < opened_before and portfolio_id in directory.portfolios_for(p)}
 
     def publish_snapshots(self):
         directory = self.directory()
         by_portfolio: Dict[int, List[str]] = {pid: [] for pid in directory.portfolio_ids}
         for pos in self.positions.values():
-            for portfolio_id in directory.portfolios_by_strategy.get(pos.strategy_id, ()):
+            for portfolio_id in directory.portfolios_for(pos):
                 by_portfolio.setdefault(portfolio_id, []).append(self._entry(pos))
         for portfolio_id, entries in by_portfolio.items():
             seq = self.seq.get(portfolio_id, 0)
@@ -811,6 +829,7 @@ class Writer(threading.Thread):
             rows: Dict[Tuple[int, int, int], models.MasterPosition] = {}  # Read once per batch
             snapshots: Dict[tuple, models.AccountSnapshot] = {}
             deals: set = set()
+            trades: set = set()
             executions = []
             for job in batch:
                 kind = job["kind"]
@@ -826,6 +845,8 @@ class Writer(threading.Thread):
                     self._write_deal(session, job, deals)
                 elif kind == "account_snapshot":
                     self._write_snapshot(session, job, snapshots)
+                elif kind == "portfolio_trade":
+                    self._write_portfolio_trade(session, job, trades)
                 else:
                     self._write_position(session, job, rows)
             if executions:
@@ -875,6 +896,15 @@ class Writer(threading.Thread):
             return  # Resent after a reconnection
         seen.add(key)
         session.add(models.MasterDeal(**{k: v for k, v in job.items() if k not in ("kind", "at")}, received_at=job["at"]))
+
+    @staticmethod
+    def _write_portfolio_trade(session, job: dict, seen: set):
+        key = (job["portfolio_id"], job["master_login"], job["pos_id"])
+        if key in seen or session.query(models.PortfolioTrade.id).filter_by(
+                portfolio_id=key[0], master_login=key[1], pos_id=key[2]).first() is not None:
+            return  # Already in the track record (sent before a hub restart)
+        seen.add(key)
+        session.add(models.PortfolioTrade(**{k: v for k, v in job.items() if k not in ("kind", "at")}, sent_at=job["at"]))
 
     @staticmethod
     def _write_snapshot(session, job: dict, rows: Dict[tuple, models.AccountSnapshot]):

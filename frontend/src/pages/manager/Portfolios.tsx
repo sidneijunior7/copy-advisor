@@ -4,12 +4,13 @@ import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { Briefcase, Check, Link as LinkIcon, Plus, TrendingUp, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type License, type Portfolio, type Strategy } from '../../api';
+import api, { type License, type MasterAccount, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
 import DashLinkPanel from '../../components/DashLinkPanel';
 import PageHeader from '../../components/PageHeader';
 import PortfolioLimits from '../../components/PortfolioLimits';
+import PortfolioOrigin from '../../components/PortfolioOrigin';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Select } from '../../components/ui/Field';
@@ -22,6 +23,7 @@ export default function Portfolios() {
     const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
     const [strategies, setStrategies] = useState<Strategy[]>([]);
     const [licenses, setLicenses] = useState<License[]>([]);
+    const [accounts, setAccounts] = useState<MasterAccount[]>([]);
     const [loading, setLoading] = useState(true);
     // "<portfolio_id>:<strategy_id>" of the link waiting for confirmation / being removed
     const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -31,14 +33,16 @@ export default function Portfolios() {
 
     const refresh = async () => {
         try {
-            const [p, s, l] = await Promise.all([
+            const [p, s, l, a] = await Promise.all([
                 api.get<Portfolio[]>('/portfolios'),
                 api.get<Strategy[]>('/strategies'),
                 api.get<License[]>('/licenses'),
+                api.get<MasterAccount[]>('/me/master-accounts'),
             ]);
             setPortfolios(p.data);
             setStrategies(s.data);
             setLicenses(l.data);
+            setAccounts(a.data);
         } catch (e) {
             console.error(e);
             toast.error('Não foi possível carregar os portfólios.');
@@ -242,6 +246,11 @@ export default function Portfolios() {
                                 <PortfolioLimits
                                     portfolio={p}
                                     onSaved={limits => setPortfolios(current => current.map(x => (x.id === p.id ? { ...x, client_limits: limits } : x)))}
+                                />
+                                <PortfolioOrigin
+                                    portfolio={p}
+                                    accounts={accounts}
+                                    onSaved={origin => setPortfolios(current => current.map(x => (x.id === p.id ? { ...x, ...origin } : x)))}
                                 />
                                 <DashLinkPanel portfolioId={p.id} portfolioName={p.name} />
                             </Card>

@@ -78,9 +78,13 @@ def fetch_backtest(token: str) -> Tuple[int, str]:
 
 
 def compact_backtest(body: str) -> dict:
-    """What the Mirror keeps of the Dash answer: the net result of each trade, in order, and what describes them."""
+    """What the Mirror keeps of the Dash answer: the net result of each trade, in order, and what describes them; the
+    same of the portfolio's live tracking on the Dash (its incubation), with how many trades OnTick verified."""
     data = json.loads(body)
-    trades = [t for t in data.get("trades") or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
+    valid = lambda items: [t for t in items or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
+    trades = valid(data.get("trades"))
+    live = data.get("live") if isinstance(data.get("live"), dict) else {}
+    live_trades = valid(live.get("trades"))
     return {
         "name": str((data.get("portfolio") or {}).get("name") or "")[:100],
         "initial_balance": float(data.get("initial_balance") or 0),
@@ -91,6 +95,11 @@ def compact_backtest(body: str) -> dict:
         "from": trades[0].get("t") if trades else None,
         "to": trades[-1].get("t") if trades else None,
         "truncated": bool(data.get("truncated")),
+        "live_pnl": [round(float(t["pnl"]), 2) for t in live_trades],
+        "live_verified": sum(1 for t in live_trades if t.get("verified") is True),
+        "live_from": live_trades[0].get("t") if live_trades else None,
+        "live_to": live_trades[-1].get("t") if live_trades else None,
+        "live_truncated": bool(live.get("truncated")),
     }
 
 
@@ -216,7 +225,8 @@ def advance(db: Session, link: models.DashLink, token: str, post: Send, now: dat
         if not deals:
             break
         exits = [d for d in deals if d.entry in OUT and d.pos_id and d.type in (0, 1) and d.magic in magics
-                 and d.time >= link.send_since]
+                 and d.time >= link.send_since
+                 and (portfolio.master_login is None or d.master_login == portfolio.master_login)]
         items = items_for(db, portfolio.user_id, exits)
         if items:
             link.last_attempt_at = now

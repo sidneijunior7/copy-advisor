@@ -315,3 +315,17 @@ def test_master_key_use_is_recorded_hourly():
     h.now += hub.KEY_USED_EVERY
     h.core.master_key_used(key)
     assert len([j for j in h.jobs if j["kind"] == "master_key_used"]) == 2
+
+
+def test_a_portfolio_copies_only_from_its_account_and_records_what_it_sent():
+    d = make_directory()
+    h = Harness(Directory(**{**d.__dict__, "portfolio_logins": {8: 900}}))
+    h.v2("OPEN", 1, 0.5, login=901)  # A test account running the same magic
+    assert h.payloads("POS", 7) and not h.payloads("POS", 8)
+    h.v2("OPEN", 2, 0.5, login=900)
+    assert len(h.payloads("POS", 8)) == 1
+    trades = [(j["portfolio_id"], j["master_login"], j["pos_id"]) for j in h.jobs if j["kind"] == "portfolio_trade"]
+    assert trades == [(7, 901, 1), (7, 900, 2), (8, 900, 2)]
+    h.v2("MODIFY", 2, 0.5, sl=1.095, login=900)
+    assert len([j for j in h.jobs if j["kind"] == "portfolio_trade"]) == 3  # Recorded once
+    assert "901_1" not in h.core.snapshot(8) and "900_2" in h.core.snapshot(8)

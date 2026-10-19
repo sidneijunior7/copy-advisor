@@ -46,6 +46,18 @@ export type Portfolio = {
     name: string;
     strategies: Pick<Strategy, 'id' | 'name' | 'magic_number'>[];
     client_limits: ClientLimits;
+    master_login: number | null; // The Master account it copies from; null = every account
+};
+
+// An account a Master ever ran on, with its currency and latest balance
+export type MasterAccount = {
+    master_login: number;
+    trade_mode: string;
+    server: string | null;
+    company: string | null;
+    last_seen_at: string | null;
+    currency: string | null;
+    balance: number | null;
 };
 
 export type License = {
@@ -244,7 +256,17 @@ export type PerformanceStats = {
     curve: { t: string; v: number }[];
 };
 
-export type PortfolioPerformance = PerformanceStats & { strategies: { id: number; name: string | null; trades: number; net: number }[] };
+// capital_source: what return_pct is over (dash: capital declared on the Dash; account: the Master's balance) or why
+// there is none (accounts, currency-mismatch)
+export type CapitalSource = 'dash' | 'account' | 'accounts' | 'currency-mismatch' | null;
+
+export type PortfolioPerformance = PerformanceStats & {
+    strategies: { id: number; name: string | null; trades: number; net: number }[];
+    master_login: number | null;
+    capital_source: CapitalSource;
+    // Trades from before the Master first connected: no client got them, so they are not in the numbers above
+    before_mirror: { trades: number; net: number; until: string | null };
+};
 
 export type CopiesPerformance = PerformanceStats & { equity: { t: string; balance: number | null; equity: number | null }[] };
 
@@ -309,8 +331,10 @@ export type BacktestView =
               strategies: string[];
               truncated: boolean;
           };
+          // The Dash portfolio's own live tracking, over the same capital; verified: trades that came from OnTick
+          incubation: (Omit<Extract<BacktestView, { available: true }>['backtest'], 'strategies'> & { verified: number }) | null;
           cone: { trades: number; simulations: number; bands: ConeBand[]; verdict: 'inside' | 'below' | 'above' } | null;
-          cone_missing: 'capital' | 'accounts' | 'balance' | 'no-trades' | 'few-trades' | null;
+          cone_missing: 'capital' | 'accounts' | 'balance' | 'currency' | 'no-trades' | 'few-trades' | null;
       };
 
 // The marketplace shows the figures only past a minimum of followers and copies

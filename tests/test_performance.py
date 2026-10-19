@@ -52,9 +52,12 @@ def seed_portfolio(client):
         db.flush()
         portfolio = db.get(models.Portfolio, portfolio_id)
         portfolio.strategies.append(strategy)
+        db.flush()
         for pos_id, closed_at in ((1, ago(2)), (2, ago(1)), (3, None), (4, ago(400))):
             db.add(models.MasterPosition(manager_id=manager_id, strategy_id=strategy.id, master_login=900, pos_id=pos_id,
                                          symbol="EURUSD", type=0, volume=1, price_open=1.1, closed_at=closed_at))
+            db.add(models.PortfolioTrade(portfolio_id=portfolio_id, manager_id=manager_id, master_login=900, pos_id=pos_id,
+                                         strategy_id=strategy.id))
 
         def deal(deal_id, pos_id, entry, profit, commission, at):
             db.add(models.MasterDeal(manager_id=manager_id, master_login=900, deal_id=deal_id, pos_id=pos_id, entry=entry,
@@ -111,3 +114,114 @@ def test_client_sees_its_result_and_the_portfolio(client):
     assert portfolio["trades"] == 2
     copies = {c["uid"]: c for c in client.get(f"/me/licenses/{lic['id']}/copies", headers=cli).json()}
     assert copies["900_2"]["status"] == "closed" and copies["900_2"]["profit"] == -2.2
+
+
+def seed_track(manager_id, portfolio_id, magic, login, company, currency, balance, trades, sent=True, first_seen=None):
+    """A Master account and closed positions of the strategy with this magic: (pos_id, profit, days ago it closed).
+    sent: the hub sent them to the portfolio's clients."""
+    db = database.SessionLocal()
+    try:
+        strategy = db.query(models.Strategy).filter_by(user_id=manager_id, magic_number=magic).one()
+        db.add(models.MasterAccount(manager_id=manager_id, master_login=login, trade_mode="demo", company=company,
+                                    first_seen_at=first_seen or ago(60)))
+        db.add(models.AccountSnapshot(kind="master", owner_id=manager_id, login=login, balance=balance, equity=balance,
+                                      currency=currency, hour=ago(0, 1).replace(minute=0, second=0, microsecond=0)))
+        for pos_id, profit, days in trades:
+            if sent:
+                db.add(models.MasterPosition(manager_id=manager_id, strategy_id=strategy.id, master_login=login,
+                                             pos_id=pos_id, symbol="WIN", type=0, volume=1, price_open=1,
+                                             closed_at=ago(days)))
+                db.add(models.PortfolioTrade(portfolio_id=portfolio_id, manager_id=manager_id, master_login=login,
+                                             pos_id=pos_id, strategy_id=strategy.id, sent_at=ago(days + 1)))
+            for n, (entry, pnl, at) in enumerate(((0, 0, ago(days + 1)), (1, profit, ago(days)))):
+                db.add(models.MasterDeal(manager_id=manager_id, master_login=login, deal_id=pos_id * 10 + n,
+                                         pos_id=pos_id, entry=entry, type=entry, volume=1, price=1, profit=pnl, swap=0,
+                                         commission=0, time=at, magic=magic))
+        db.commit()
+    finally:
+        db.close()
+
+
+def portfolio_with_strategy(client, name):
+    manager_id, mgr, portfolio_id, _, _, _ = claimed_license(client)
+    magic = uuid.uuid4().int % 10**9
+    db = database.SessionLocal()
+    try:
+        strategy = models.Strategy(user_id=manager_id, name=name, magic_number=magic)
+        db.add(strategy)
+        db.flush()
+        portfolio = db.get(models.Portfolio, portfolio_id)
+        portfolio.strategies.append(strategy)
+        db.commit()
+        strategy_id = strategy.id
+    finally:
+        db.close()
+    return manager_id, mgr, portfolio_id, magic, strategy_id
+
+
+def test_the_track_record_is_what_the_clients_got(client):
+    """Trades the hub never sent (another account running the same magic) stay out; trades it sent stay in after
+    the strategy leaves the portfolio; the percentages are over the Dash's capital, not the demo account's balance."""
+    manager_id, mgr, portfolio_id, magic, strategy_id = portfolio_with_strategy(client, "WIN")
+    login = uuid.uuid4().int % 10**8
+    seed_track(manager_id, portfolio_id, magic, login, "XP Investimentos", "BRL", 500_000, [(1, 300, 5), (2, -100, 4)])
+    seed_track(manager_id, portfolio_id, magic, login + 1, "RoboForex", "USD", 1000, [(3, 7, 3)], sent=False,
+               first_seen=ago(10))
+    url = f"/portfolios/{portfolio_id}/performance"
+    p = client.get(url, headers=mgr).json()
+    assert (p["trades"], p["net"], p["currency"], p["capital_source"]) == (2, 200.0, "BRL", "account")
+    assert p["start_balance"] == 499_800  # The balance before the first trade, from today's and the deals since
+    assert p["before_mirror"]["trades"] == 0  # Opened after its account connected: never sent, never counted
+
+    db = database.SessionLocal()
+    try:
+        db.add(models.DashLink(portfolio_id=portfolio_id, token_encrypted="x", deal_cursor=0, send_since=ago(30),
+                               backtest='{"initial_balance": 10000, "currency": "BRL", "pnl": [1]}'))
+        portfolio = db.get(models.Portfolio, portfolio_id)
+        portfolio.strategies.clear()
+        db.commit()
+    finally:
+        db.close()
+    p = client.get(url, headers=mgr).json()
+    assert (p["trades"], p["start_balance"], p["return_pct"], p["capital_source"]) == (2, 10_000, 2.0, "dash")
+    assert p["strategies"] == [{"id": strategy_id, "name": "WIN", "trades": 2, "net": 200.0}]
+
+
+def test_trades_from_before_the_mirror_are_apart(client):
+    """The history a Master 4.01 sends when it first connects is shown apart from the track record."""
+    manager_id, mgr, portfolio_id, magic, _ = portfolio_with_strategy(client, "Old")
+    login = uuid.uuid4().int % 10**8
+    seed_track(manager_id, portfolio_id, magic, login, "XP Investimentos", "BRL", 1000, [(1, 100, 50), (2, -40, 45)],
+               sent=False, first_seen=ago(20))
+    p = client.get(f"/portfolios/{portfolio_id}/performance", headers=mgr, params={"days": 90}).json()
+    assert p["trades"] == 0
+    assert (p["before_mirror"]["trades"], p["before_mirror"]["net"]) == (2, 60.0)
+
+
+def test_the_origin_account(client):
+    manager_id, mgr, portfolio_id, magic, _ = portfolio_with_strategy(client, "Origin")
+    login = uuid.uuid4().int % 10**8
+    seed_track(manager_id, portfolio_id, magic, login, "XP Investimentos", "BRL", 1000, [])
+    url = f"/portfolios/{portfolio_id}/origin"
+    assert client.put(url, headers=mgr, json={"master_login": 123}).status_code == 422
+    accounts = {a["master_login"]: a for a in client.get("/me/master-accounts", headers=mgr).json()}
+    assert accounts[login]["currency"] == "BRL" and accounts[login]["company"] == "XP Investimentos"
+
+    db = database.SessionLocal()
+    try:  # An open position of the portfolio on another account: its clients' copies would close
+        strategy = db.query(models.Strategy).filter_by(user_id=manager_id, magic_number=magic).one()
+        db.add(models.MasterPosition(manager_id=manager_id, strategy_id=strategy.id, master_login=login + 1, pos_id=9,
+                                     symbol="WIN", type=0, volume=1, price_open=1))
+        db.commit()
+    finally:
+        db.close()
+    assert client.put(url, headers=mgr, json={"master_login": login}).status_code == 409
+    db = database.SessionLocal()
+    try:
+        db.query(models.MasterPosition).filter_by(manager_id=manager_id, pos_id=9).one().closed_at = ago(0)
+        db.commit()
+    finally:
+        db.close()
+    assert client.put(url, headers=mgr, json={"master_login": login}).json() == {"master_login": login}
+    assert next(p for p in client.get("/portfolios", headers=mgr).json() if p["id"] == portfolio_id)["master_login"] == login
+    assert client.put(url, headers=mgr, json={"master_login": None}).json() == {"master_login": None}
