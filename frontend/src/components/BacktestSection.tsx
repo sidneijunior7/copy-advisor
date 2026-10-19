@@ -15,6 +15,12 @@ const years = (from: string | null, to: string | null) => {
     return a === b ? String(a) : `${a}–${b}`;
 };
 
+// What the percentages are over: the portfolio's Monte Carlo on the Dash, or the balance declared there
+const capitalHint = (s: { initial_balance: number | null; capital_basis: 'monte_carlo' | 'declared' | null; currency: string | null }) =>
+    s.initial_balance == null
+        ? 'sem o capital declarado'
+        : `sobre ${formatMoney(s.initial_balance, s.currency)}${s.capital_basis === 'monte_carlo' ? ' (DD máx. +3σ)' : ''}`;
+
 const pct = (value: number | null) => (value == null ? '—' : `${value.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`);
 
 // Why there is no cone, in the words the page shows
@@ -53,7 +59,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
             </p>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                 <Tile label="Retorno" value={pct(b.return_pct)}
-                    hint={b.initial_balance != null ? `sobre ${formatMoney(b.initial_balance, b.currency)}` : 'sem o capital declarado'} />
+                    hint={capitalHint(b)} />
                 <Tile label="Maior queda" value={b.max_drawdown_pct == null ? '—' : pct(-b.max_drawdown_pct)} hint="do saldo" />
                 <Tile label="Acerto" value={pct(b.win_rate)} />
                 <Tile label="Fator de lucro" value={b.profit_factor == null ? '—' : b.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />
@@ -73,7 +79,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                     </p>
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                         <Tile label="Retorno" value={pct(inc.return_pct)}
-                            hint={inc.initial_balance != null ? `sobre ${formatMoney(inc.initial_balance, inc.currency)}` : 'sem o capital declarado'} />
+                            hint={capitalHint(inc)} />
                         <Tile label="Maior queda" value={inc.max_drawdown_pct == null ? '—' : pct(-inc.max_drawdown_pct)} hint="do saldo" />
                         <Tile label="Acerto" value={pct(inc.win_rate)} />
                         <Tile label="Fator de lucro" value={inc.profit_factor == null ? '—' : inc.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />

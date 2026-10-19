@@ -61,10 +61,20 @@ def _thin(n: int, points: int) -> List[int]:
     return sorted({max(1, round(i * n / points)) for i in range(1, points + 1)} | {n})
 
 
+def capital_of(bt: dict) -> Tuple[float, Optional[str]]:
+    """The capital the percentages are over and where it comes from: the portfolio's Monte Carlo on the Dash (maximum
+    drawdown plus 3 sigma, the capital its strategies run with), else the balance declared on the Dash."""
+    if float(bt.get("capital") or 0) > 0:
+        return float(bt["capital"]), "monte_carlo"
+    if float(bt.get("initial_balance") or 0) > 0:
+        return float(bt["initial_balance"]), "declared"
+    return 0.0, None
+
+
 def stats(bt: dict) -> dict:
     """The declared backtest's headline numbers and its cumulative return per trade (percent of the capital)."""
     pnls = [float(p) for p in bt["pnl"]]
-    initial = float(bt.get("initial_balance") or 0)
+    initial, basis = capital_of(bt)
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
     gross_loss = -sum(losses)
@@ -74,6 +84,7 @@ def stats(bt: dict) -> dict:
         "to": bt.get("to"),
         "currency": bt.get("currency"),
         "initial_balance": initial or None,
+        "capital_basis": basis,
         "net": round(sum(pnls), 2),
         "win_rate": round(len(wins) / len(pnls) * 100, 1) if pnls else None,
         "profit_factor": round(sum(wins) / gross_loss, 2) if gross_loss > 0 else None,
@@ -172,8 +183,9 @@ def incubation(bt: dict) -> Optional[dict]:
     pnls = bt.get("live_pnl") or []
     if not pnls:
         return None
-    out = stats({"pnl": pnls, "initial_balance": bt.get("initial_balance"), "currency": bt.get("currency"),
-                 "from": bt.get("live_from"), "to": bt.get("live_to"), "truncated": bt.get("live_truncated")})
+    out = stats({"pnl": pnls, "capital": bt.get("capital"), "initial_balance": bt.get("initial_balance"),
+                 "currency": bt.get("currency"), "from": bt.get("live_from"), "to": bt.get("live_to"),
+                 "truncated": bt.get("live_truncated")})
     del out["strategies"]
     return {**out, "verified": int(bt.get("live_verified") or 0)}
 
@@ -186,7 +198,7 @@ def view(db: Session, p: models.Portfolio, link: Optional[models.DashLink], days
         return {"available": False}
     out = {"available": True, "fetched_at": link.backtest_fetched_at, "backtest": stats(bt),
            "incubation": incubation(bt), "cone": None, "cone_missing": None}
-    initial = float(bt.get("initial_balance") or 0)
+    initial, _ = capital_of(bt)
     if initial <= 0:
         out["cone_missing"] = "capital"
         return out

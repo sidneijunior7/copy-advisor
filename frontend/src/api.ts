@@ -256,12 +256,15 @@ export type PerformanceStats = {
     curve: { t: string; v: number }[];
 };
 
-// capital_source: what return_pct is over (dash: capital declared on the Dash; account: the Master's balance) or why
-// there is none (accounts, currency-mismatch)
-export type CapitalSource = 'dash' | 'account' | 'accounts' | 'currency-mismatch' | null;
+// capital_source: what return_pct is over (dash-mc: maximum drawdown plus 3 sigma of the portfolio's Monte Carlo on
+// the Dash; dash: balance declared on the Dash; account: the Master's balance) or why there is none (accounts,
+// currency-mismatch)
+export type CapitalSource = 'dash-mc' | 'dash' | 'account' | 'accounts' | 'currency-mismatch' | null;
 
 export type PortfolioPerformance = PerformanceStats & {
     strategies: { id: number; name: string | null; trades: number; net: number }[];
+    lots: number; // Lots the trades closed
+    per_lot: number | null; // Average result per lot: net / lots
     master_login: number | null;
     capital_source: CapitalSource;
     // Trades from before the Master first connected: no client got them, so they are not in the numbers above
@@ -301,7 +304,7 @@ export type DashLink = {
     sent_count: number;
     send_since: string;
     created_at: string;
-    backtest: { name: string | null; trades: number; initial_balance: number | null; currency: string | null } | null;
+    backtest: { name: string | null; trades: number; initial_balance: number | null; capital: number | null; currency: string | null } | null;
     backtest_fetched_at: string | null;
     backtest_error: string | null;
 };
@@ -321,7 +324,8 @@ export type BacktestView =
               from: string | null;
               to: string | null;
               currency: string | null;
-              initial_balance: number | null;
+              initial_balance: number | null; // The capital the percentages are over
+              capital_basis: 'monte_carlo' | 'declared' | null; // Monte Carlo DD + 3 sigma, or the declared balance
               net: number;
               win_rate: number | null;
               profit_factor: number | null;

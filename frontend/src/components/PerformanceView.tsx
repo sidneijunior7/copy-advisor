@@ -14,7 +14,7 @@ const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', '
 const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1]}/${month.slice(2, 4)}`;
 
 // What the return is over, after the amount
-const CAPITAL_SOURCE: Record<string, string> = { dash: 'capital do Dash', account: 'saldo da conta' };
+const CAPITAL_SOURCE: Record<string, string> = { 'dash-mc': 'DD máx. +3σ do Dash', dash: 'capital do Dash', account: 'saldo da conta' };
 const NO_CAPITAL: Record<string, string> = {
     accounts: 'operações de mais de uma conta Master',
     'currency-mismatch': 'capital do Dash em outra moeda',
@@ -48,6 +48,7 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
         ? `sobre ${money(stats.start_balance)}${source && CAPITAL_SOURCE[source] ? ` (${CAPITAL_SOURCE[source]})` : ''}`
         : (source && NO_CAPITAL[source]) || 'sem o saldo inicial';
     const before = 'before_mirror' in stats ? stats.before_mirror : null;
+    const perLot = 'per_lot' in stats ? stats : null;
     const beforeNote = before && before.trades > 0 && (
         <p className="text-xs text-muted-foreground">
             Fora destes números: {before.trades} {before.trades === 1 ? 'operação' : 'operações'} de antes do Master
@@ -73,11 +74,16 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
     return (
         <div className="space-y-6">
             {beforeNote}
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
                 <Tile label="Resultado" value={money(stats.net)} tone={stats.net > 0 ? 'up' : stats.net < 0 ? 'down' : undefined} />
                 <Tile label="Retorno" value={pct(stats.return_pct)}
                     hint={returnHint} />
                 <Tile label="Acerto" value={pct(stats.win_rate)} hint={`${stats.wins} de ${stats.trades} operações`} />
+                {perLot && (
+                    <Tile label="Lucro por lote" value={perLot.per_lot == null ? '—' : money(perLot.per_lot)}
+                        tone={perLot.per_lot != null && perLot.per_lot > 0 ? 'up' : perLot.per_lot != null && perLot.per_lot < 0 ? 'down' : undefined}
+                        hint={`média em ${perLot.lots.toLocaleString('pt-BR')} ${perLot.lots === 1 ? 'lote' : 'lotes'}`} />
+                )}
                 <Tile label="Fator de lucro" value={stats.profit_factor == null ? '—' : stats.profit_factor.toLocaleString('pt-BR')}
                     hint="ganhos ÷ perdas" />
                 <Tile label="Maior queda" value={money(-stats.max_drawdown)} hint={stats.max_drawdown_pct != null ? pct(-stats.max_drawdown_pct) : 'do resultado acumulado'} />

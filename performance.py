@@ -99,13 +99,13 @@ def balance_at(db: Session, manager_id: int, login: int):
     return (lambda at: base + cum[bisect.bisect_left(times, at)]), snap.currency
 
 
-def _closed(ds: List[models.MasterDeal]) -> Optional[Tuple[datetime.datetime, float, datetime.datetime]]:
-    """(close time, result, open time) of a position from its deals; None until it has an exit deal."""
+def _closed(ds: List[models.MasterDeal]) -> Optional[Tuple[datetime.datetime, float, datetime.datetime, float]]:
+    """(close time, result, open time, lots closed) of a position from its deals; None until it has an exit deal."""
     outs = [d for d in ds if d.entry in DEAL_OUT]
     if not outs:
         return None  # The hub has the close but not its deal yet (a Master before 4.01)
     result = sum((d.profit or 0) + (d.swap or 0) + (d.commission or 0) for d in ds)
-    return max(d.time for d in outs), result, min(d.time for d in ds)
+    return max(d.time for d in outs), result, min(d.time for d in ds), sum(d.volume or 0 for d in outs)
 
 
 def _deals_of(db: Session, manager_id: int, keys) -> Dict[Tuple[int, int], List[models.MasterDeal]]:
@@ -122,7 +122,7 @@ def _deals_of(db: Session, manager_id: int, keys) -> Dict[Tuple[int, int], List[
 
 
 def _results(db: Session, p: models.Portfolio, start: datetime.datetime):
-    """(close time, result, strategy id, open time) of each position the hub sent to the portfolio's clients
+    """(close time, result, strategy id, open time, lots) of each position the hub sent to the portfolio's clients
     (portfolio_trades) that closed since start, and the Master accounts behind them. What went stays: removing a
     strategy or changing the account does not take a trade out."""
     rows = (db.query(models.PortfolioTrade)
@@ -138,7 +138,7 @@ def _results(db: Session, p: models.Portfolio, start: datetime.datetime):
         closed = _closed(ds)
         if closed is None or closed[0] < start:
             continue
-        out.append((closed[0], closed[1], strategy_of[key], closed[2]))
+        out.append((closed[0], closed[1], strategy_of[key], closed[2], closed[3]))
         logins.add(key[0])
     return out, sorted(logins)
 
@@ -180,13 +180,13 @@ def before_mirror(db: Session, p: models.Portfolio, start: datetime.datetime) ->
 def portfolio_results(db: Session, p: models.Portfolio, start: datetime.datetime):
     """(close time, result) of each closed position since start, and the Master accounts behind them."""
     rows, logins = _results(db, p, start)
-    return [(at, result) for at, result, _, _ in rows], logins
+    return [(at, result) for at, result, _, _, _ in rows], logins
 
 
 def track_capital(db: Session, p: models.Portfolio, logins: List[int]) -> dict:
-    """What the portfolio's percentages are over: {"capital", "currency", "source", "balance_at"}. source is dash (the
-    capital declared on the Dash, which sizes the strategies) or account (the balance before the period, through
-    balance_at); currency-mismatch when the Dash declared it in another currency than the account's, accounts with
+    """What the portfolio's percentages are over: {"capital", "currency", "source", "balance_at"}. source is dash-mc
+    (the maximum drawdown plus 3 sigma of the portfolio's Monte Carlo on the Dash, the capital its strategies run
+    with), dash (the balance declared on the Dash) or account (the balance before the period, through balance_at); currency-mismatch when the Dash declared it in another currency than the account's, accounts with
     more than one Master account, None without any. The currency is the Master account's."""
     if len(logins) > 1:
         return {"capital": None, "currency": None, "source": "accounts", "balance_at": None}
@@ -200,33 +200,38 @@ def track_capital(db: Session, p: models.Portfolio, logins: List[int]) -> dict:
             declared = json.loads(link.backtest)
         except ValueError:
             declared = {}
-    dash_capital = float(declared.get("initial_balance") or 0)
+    monte_carlo = float(declared.get("capital") or 0)
+    dash_capital = monte_carlo or float(declared.get("initial_balance") or 0)
     if dash_capital <= 0:
         return out
     dash_currency = (declared.get("currency") or "").upper() or None
     if currency and dash_currency and dash_currency != currency.upper():
         return {**out, "source": "currency-mismatch"}
-    return {**out, "capital": dash_capital, "currency": currency or dash_currency, "source": "dash"}
+    return {**out, "capital": dash_capital, "currency": currency or dash_currency,
+            "source": "dash-mc" if monte_carlo else "dash"}
 
 
 def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetime) -> dict:
     """The positions the portfolio's clients got that closed in the period, as the Master's deals tell them."""
     start = since(days, now)
     rows, logins = _results(db, p, start)
-    results: List[Tuple[datetime.datetime, float]] = [(at, result) for at, result, _, _ in rows]
+    results: List[Tuple[datetime.datetime, float]] = [(at, result) for at, result, _, _, _ in rows]
     by_strategy: Dict[int, List[Tuple[datetime.datetime, float]]] = {}
-    for at, result, strategy_id, _ in rows:
+    for at, result, strategy_id, _, _ in rows:
         by_strategy.setdefault(strategy_id, []).append((at, result))
+    lots = sum(volume for _, _, _, _, volume in rows)  # The average result per lot is net / lots
     track = track_capital(db, p, logins)
     capital = track["capital"]
     if track["source"] == "account":
-        capital = round(track["balance_at"](min(opened for _, _, _, opened in rows)), 2) if rows else None
+        capital = round(track["balance_at"](min(opened for _, _, _, opened, _ in rows)), 2) if rows else None
     # A strategy taken out of the portfolio still has its trades here
     names = {s.id: s.name for s in db.query(models.Strategy).filter(models.Strategy.id.in_(sorted(by_strategy)))}
     return {
         **stats(results, capital, track["currency"]),
         "strategies": [{"id": sid, "name": names.get(sid), "trades": len(rs), "net": round(sum(r for _, r in rs), 2)}
                        for sid, rs in sorted(by_strategy.items())],
+        "lots": round(lots, 2),
+        "per_lot": round(sum(r for _, r in results) / lots, 2) if lots > 0 else None,
         "master_login": p.master_login,
         "capital_source": track["source"],
         "before_mirror": before_mirror(db, p, start),

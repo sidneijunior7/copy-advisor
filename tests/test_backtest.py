@@ -78,7 +78,8 @@ def test_the_bridge_keeps_a_fresh_copy_of_the_backtest(client, monkeypatch):
 
     dash_bridge.run_once(post=FakeDash(), fetch=fetch)
     link = client.get(f"/portfolios/{portfolio_id}/dash", headers=mgr).json()["link"]
-    assert link["backtest"] == {"name": "WIN Tendência", "trades": 3, "initial_balance": 10_000.0, "currency": "BRL"}
+    assert link["backtest"] == {"name": "WIN Tendência", "trades": 3, "initial_balance": 10_000.0, "capital": None,
+                                "currency": "BRL"}
     assert link["backtest_error"] is None
     dash_bridge.run_once(post=FakeDash(), fetch=fetch)
     assert calls.count(token) == 1  # Fresh: not again before BACKTEST_REFRESH_SECONDS
@@ -171,3 +172,16 @@ def test_the_dash_live_tracking_is_the_incubation():
     inc = backtest.incubation(bt)
     assert (inc["trades"], inc["net"], inc["verified"], inc["return_pct"], inc["currency"]) == (2, 100.0, 1, 1.0, "BRL")
     assert backtest.incubation(dash_bridge.compact_backtest(dash_answer([1.0]))) is None  # A Dash without it
+
+
+def test_the_capital_is_the_monte_carlo_drawdown_plus_3_sigma():
+    """The Dash's "DD Máx +3σ" is the capital the strategies run with: the percentages are over it, not over the
+    balance declared on the Dash."""
+    answer = json.loads(dash_answer([100.0, -50.0], initial=113_000.0))
+    answer["capital"] = {"value": 2549.0, "basis": "monte_carlo_dd_3sigma", "method": "resampling", "simulations": 1000}
+    bt = dash_bridge.compact_backtest(json.dumps(answer))
+    assert (bt["capital"], bt["initial_balance"]) == (2549.0, 113_000.0)
+    s = backtest.stats(bt)
+    assert (s["initial_balance"], s["capital_basis"], s["return_pct"]) == (2549.0, "monte_carlo", round(50 / 2549 * 100, 2))
+    plain = backtest.stats(dash_bridge.compact_backtest(dash_answer([100.0])))  # A Dash without a Monte Carlo
+    assert (plain["initial_balance"], plain["capital_basis"]) == (10_000.0, "declared")

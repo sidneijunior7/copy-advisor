@@ -185,6 +185,17 @@ def test_the_track_record_is_what_the_clients_got(client):
     p = client.get(url, headers=mgr).json()
     assert (p["trades"], p["start_balance"], p["return_pct"], p["capital_source"]) == (2, 10_000, 2.0, "dash")
     assert p["strategies"] == [{"id": strategy_id, "name": "WIN", "trades": 2, "net": 200.0}]
+    assert (p["lots"], p["per_lot"]) == (2, 100.0)  # 200 over the 2 lots closed
+
+    db = database.SessionLocal()
+    try:
+        db.query(models.DashLink).filter_by(portfolio_id=portfolio_id).one().backtest = (
+            '{"initial_balance": 113000, "capital": 2500, "currency": "BRL", "pnl": [1]}')
+        db.commit()
+    finally:
+        db.close()
+    p = client.get(url, headers=mgr).json()  # The Monte Carlo's DD + 3 sigma comes first
+    assert (p["start_balance"], p["return_pct"], p["capital_source"]) == (2500, 8.0, "dash-mc")
 
 
 def test_trades_from_before_the_mirror_are_apart(client):
@@ -225,3 +236,23 @@ def test_the_origin_account(client):
     assert client.put(url, headers=mgr, json={"master_login": login}).json() == {"master_login": login}
     assert next(p for p in client.get("/portfolios", headers=mgr).json() if p["id"] == portfolio_id)["master_login"] == login
     assert client.put(url, headers=mgr, json={"master_login": None}).json() == {"master_login": None}
+
+
+def test_a_test_account_can_be_taken_out_once(client, capsys, monkeypatch):
+    import clear_test_history
+    manager_id, mgr, portfolio_id, magic, _ = portfolio_with_strategy(client, "Clean")
+    login = uuid.uuid4().int % 10**8
+    seed_track(manager_id, portfolio_id, magic, login, "XP Investimentos", "BRL", 1000, [(1, 300, 5)])
+    seed_track(manager_id, portfolio_id, magic, login + 1, "RoboForex", "USD", 1000, [(2, -97, 4), (3, 10, 3)])
+    url = f"/portfolios/{portfolio_id}/performance"
+    assert client.get(url, headers=mgr).json()["trades"] == 3
+
+    def run(*args):
+        monkeypatch.setattr("sys.argv", ["clear_test_history.py", *map(str, args)])
+        clear_test_history.main()
+        return capsys.readouterr().out
+    assert f"{login + 1}: 2 trade(s) - RoboForex" in run(portfolio_id)
+    assert "net -87.00" in run(portfolio_id, login + 1) and client.get(url, headers=mgr).json()["trades"] == 3
+    assert "Taken out: 2" in run(portfolio_id, login + 1, "--apply")
+    p = client.get(url, headers=mgr).json()
+    assert (p["trades"], p["net"], p["currency"]) == (1, 300.0, "BRL")

@@ -85,9 +85,12 @@ def compact_backtest(body: str) -> dict:
     trades = valid(data.get("trades"))
     live = data.get("live") if isinstance(data.get("live"), dict) else {}
     live_trades = valid(live.get("trades"))
+    capital = data.get("capital") if isinstance(data.get("capital"), dict) else {}
+    capital_value = capital.get("value") if isinstance(capital.get("value"), (int, float)) else 0
     return {
         "name": str((data.get("portfolio") or {}).get("name") or "")[:100],
         "initial_balance": float(data.get("initial_balance") or 0),
+        "capital": round(float(capital_value), 2) if capital_value > 0 else None,  # Monte Carlo DD + 3 sigma
         "currency": (str(data["currency"])[:3] if data.get("currency") else None),
         "strategies": [{"name": str(s.get("name") or "")[:100], "magic_number": s.get("magic_number")}
                        for s in (data.get("strategies") or [])[:50] if isinstance(s, dict)],
@@ -150,7 +153,8 @@ def link_out(link: Optional[models.DashLink]) -> Optional[dict]:
         try:
             data = json.loads(link.backtest)
             backtest = {"name": data.get("name"), "trades": len(data.get("pnl") or []),
-                        "initial_balance": data.get("initial_balance") or None, "currency": data.get("currency")}
+                        "initial_balance": data.get("initial_balance") or None, "capital": data.get("capital"),
+                        "currency": data.get("currency")}
         except ValueError:
             pass
     return {"token_hint": link.token_hint, "status": link.status, "last_error": link.last_error,

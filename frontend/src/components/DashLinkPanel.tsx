@@ -120,7 +120,9 @@ export default function DashLinkPanel({ portfolioId, portfolioName }: { portfoli
                         {link.backtest && (
                             <span className="block">
                                 Backtest do Dash{link.backtest.name ? ` (${link.backtest.name})` : ''}: {link.backtest.trades.toLocaleString('pt-BR')} operações
-                                {link.backtest.initial_balance ? `, capital de ${formatMoney(link.backtest.initial_balance, link.backtest.currency)}` : ', sem capital declarado'}
+                                {link.backtest.capital
+                                    ? `, capital de ${formatMoney(link.backtest.capital, link.backtest.currency)} (DD máx. +3σ do Monte Carlo)`
+                                    : link.backtest.initial_balance ? `, capital de ${formatMoney(link.backtest.initial_balance, link.backtest.currency)} (rode o Monte Carlo do portfólio no Dash para usar o DD máx. +3σ)` : ', sem capital declarado'}
                                 {link.backtest_fetched_at ? `, lido em ${formatDateTime(link.backtest_fetched_at)}` : ''}.
                             </span>
                         )}
