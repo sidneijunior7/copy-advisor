@@ -56,6 +56,10 @@ class Portfolio(Base):
     # The Master account the portfolio copies from: the hub sends its clients only that account's positions. NULL =
     # every account of the manager, test accounts running the same magic numbers included.
     master_login = Column(BigInteger, nullable=True)
+    # The created_at of the last Dash live tracking trade taken into the homologation (IncubationTrade): the Dash
+    # sends only what it recorded from there on. Kept on the portfolio, not on the link, so a new link does not bring
+    # an older history in.
+    incubation_cursor = Column(String(40), nullable=True)
 
     owner = relationship("User", back_populates="portfolios")
     strategies = relationship("Strategy", secondary=portfolio_items, back_populates="portfolios")
@@ -267,6 +271,25 @@ class PortfolioTrade(Base):
     pos_id = Column(BigInteger, nullable=False)
     strategy_id = Column(Integer, ForeignKey("strategies.id"), nullable=False) # The strategy it went for
     sent_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+class IncubationTrade(Base):
+    """A trade of the Dash portfolio's live tracking, taken into the portfolio's homologation (dash_bridge.py): the
+    live trades of the manager's account before its clients got any. Frozen when it arrives: taking a strategy out on
+    the Dash, or changing the origin account, does not take it back."""
+    __tablename__ = "incubation_trades"
+    __table_args__ = (UniqueConstraint("portfolio_id", "dash_id", name="uq_incubation_trades_identity"),)
+
+    id = Column(BigIntPK, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False, index=True)
+    dash_id = Column(String(64), nullable=False) # real_time_trades.id on the Dash
+    strategy = Column(String(64)) # The Dash's strategy_id: the magic number the EA sent, or the strategy's UUID
+    account_login = Column(String(20)) # The MT5 account, when the Dash knows it
+    traded_at = Column(DateTime, nullable=False)
+    recorded_at = Column(DateTime) # When the Dash recorded it
+    pnl = Column(Float, nullable=False) # Net of fees
+    lots = Column(Float)
+    verified = Column(Boolean, nullable=False, default=False) # From OnTick, not the manager's own EA
+    received_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
 
 class MasterAccount(Base):
     """Trading account a Master EA runs on, as reported by its V2HELLO."""

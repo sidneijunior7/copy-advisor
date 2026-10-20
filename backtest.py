@@ -1,7 +1,7 @@
 """
 The backtest a manager declared on the Trademetric Dash, next to the live result: its numbers, the Dash portfolio's
-own live tracking (the incubation, shown apart from the Mirror's track record), and a Monte Carlo cone the live
-result is drawn in.
+own live tracking frozen by the bridge (the incubation; until the first copy it is the track record's homologation),
+and a Monte Carlo cone the live result, homologation included, is drawn in.
 
 Both sides are in percent of the account, so a backtest of one size compares with a live account of another:
 - a backtest trade is its net result over the balance before it, from the capital declared on the Dash;
@@ -115,7 +115,7 @@ def live_returns(db: Session, p: models.Portfolio, days: int, now: datetime.date
     results, logins = performance.portfolio_results(db, p, performance.since(days, now))
     if not results:
         return [], "no-trades"
-    if len(logins) != 1:
+    if len(logins) > 1:
         return [], "accounts"
     track = performance.track_capital(db, p, logins)
     if track["source"] == "currency-mismatch":
@@ -177,17 +177,23 @@ def cone(bt_returns: List[float], live: List[float], seed: int = 0) -> Optional[
     return {"trades": n, "simulations": sims, "bands": bands, "verdict": verdict}
 
 
-def incubation(bt: dict) -> Optional[dict]:
-    """The Dash portfolio's live tracking, before or beside the Mirror: the same numbers as the backtest, over the same
-    capital. verified: how many of its trades came from OnTick, the rest from the manager's own EA. None without."""
-    pnls = bt.get("live_pnl") or []
-    if not pnls:
+def incubation(db: Session, p: models.Portfolio, bt: dict) -> Optional[dict]:
+    """The Dash portfolio's live tracking frozen for the portfolio, before or beside the Mirror: the same numbers as
+    the backtest, over the same capital. verified: how many of its trades came from OnTick, the rest from the
+    manager's own EA; official: how many closed before the first copy, the homologation in the track record. None
+    without."""
+    trades = (db.query(models.IncubationTrade).filter(models.IncubationTrade.portfolio_id == p.id)
+              .order_by(models.IncubationTrade.traded_at).all())
+    if not trades:
         return None
-    out = stats({"pnl": pnls, "capital": bt.get("capital"), "initial_balance": bt.get("initial_balance"),
-                 "currency": bt.get("currency"), "from": bt.get("live_from"), "to": bt.get("live_to"),
-                 "truncated": bt.get("live_truncated")})
+    copy_start = performance.copy_start(db, p)
+    fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M:%S")
+    out = stats({"pnl": [t.pnl for t in trades], "capital": bt.get("capital"), "initial_balance": bt.get("initial_balance"),
+                 "currency": bt.get("currency"), "from": fmt(trades[0].traded_at), "to": fmt(trades[-1].traded_at),
+                 "truncated": False})
     del out["strategies"]
-    return {**out, "verified": int(bt.get("live_verified") or 0)}
+    return {**out, "verified": sum(1 for t in trades if t.verified),
+            "official": sum(1 for t in trades if copy_start is None or t.traded_at < copy_start)}
 
 
 def view(db: Session, p: models.Portfolio, link: Optional[models.DashLink], days: int, now: datetime.datetime,
@@ -197,7 +203,7 @@ def view(db: Session, p: models.Portfolio, link: Optional[models.DashLink], days
     if bt is None or not bt["pnl"]:
         return {"available": False}
     out = {"available": True, "fetched_at": link.backtest_fetched_at, "backtest": stats(bt),
-           "incubation": incubation(bt), "cone": None, "cone_missing": None}
+           "incubation": incubation(db, p, bt), "cone": None, "cone_missing": None}
     initial, _ = capital_of(bt)
     if initial <= 0:
         out["cone_missing"] = "capital"

@@ -262,13 +262,15 @@ export type PerformanceStats = {
 export type CapitalSource = 'dash-mc' | 'dash' | 'account' | 'accounts' | 'currency-mismatch' | null;
 
 export type PortfolioPerformance = PerformanceStats & {
-    strategies: { id: number; name: string | null; trades: number; net: number }[];
+    strategies: { id: number | null; name: string | null; trades: number; net: number }[]; // null: homologation trades of no known strategy
     lots: number; // Lots the trades closed
     per_lot: number | null; // Average result per lot: net / lots
     master_login: number | null;
     capital_source: CapitalSource;
     // Trades from before the Master first connected: no client got them, so they are not in the numbers above
     before_mirror: { trades: number; net: number; until: string | null };
+    // The Dash live tracking in the track record: the trades that closed before the clients got the first one
+    homologation: { trades: number; net: number; verified: number; to: string | null; copy_start: string | null };
 };
 
 export type CopiesPerformance = PerformanceStats & { equity: { t: string; balance: number | null; equity: number | null }[] };
@@ -335,8 +337,9 @@ export type BacktestView =
               strategies: string[];
               truncated: boolean;
           };
-          // The Dash portfolio's own live tracking, over the same capital; verified: trades that came from OnTick
-          incubation: (Omit<Extract<BacktestView, { available: true }>['backtest'], 'strategies'> & { verified: number }) | null;
+          // The Dash portfolio's own live tracking frozen by the Mirror, over the same capital; verified: trades that
+          // came from OnTick; official: the ones before the first copy, the homologation in the track record
+          incubation: (Omit<Extract<BacktestView, { available: true }>['backtest'], 'strategies'> & { verified: number; official: number }) | null;
           cone: { trades: number; simulations: number; bands: ConeBand[]; verdict: 'inside' | 'below' | 'above' } | null;
           cone_missing: 'capital' | 'accounts' | 'balance' | 'currency' | 'no-trades' | 'few-trades' | null;
       };

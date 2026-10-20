@@ -29,8 +29,8 @@ const CONE_MISSING: Record<string, string> = {
     accounts: 'O portfólio opera em mais de uma conta Master. A comparação em % da conta precisa de uma só.',
     balance: 'Ainda sem o saldo da conta Master. Ele vem do EA Master 4.01 ou mais novo.',
     currency: 'O capital do backtest está numa moeda e a conta Master em outra. A comparação precisa das duas na mesma moeda.',
-    'no-trades': 'Sem operações fechadas no período para comparar com o backtest.',
-    'few-trades': 'A comparação aparece a partir de 5 operações fechadas no período.',
+    'no-trades': 'Sem operações fechadas no período, na homologação ou na cópia, para comparar com o backtest.',
+    'few-trades': 'A comparação aparece a partir de 5 operações fechadas no período, contando a homologação.',
 };
 
 const VERDICT: Record<string, string> = {
@@ -69,13 +69,15 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
             {inc && (
                 <div className="space-y-3">
                     <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <Badge variant={inc.verified === inc.trades ? 'success' : 'primary'}>Incubação no Dash</Badge>
+                        <Badge variant={inc.verified === inc.trades ? 'success' : 'primary'}>Homologação no Dash</Badge>
                         {inc.verified === inc.trades
-                            ? 'Acompanhamento ao vivo no Trademetric Dash, verificado pela OnTick.'
+                            ? 'Acompanhamento ao vivo da conta do gestor no Trademetric Dash, verificado pela OnTick.'
                             : inc.verified > 0
-                                ? `Acompanhamento ao vivo no Trademetric Dash: ${inc.verified} de ${inc.trades} operações verificadas pela OnTick, as outras informadas pelo EA do gestor.`
-                                : 'Acompanhamento ao vivo no Trademetric Dash, informado pelo EA do gestor.'}
-                        {' '}Nenhum cliente do Mirror recebeu estas operações.
+                                ? `Acompanhamento ao vivo da conta do gestor no Trademetric Dash: ${inc.verified} de ${inc.trades} operações verificadas pela OnTick, as outras informadas pelo EA do gestor.`
+                                : 'Acompanhamento ao vivo da conta do gestor no Trademetric Dash, informado pelo EA do gestor.'}
+                        {' '}{inc.official === inc.trades
+                            ? 'Fazem parte do histórico: vieram antes da primeira cópia.'
+                            : `As ${inc.official} de antes da primeira cópia fazem parte do histórico; depois dela, vale o que os clientes receberam.`}
                     </p>
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                         <Tile label="Retorno" value={pct(inc.return_pct)}
@@ -83,13 +85,13 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                         <Tile label="Maior queda" value={inc.max_drawdown_pct == null ? '—' : pct(-inc.max_drawdown_pct)} hint="do saldo" />
                         <Tile label="Acerto" value={pct(inc.win_rate)} />
                         <Tile label="Fator de lucro" value={inc.profit_factor == null ? '—' : inc.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />
-                        <Tile label="Operações" value={inc.trades.toLocaleString('pt-BR')} hint={inc.truncated ? 'as primeiras 20 mil' : undefined} />
+                        <Tile label="Operações" value={inc.trades.toLocaleString('pt-BR')} />
                         <Tile label="Período" value={incPeriod ?? '—'} />
                     </div>
                 </div>
             )}
             <Card title="Ao vivo dentro do backtest" icon={<FlaskConical />}
-                description="Mil caminhos sorteados das operações do backtest, com tantas operações quanto o Master fechou no período, em % da conta. A faixa mostra onde caíram 50% e 90% deles.">
+                description="Mil caminhos sorteados das operações do backtest, com tantas operações quanto o histórico tem no período (homologação e cópia), em % da conta. A faixa mostra onde caíram 50% e 90% deles.">
                 <div className="mt-4 space-y-4">
                     {cone ? (
                         <>

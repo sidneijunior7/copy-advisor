@@ -15,6 +15,9 @@ creator then runs one EA, the Master, for both products.
   ERROR_RETRY_SECONDS, so fixing the plan on the Dash is enough. Other failures are tried again the next round.
 - With the shared key, the link also keeps a copy of the Dash portfolio's declared backtest (GET
   /api/mirror/backtest), refreshed every BACKTEST_REFRESH_SECONDS, for the listing page (backtest.py).
+- The same answer brings the Dash portfolio's live tracking, which is frozen as the portfolio's homologation
+  (freeze_incubation): the Dash sends it in the order it recorded it, from the portfolio's cursor on, so a strategy put
+  into the Dash portfolio later brings only what is recorded after that, and one taken out keeps what it had.
 """
 import datetime
 import json
@@ -23,6 +26,7 @@ import os
 import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -45,6 +49,9 @@ MAX_STEPS = 20  # per link per round: a long history goes out over several round
 HISTORY_MAX_DAYS = 90
 TOKEN_PATTERN = re.compile(r"^tc_[0-9a-f]{48}$")  # The Dash's portfolio API tokens (ApiTokenManager.tsx)
 OUT = (1, 2, 3)  # DEAL_ENTRY out, in/out (reversal) and out by: the Dash EA sends one item for each
+# After the first import, a live tracking trade recorded this long after it closed is left out of the homologation: the
+# EA records a trade as it closes and OnTick within its sync, so a late one is history sent afterwards.
+LATE_LIMIT = datetime.timedelta(days=3)
 
 Send = Callable[[str, list], Tuple[int, str]]
 
@@ -64,9 +71,11 @@ def send(token: str, items: list) -> Tuple[int, str]:
         return 0, str(e)[:200]
 
 
-def fetch_backtest(token: str) -> Tuple[int, str]:
-    """GET the linked Dash portfolio's backtest: (HTTP status, body); status 0 when the Dash did not answer."""
-    req = urllib.request.Request(BACKTEST_URL, method="GET", headers={
+def fetch_backtest(token: str, live_after: Optional[str] = None) -> Tuple[int, str]:
+    """GET the linked Dash portfolio's backtest, with its live tracking recorded from live_after on: (HTTP status,
+    body); status 0 when the Dash did not answer."""
+    url = BACKTEST_URL + (f"?live_after={urllib.parse.quote(live_after)}" if live_after else "")
+    req = urllib.request.Request(url, method="GET", headers={
         "x-api-token": token, "x-mirror-key": MIRROR_KEY, "User-Agent": "TrademetricMirror/1"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -78,13 +87,10 @@ def fetch_backtest(token: str) -> Tuple[int, str]:
 
 
 def compact_backtest(body: str) -> dict:
-    """What the Mirror keeps of the Dash answer: the net result of each trade, in order, and what describes them; the
-    same of the portfolio's live tracking on the Dash (its incubation), with how many trades OnTick verified."""
+    """What the Mirror keeps of the Dash answer: the net result of each trade, in order, and what describes them. The
+    live tracking is not kept here but frozen apart (freeze_incubation)."""
     data = json.loads(body)
-    valid = lambda items: [t for t in items or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
-    trades = valid(data.get("trades"))
-    live = data.get("live") if isinstance(data.get("live"), dict) else {}
-    live_trades = valid(live.get("trades"))
+    trades = [t for t in data.get("trades") or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
     capital = data.get("capital") if isinstance(data.get("capital"), dict) else {}
     capital_value = capital.get("value") if isinstance(capital.get("value"), (int, float)) else 0
     return {
@@ -98,23 +104,82 @@ def compact_backtest(body: str) -> dict:
         "from": trades[0].get("t") if trades else None,
         "to": trades[-1].get("t") if trades else None,
         "truncated": bool(data.get("truncated")),
-        "live_pnl": [round(float(t["pnl"]), 2) for t in live_trades],
-        "live_verified": sum(1 for t in live_trades if t.get("verified") is True),
-        "live_from": live_trades[0].get("t") if live_trades else None,
-        "live_to": live_trades[-1].get("t") if live_trades else None,
-        "live_truncated": bool(live.get("truncated")),
     }
 
 
-def refresh_backtest(db: Session, link: models.DashLink, token: str, fetch: Callable[[str], Tuple[int, str]],
-                     now: datetime.datetime):
-    """Keeps a fresh copy of the backtest on the link; a failure keeps the last copy and says why."""
-    status, body = fetch(token)
+def _utc(text) -> Optional[datetime.datetime]:
+    """A Dash timestamp as naive UTC, like the Mirror's; None when it is not one."""
+    try:
+        t = datetime.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t.astimezone(datetime.timezone.utc).replace(tzinfo=None) if t.tzinfo else t
+
+
+def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now: datetime.datetime) -> int:
+    """Takes the Dash live tracking trades into the portfolio's homologation (IncubationTrade); how many it took.
+
+    - A trade with its MT5 account must be from the account the portfolio copies from, when it names one. A trade
+      without it (recorded before the Dash kept the account) only from the Dash portfolio's own token or OnTick, not
+      from another Dash portfolio of the same strategies, which may be a demo.
+    - After the first import, a trade recorded more than LATE_LIMIT after it closed is left out.
+    - The cursor moves past every trade the Dash sent, taken or not, so none comes back. With nothing to take on the
+      first import it starts now: what the Dash recorded before stays out."""
+    trades = [t for t in live.get("trades") or [] if isinstance(t, dict)]
+    first = portfolio.incubation_cursor is None
+    cursor, cursor_at = portfolio.incubation_cursor, _utc(portfolio.incubation_cursor)
+    origin = str(portfolio.master_login) if portfolio.master_login is not None else None
+    ids = [str(t.get("id"))[:64] for t in trades if t.get("id")]
+    known = {i for (i,) in db.query(models.IncubationTrade.dash_id)
+             .filter(models.IncubationTrade.portfolio_id == portfolio.id, models.IncubationTrade.dash_id.in_(ids))}
+    taken = 0
+    for t in trades:
+        recorded = _utc(t.get("created"))
+        if recorded is not None and (cursor_at is None or recorded > cursor_at):
+            cursor, cursor_at = str(t["created"])[:40], recorded
+        traded = _utc(t.get("t"))
+        dash_id = str(t.get("id") or "")[:64]
+        if not dash_id or dash_id in known or traded is None or not isinstance(t.get("pnl"), (int, float)):
+            continue
+        account = str(t["account"]).strip()[:20] if t.get("account") not in (None, "") else None
+        if account is not None:
+            if origin is not None and account != origin:
+                continue
+        elif t.get("same_portfolio") is not True and t.get("verified") is not True:
+            continue
+        if not first and recorded is not None and recorded - traded > LATE_LIMIT:
+            continue
+        lots = t.get("lots")
+        db.add(models.IncubationTrade(
+            portfolio_id=portfolio.id, dash_id=dash_id, strategy=str(t.get("strategy") or "")[:64] or None,
+            account_login=account, traded_at=traded, recorded_at=recorded, pnl=round(float(t["pnl"]), 2),
+            lots=float(lots) if isinstance(lots, (int, float)) else None, verified=t.get("verified") is True,
+            received_at=now))
+        known.add(dash_id)
+        taken += 1
+    if cursor is None:
+        cursor = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    portfolio.incubation_cursor = cursor
+    return taken
+
+
+Fetch = Callable[[str, Optional[str]], Tuple[int, str]]
+
+
+def refresh_backtest(db: Session, link: models.DashLink, token: str, fetch: Fetch, now: datetime.datetime):
+    """Keeps a fresh copy of the backtest on the link and freezes the new live tracking trades; a failure keeps the
+    last copy and says why. A live tracking cut short is asked for again the next round, from where it stopped."""
+    status, body = fetch(token, link.portfolio.incubation_cursor)
     link.backtest_fetched_at = now  # Also on failure: the next try waits for the next refresh
     if status == 200:
         try:
             link.backtest = json.dumps(compact_backtest(body), separators=(",", ":"))
             link.backtest_error = None
+            live = json.loads(body).get("live")
+            if isinstance(live, dict):  # A Dash from before the live tracking sends none: the cursor stays
+                freeze_incubation(db, link.portfolio, live, now)
+                if live.get("truncated"):
+                    link.backtest_fetched_at = None
         except (ValueError, TypeError, KeyError) as e:
             link.backtest_error = f"O Dash mandou um backtest que o Mirror não entendeu ({type(e).__name__})."
     elif status == 403:
@@ -251,7 +316,7 @@ def advance(db: Session, link: models.DashLink, token: str, post: Send, now: dat
 
 
 def run_once(session_factory=database.SessionLocal, post: Optional[Send] = None,
-             now: Optional[datetime.datetime] = None, fetch: Optional[Callable[[str], Tuple[int, str]]] = None) -> int:
+             now: Optional[datetime.datetime] = None, fetch: Optional[Fetch] = None) -> int:
     post = post or send
     fetch = fetch or fetch_backtest
     now = now or datetime.datetime.utcnow()

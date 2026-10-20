@@ -48,6 +48,20 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
         ? `sobre ${money(stats.start_balance)}${source && CAPITAL_SOURCE[source] ? ` (${CAPITAL_SOURCE[source]})` : ''}`
         : (source && NO_CAPITAL[source]) || 'sem o saldo inicial';
     const before = 'before_mirror' in stats ? stats.before_mirror : null;
+    const homologation = 'homologation' in stats ? stats.homologation : null;
+    const homologationNote = homologation && homologation.trades > 0 && (
+        <p className="text-xs text-muted-foreground">
+            Inclui {homologation.trades} {homologation.trades === 1 ? 'operação' : 'operações'} da homologação no
+            Trademetric Dash, com resultado de {money(homologation.net)}: o acompanhamento ao vivo da conta do gestor
+            {homologation.copy_start ? ` antes da primeira cópia (${formatDate(parseUtc(homologation.copy_start))})` : ', antes de qualquer cópia'}
+            {homologation.verified === homologation.trades
+                ? ', verificado pela OnTick.'
+                : homologation.verified > 0
+                    ? `, ${homologation.verified} verificadas pela OnTick e as outras informadas pelo EA do gestor.`
+                    : ', informado pelo EA do gestor.'}
+            {' '}Não têm custo de cópia: use o lucro por lote para descontar corretagem e slippage.
+        </p>
+    );
     const perLot = 'per_lot' in stats ? stats : null;
     const beforeNote = before && before.trades > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -73,6 +87,7 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
 
     return (
         <div className="space-y-6">
+            {homologationNote}
             {beforeNote}
             <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
                 <Tile label="Resultado" value={money(stats.net)} tone={stats.net > 0 ? 'up' : stats.net < 0 ? 'down' : undefined} />
@@ -152,8 +167,8 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
                         <dt className="text-muted-foreground">Ganho médio</dt><dd className="text-right tabular-nums">{stats.avg_win == null ? '—' : money(stats.avg_win)}</dd>
                         <dt className="text-muted-foreground">Perda média</dt><dd className="text-right tabular-nums">{stats.avg_loss == null ? '—' : money(stats.avg_loss)}</dd>
                         {strategies.map(s => (
-                            <div key={s.id} className="contents">
-                                <dt className="text-muted-foreground">{s.name ?? `Estratégia ${s.id}`} ({s.trades})</dt>
+                            <div key={s.id ?? 'homologation'} className="contents">
+                                <dt className="text-muted-foreground">{s.id == null ? 'Homologação, outras estratégias' : s.name ?? `Estratégia ${s.id}`} ({s.trades})</dt>
                                 <dd className="text-right tabular-nums">{money(s.net)}</dd>
                             </div>
                         ))}

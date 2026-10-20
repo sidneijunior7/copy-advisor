@@ -72,7 +72,7 @@ def test_the_bridge_keeps_a_fresh_copy_of_the_backtest(client, monkeypatch):
     assert client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token}).status_code == 200
     calls = []
 
-    def fetch(t):
+    def fetch(t, after=None):
         calls.append(t)
         return (200, dash_answer([100, -40, 60])) if t == token else (403, "{}")
 
@@ -85,7 +85,7 @@ def test_the_bridge_keeps_a_fresh_copy_of_the_backtest(client, monkeypatch):
     assert calls.count(token) == 1  # Fresh: not again before BACKTEST_REFRESH_SECONDS
 
     later = datetime.datetime.utcnow() + datetime.timedelta(seconds=dash_bridge.BACKTEST_REFRESH_SECONDS + 60)
-    dash_bridge.run_once(post=FakeDash(), fetch=lambda t: (500, '{"error": "x"}'), now=later)
+    dash_bridge.run_once(post=FakeDash(), fetch=lambda t, after=None: (500, '{"error": "x"}'), now=later)
     link = client.get(f"/portfolios/{portfolio_id}/dash", headers=mgr).json()["link"]
     assert link["backtest"]["trades"] == 3 and "500" in link["backtest_error"]  # The last copy stays
 
@@ -131,7 +131,7 @@ def test_the_listing_shows_the_backtest_only_when_asked(client, monkeypatch):
     monkeypatch.setattr(dash_bridge, "send", FakeDash())
     token = new_token()
     client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
-    dash_bridge.run_once(post=FakeDash(), fetch=lambda t: (200, dash_answer(bt_pnls)) if t == token else (403, "{}"))
+    dash_bridge.run_once(post=FakeDash(), fetch=lambda t, after=None: (200, dash_answer(bt_pnls)) if t == token else (403, "{}"))
 
     preview = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr, params={"days": 90}).json()
     assert preview["available"] and preview["backtest"]["trades"] == 300 and preview["cone"]["trades"] == 30
@@ -153,25 +153,109 @@ def test_without_capital_there_is_no_cone(client, monkeypatch):
     token = new_token()
     client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
     dash_bridge.run_once(post=FakeDash(),
-                         fetch=lambda t: (200, dash_answer([10.0] * 50, initial=0)) if t == token else (403, "{}"))
+                         fetch=lambda t, after=None: (200, dash_answer([10.0] * 50, initial=0)) if t == token else (403, "{}"))
     view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr).json()
     assert view["available"] and view["cone"] is None and view["cone_missing"] == "capital"
     assert view["backtest"]["return_pct"] is None and view["backtest"]["net"] == 500.0
 
 
-def test_the_dash_live_tracking_is_the_incubation():
-    """The Dash portfolio's live tracking comes with the backtest and shows apart, over the same capital, with how
-    much of it OnTick verified."""
-    answer = json.loads(dash_answer([100.0, -50.0]))
-    answer["live"] = {"trades": [{"t": "2026-06-01T10:00:00", "pnl": 200.0, "verified": True},
-                                 {"t": "2026-07-01T10:00:00", "pnl": -100.0, "verified": False},
-                                 {"t": "2026-08-01T10:00:00", "pnl": "x"}],  # Not a number: left out
-                      "truncated": False}
-    bt = dash_bridge.compact_backtest(json.dumps(answer))
-    assert (bt["live_pnl"], bt["live_verified"], bt["live_from"]) == ([200.0, -100.0], 1, "2026-06-01T10:00:00")
-    inc = backtest.incubation(bt)
-    assert (inc["trades"], inc["net"], inc["verified"], inc["return_pct"], inc["currency"]) == (2, 100.0, 1, 1.0, "BRL")
-    assert backtest.incubation(dash_bridge.compact_backtest(dash_answer([1.0]))) is None  # A Dash without it
+def iso(at: datetime.datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
+def live_trade(dash_id, days_ago, pnl, recorded_days_ago=None, **extra):
+    """A Dash live tracking trade closed days_ago, recorded as it closed unless told otherwise."""
+    closed = NOW - datetime.timedelta(days=days_ago)
+    recorded = NOW - datetime.timedelta(days=days_ago if recorded_days_ago is None else recorded_days_ago)
+    return {"id": dash_id, "t": iso(closed), "created": iso(recorded + datetime.timedelta(seconds=1)), "pnl": pnl,
+            "lots": 1, "strategy": "777", "account": None, "same_portfolio": True, "verified": False, **extra}
+
+
+def with_live(trades, truncated=False):
+    answer = json.loads(dash_answer([100.0] * 40))
+    answer["live"] = {"trades": trades, "truncated": truncated}
+    return json.dumps(answer)
+
+
+def test_the_live_tracking_is_frozen_as_the_homologation(client, monkeypatch):
+    """The Dash live tracking is taken once, from the origin account, and kept: the Dash sends only what it recorded
+    after the portfolio's cursor, so what a strategy taken out had stays and one put in later brings nothing older."""
+    manager_id, mgr, portfolio_id, _ = published(client, title=f"Homologação {uuid.uuid4().hex[:6]}")
+    db = database.SessionLocal()
+    db.get(models.Portfolio, portfolio_id).master_login = 555
+    db.commit()
+    db.close()
+    monkeypatch.setattr(dash_bridge, "send", FakeDash())
+    token = new_token()
+    client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
+    asked = []
+    first = [live_trade("a1", 60, 200.0, account="555", verified=True),
+             live_trade("a2", 50, -100.0),  # Before the Dash kept the account, from the portfolio's own token
+             live_trade("a3", 45, 900.0, same_portfolio=False),  # Another Dash portfolio of the same strategy
+             live_trade("a4", 44, 900.0, account="999"),  # Another account
+             live_trade("a5", 43, "x")]  # Not a number
+    answer = {"body": with_live(first)}
+
+    def fetch(t, after=None):
+        asked.append(after)
+        return 200, answer["body"]
+
+    dash_bridge.run_once(post=FakeDash(), fetch=fetch)
+    db = database.SessionLocal()
+    taken = db.query(models.IncubationTrade).filter_by(portfolio_id=portfolio_id).order_by(models.IncubationTrade.traded_at).all()
+    assert [(t.dash_id, t.pnl, t.verified, t.account_login) for t in taken] == [("a1", 200.0, True, "555"),
+                                                                             ("a2", -100.0, False, None)]
+    assert asked == [None] and db.get(models.Portfolio, portfolio_id).incubation_cursor == first[4]["created"]
+    db.close()
+
+    later = datetime.datetime.utcnow() + datetime.timedelta(seconds=dash_bridge.BACKTEST_REFRESH_SECONDS + 60)
+    answer["body"] = with_live([first[4],  # The cursor is inclusive: the Mirror drops what it has
+                                live_trade("b1", 30, 50.0, recorded_days_ago=0),  # History sent afterwards
+                                live_trade("b2", 20, 300.0, account="555")])
+    dash_bridge.run_once(post=FakeDash(), fetch=fetch, now=later)
+    assert asked[-1] == first[4]["created"]
+    much_later = later + datetime.timedelta(seconds=dash_bridge.BACKTEST_REFRESH_SECONDS + 60)
+    answer["body"] = with_live([])  # The strategies were taken out of the Dash portfolio
+    dash_bridge.run_once(post=FakeDash(), fetch=fetch, now=much_later)
+
+    performance = client.get(f"/portfolios/{portfolio_id}/performance", headers=mgr, params={"days": 365}).json()
+    assert (performance["trades"], performance["net"], performance["lots"]) == (3, 400.0, 3)
+    assert performance["homologation"]["trades"] == 3 and performance["homologation"]["copy_start"] is None
+    assert performance["strategies"][0]["trades"] == 3  # The manager's strategy with the magic number 777
+    view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr, params={"days": 365}).json()
+    assert (view["incubation"]["trades"], view["incubation"]["verified"], view["incubation"]["official"]) == (3, 1, 3)
+
+    # The copy starts: the homologation ends at its first trade, and the cone runs over both
+    seed_live(manager_id, portfolio_id, [100.0] * 5)
+    db = database.SessionLocal()
+    db.query(models.PortfolioTrade).filter_by(portfolio_id=portfolio_id).update(
+        {"sent_at": NOW - datetime.timedelta(days=25)})
+    db.commit()
+    db.close()
+    performance = client.get(f"/portfolios/{portfolio_id}/performance", headers=mgr, params={"days": 365}).json()
+    assert performance["homologation"]["trades"] == 2 and performance["trades"] == 7  # b2 came after the copy started
+    view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr, params={"days": 365}).json()
+    assert view["incubation"]["official"] == 2 and view["cone"]["trades"] == 7
+
+
+def test_with_nothing_to_take_the_homologation_starts_now(client, monkeypatch):
+    """A Dash portfolio without live tracking yet: what it records afterwards comes, a strategy's older trades
+    never."""
+    _, mgr, portfolio_id, _ = published(client, title=f"Sem incubação {uuid.uuid4().hex[:6]}")
+    monkeypatch.setattr(dash_bridge, "send", FakeDash())
+    token = new_token()
+    client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
+    now = datetime.datetime.utcnow()
+    dash_bridge.run_once(post=FakeDash(), fetch=lambda t, after=None: (200, with_live([])), now=now)
+    db = database.SessionLocal()
+    try:
+        cursor = db.get(models.Portfolio, portfolio_id).incubation_cursor
+        assert dash_bridge._utc(cursor) == now.replace(microsecond=0)
+        assert db.query(models.IncubationTrade).filter_by(portfolio_id=portfolio_id).count() == 0
+    finally:
+        db.close()
+    # A Dash from before the live tracking sends none: nothing changes
+    assert backtest.incubation(database.SessionLocal(), models.Portfolio(id=-1), {}) is None
 
 
 def test_the_capital_is_the_monte_carlo_drawdown_plus_3_sigma():

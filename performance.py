@@ -7,6 +7,9 @@ trades are the positions the hub sent to its clients (portfolio_trades): its tra
 whatever the portfolio's strategies or account are now. The trades from before the Master connected are apart
 (before_mirror).
 
+Before the copy, the track record is the portfolio's homologation: the live tracking of its strategies on the
+Trademetric Dash, frozen as it arrived (dash_bridge.freeze_incubation), from the account the portfolio copies from.
+
 Return and drawdown in percent are over the portfolio's capital (track_capital): the one declared on the Dash, which
 sizes the strategies (Monte Carlo on the backtest), else the Master account's balance before the period's first
 trade. A demo account holding far more than the strategies use would otherwise shrink them. With more than one
@@ -18,6 +21,7 @@ import json
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -143,6 +147,41 @@ def _results(db: Session, p: models.Portfolio, start: datetime.datetime):
     return out, sorted(logins)
 
 
+def copy_start(db: Session, p: models.Portfolio) -> Optional[datetime.datetime]:
+    """When the portfolio's clients got their first trade; None while they got none."""
+    return (db.query(func.min(models.PortfolioTrade.sent_at))
+            .filter(models.PortfolioTrade.portfolio_id == p.id).scalar())
+
+
+def homologation(db: Session, p: models.Portfolio, start: datetime.datetime):
+    """The portfolio's homologation in the period: the Dash live tracking trades frozen for it (IncubationTrade) that
+    closed before its clients got their first trade, and when that was (None while no client got any). After it, the
+    track record is the copy's alone."""
+    started = copy_start(db, p)
+    q = db.query(models.IncubationTrade).filter(models.IncubationTrade.portfolio_id == p.id,
+                                                models.IncubationTrade.traded_at >= start)
+    if started is not None:
+        q = q.filter(models.IncubationTrade.traded_at < started)
+    return q.order_by(models.IncubationTrade.traded_at).all(), started
+
+
+def _official(db: Session, p: models.Portfolio, start: datetime.datetime):
+    """The track record: (close time, result, strategy id, open time, lots) of the homologation and of the copy, the
+    Master accounts behind the copy, what the percentages are over (track_capital), the homologation trades and when
+    the copy started. A homologation trade's strategy is the manager's with the magic number the Dash recorded (None
+    without one); its open time is its close time. The homologation is in the Dash's currency: with the Master account
+    in another one it is left out."""
+    rows, logins = _results(db, p, start)
+    track = track_capital(db, p, logins)
+    trades, copy_start = homologation(db, p, start)
+    if track["source"] == "currency-mismatch":
+        trades = []
+    magics = {str(s.magic_number): s.id for s in db.query(models.Strategy).filter(models.Strategy.user_id == p.user_id)
+              if s.magic_number is not None}
+    rows = [(t.traded_at, t.pnl, magics.get(t.strategy or ""), t.traded_at, t.lots or 0) for t in trades] + rows
+    return rows, logins, track, trades, copy_start
+
+
 def before_mirror(db: Session, p: models.Portfolio, start: datetime.datetime) -> dict:
     """The trades of the portfolio's strategies its Master account made before first connecting to the Mirror (the
     history a Master 4.01 sends, DEALS_FIRST_DAYS). No client got them and nothing shows the account was not picked
@@ -178,8 +217,9 @@ def before_mirror(db: Session, p: models.Portfolio, start: datetime.datetime) ->
 
 
 def portfolio_results(db: Session, p: models.Portfolio, start: datetime.datetime):
-    """(close time, result) of each closed position since start, and the Master accounts behind them."""
-    rows, logins = _results(db, p, start)
+    """(close time, result) of each trade of the track record since start, homologation included, and the Master
+    accounts behind the copy."""
+    rows, logins, _, _, _ = _official(db, p, start)
     return [(at, result) for at, result, _, _, _ in rows], logins
 
 
@@ -212,29 +252,33 @@ def track_capital(db: Session, p: models.Portfolio, logins: List[int]) -> dict:
 
 
 def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetime) -> dict:
-    """The positions the portfolio's clients got that closed in the period, as the Master's deals tell them."""
+    """The portfolio's track record in the period: its homologation on the Dash, then the positions its clients got,
+    as the Master's deals tell them."""
     start = since(days, now)
-    rows, logins = _results(db, p, start)
+    rows, _, track, trades, copy_start = _official(db, p, start)
     results: List[Tuple[datetime.datetime, float]] = [(at, result) for at, result, _, _, _ in rows]
     by_strategy: Dict[int, List[Tuple[datetime.datetime, float]]] = {}
     for at, result, strategy_id, _, _ in rows:
         by_strategy.setdefault(strategy_id, []).append((at, result))
     lots = sum(volume for _, _, _, _, volume in rows)  # The average result per lot is net / lots
-    track = track_capital(db, p, logins)
     capital = track["capital"]
     if track["source"] == "account":
         capital = round(track["balance_at"](min(opened for _, _, _, opened, _ in rows)), 2) if rows else None
-    # A strategy taken out of the portfolio still has its trades here
-    names = {s.id: s.name for s in db.query(models.Strategy).filter(models.Strategy.id.in_(sorted(by_strategy)))}
+    # A strategy taken out of the portfolio still has its trades here; None: homologation trades of no known strategy
+    names = {s.id: s.name for s in db.query(models.Strategy)
+             .filter(models.Strategy.id.in_(sorted(k for k in by_strategy if k is not None)))}
     return {
         **stats(results, capital, track["currency"]),
         "strategies": [{"id": sid, "name": names.get(sid), "trades": len(rs), "net": round(sum(r for _, r in rs), 2)}
-                       for sid, rs in sorted(by_strategy.items())],
+                       for sid, rs in sorted(by_strategy.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))],
         "lots": round(lots, 2),
         "per_lot": round(sum(r for _, r in results) / lots, 2) if lots > 0 else None,
         "master_login": p.master_login,
         "capital_source": track["source"],
         "before_mirror": before_mirror(db, p, start),
+        "homologation": {"trades": len(trades), "net": round(sum(t.pnl for t in trades), 2),
+                         "verified": sum(1 for t in trades if t.verified),
+                         "to": trades[-1].traded_at if trades else None, "copy_start": copy_start},
     }
 
 
