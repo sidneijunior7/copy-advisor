@@ -9,6 +9,7 @@ import BacktestSection from '../../components/BacktestSection';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
+import ResendLinkButton from '../../components/ResendLinkButton';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, IconSelect, Input, Select } from '../../components/ui/Field';
@@ -43,15 +44,6 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
         }
     };
 
-    const resend = async () => {
-        try {
-            await api.post('/email/resend');
-            toast.success('Link enviado: confira sua caixa de entrada');
-        } catch (e) {
-            toast.error(apiError(e, 'Não foi possível enviar o link.'));
-        }
-    };
-
     if (!user) {
         return (
             <div className="space-y-2">
@@ -67,7 +59,7 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
         return (
             <div className="space-y-3 text-sm">
                 <p className="flex items-start gap-2"><MailCheck className="mt-0.5 size-4 shrink-0 text-warning" /> Confirme seu email para assinar: o link está na sua caixa de entrada.</p>
-                <Button size="sm" variant="outline" onClick={resend}>Reenviar link</Button>
+                <ResendLinkButton />
             </div>
         );
     }

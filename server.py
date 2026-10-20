@@ -1392,7 +1392,9 @@ def resend_verification(current_user: models.User = Depends(get_current_user), d
     failure_limiter.fail(f"resend:{current_user.id}")
     token = mailer.issue_token(db, current_user, "verify", datetime.datetime.utcnow())
     db.commit()
-    mailer.send_verification(current_user, token)
+    # Sent now, not queued: the user is waiting on it, so a failure shows on screen instead of only in the log
+    if mailer.send_verification(current_user, token, wait=True):
+        raise HTTPException(status_code=502, detail="Não foi possível enviar o link agora. Tente de novo em alguns minutos.")
     return {"message": "Link enviado"}
 
 @app.post("/password/forgot")

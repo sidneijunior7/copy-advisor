@@ -4,6 +4,7 @@ import { ExternalLink, MailWarning, ShoppingBag, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Me, type Subscription } from '../../api';
 import Card from '../Card';
+import ResendLinkButton from '../ResendLinkButton';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { SUBSCRIPTION_STATUS } from '../../lib/labels';
@@ -17,19 +18,11 @@ export function EmailReminder() {
         api.get<Me>('/me').then(res => setMe(res.data)).catch(e => console.error(e));
     }, []);
     if (!me || me.email_verified || !me.email_enabled) return null;
-    const resend = async () => {
-        try {
-            await api.post('/email/resend');
-            toast.success('Link enviado: confira sua caixa de entrada');
-        } catch (e) {
-            toast.error(apiError(e, 'Não foi possível enviar o link.'));
-        }
-    };
     return (
         <div role="status" className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
             <p className="flex items-start gap-2"><MailWarning className="mt-0.5 size-4 shrink-0 text-warning" />
                 Confirme seu email ({me.email}) para assinar portfólios: o link está na sua caixa de entrada.</p>
-            <Button size="sm" variant="outline" onClick={resend}>Reenviar link</Button>
+            <ResendLinkButton />
         </div>
     );
 }

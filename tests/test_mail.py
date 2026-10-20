@@ -32,6 +32,8 @@ def outbox(monkeypatch):
     monkeypatch.setenv("SMTP_FROM", "Trademetric <no-reply@example.com>")
     sent = []
     monkeypatch.setattr(mailer, "send", lambda to, subject, body: sent.append({"to": to, "subject": subject, "body": body}))
+    # What the user waits on goes out now, and the server took it
+    monkeypatch.setattr(mailer, "send_now", lambda to, subject, body: sent.append({"to": to, "subject": subject, "body": body}))
     return sent
 
 
@@ -183,3 +185,20 @@ def test_dev_email_test_shows_what_the_server_answered(client, monkeypatch):
     assert r["ok"] is True and r["error"] is None and sent == ["a@b.com"]
     monkeypatch.delenv("SMTP_HOST")
     assert client.post("/admin/email-test", headers=dev, json={"to": "a@b.com"}).json()["ok"] is False
+
+
+def test_resending_the_link_says_when_the_server_refused_it(client, monkeypatch):
+    """The user waits on the link sent again: a refusal shows on screen, without the SMTP server's words."""
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "no-reply@example.com")
+
+    class Refusing:
+        def __init__(self, *args, **kwargs):
+            raise mailer.smtplib.SMTPAuthenticationError(535, b"5.7.8 Error: authentication failed")
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP", Refusing)
+    monkeypatch.setattr(mailer, "send", lambda to, subject, body: None)  # The sign-up's own link, queued
+    r, _ = signup(client)
+    me = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    r = client.post("/email/resend", headers=me)
+    assert r.status_code == 502 and "Tente de novo" in r.json()["detail"] and "535" not in r.text

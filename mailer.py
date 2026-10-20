@@ -41,14 +41,19 @@ def public_url() -> str:
     return os.getenv("PUBLIC_URL", "https://mirror.trademetric.com.br").rstrip("/")
 
 
+def _message(to: str, subject: str, body: str) -> EmailMessage:
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = os.environ["SMTP_FROM"], to, subject
+    msg.set_content(body)
+    return msg
+
+
 def send(to: str, subject: str, body: str):
     """Queues a plain-text message; drops it, with a log line, when email is off or the queue is full."""
     if not enabled():
         logger.info(f"Email off (SMTP_HOST/SMTP_FROM unset): not sending '{subject}' to {to}")
         return
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = os.environ["SMTP_FROM"], to, subject
-    msg.set_content(body)
+    msg = _message(to, subject, body)
     try:
         _outbox.put_nowait(msg)
     except queue.Full:
@@ -91,6 +96,20 @@ def _deliver(msg: EmailMessage):
         server.send_message(msg)
 
 
+def send_now(to: str, subject: str, body: str) -> Optional[str]:
+    """Sends in the caller's thread, for a message the user is waiting on: None when the server took it, else why
+    not. The SMTP server's own words go to the log only."""
+    if not enabled():
+        return "O envio de emails não está configurado"
+    try:
+        _deliver(_message(to, subject, body))
+    except Exception as e:  # The server's message, never the credentials
+        logger.error(f"Email to {to} failed ({type(e).__name__}: {str(e)[:200]})")
+        return "O servidor de email recusou o envio"
+    logger.info(f"Email sent: '{subject}' to {to}")
+    return None
+
+
 def test(to: str) -> dict:
     """Sends one message now, outside the queue, for the dev dashboard: what the SMTP server answered, and how the
     queue is (a message stuck in it with no worker alive means nothing goes out)."""
@@ -100,9 +119,8 @@ def test(to: str) -> dict:
            "sender": os.getenv("SMTP_FROM") or None, "queued": _outbox.qsize(), "worker_alive": worker_alive}
     if not enabled():
         return {**out, "ok": False, "error": "SMTP_HOST ou SMTP_FROM não configurados"}
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = os.environ["SMTP_FROM"], to, "Teste de envio do Trademetric Mirror"
-    msg.set_content(f"Este é um teste do envio de emails do Trademetric Mirror ({public_url()}). Se chegou, o envio funciona.\n")
+    msg = _message(to, "Teste de envio do Trademetric Mirror",
+                   f"Este é um teste do envio de emails do Trademetric Mirror ({public_url()}). Se chegou, o envio funciona.\n")
     try:
         _deliver(msg)
     except Exception as e:  # The server's message, never the credentials
@@ -136,12 +154,17 @@ def consume_token(db: Session, kind: str, token: str, now: datetime.datetime) ->
 
 # --- Messages (plain text, Portuguese: what the users read) ---
 
-def send_verification(user: models.User, token: str):
-    send(user.email, "Confirme seu email no Trademetric Mirror",
-         f"Olá{', ' + user.name if user.name else ''}.\n\n"
-         f"Para confirmar este email, abra o link abaixo (vale por {TOKEN_HOURS['verify']} horas):\n\n"
-         f"{public_url()}/verificar-email?token={token}\n\n"
-         "Se não foi você que criou a conta, ignore esta mensagem.\n")
+def send_verification(user: models.User, token: str, wait: bool = False) -> Optional[str]:
+    """Queued at sign-up; with wait (the user asked for the link again) sent now, returning why it failed."""
+    subject = "Confirme seu email no Trademetric Mirror"
+    body = (f"Olá{', ' + user.name if user.name else ''}.\n\n"
+            f"Para confirmar este email, abra o link abaixo (vale por {TOKEN_HOURS['verify']} horas):\n\n"
+            f"{public_url()}/verificar-email?token={token}\n\n"
+            "Se não foi você que criou a conta, ignore esta mensagem.\n")
+    if wait:
+        return send_now(user.email, subject, body)
+    send(user.email, subject, body)
+    return None
 
 
 def send_reset(user: models.User, token: str):
