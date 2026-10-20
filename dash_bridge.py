@@ -123,8 +123,8 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
       without it (recorded before the Dash kept the account) only from the Dash portfolio's own token or OnTick, not
       from another Dash portfolio of the same strategies, which may be a demo.
     - After the first import, a trade recorded more than LATE_LIMIT after it closed is left out.
-    - The cursor moves past every trade the Dash sent, taken or not, so none comes back. With nothing to take on the
-      first import it starts now: what the Dash recorded before stays out."""
+    - The cursor moves past every trade the Dash sent, taken or not, so none comes back. With no trade at all on the
+      first import it starts now: what the Dash records afterwards comes, a strategy's older trades never."""
     trades = [t for t in live.get("trades") or [] if isinstance(t, dict)]
     first = portfolio.incubation_cursor is None
     cursor, cursor_at = portfolio.incubation_cursor, _utc(portfolio.incubation_cursor)
@@ -157,8 +157,10 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
             received_at=now))
         known.add(dash_id)
         taken += 1
-    if cursor is None:
+    if cursor is None and not trades:
         cursor = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    # Trades but no recording time: a Dash from before the cursor, which sends no ids either. The cursor waits for one
+    # that does, or the history would be lost
     portfolio.incubation_cursor = cursor
     return taken
 

@@ -258,6 +258,23 @@ def test_with_nothing_to_take_the_homologation_starts_now(client, monkeypatch):
     assert backtest.incubation(database.SessionLocal(), models.Portfolio(id=-1), {}) is None
 
 
+def test_a_dash_from_before_the_cursor_does_not_start_it(client, monkeypatch):
+    """Trades without ids or recording times come from a Dash not yet updated: nothing is taken and the cursor waits,
+    so the history comes in full once the Dash is."""
+    _, mgr, portfolio_id, _ = published(client, title=f"Dash antigo {uuid.uuid4().hex[:6]}")
+    monkeypatch.setattr(dash_bridge, "send", FakeDash())
+    token = new_token()
+    client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
+    old = with_live([{"t": iso(NOW - datetime.timedelta(days=10)), "pnl": 100.0, "verified": False}])
+    dash_bridge.run_once(post=FakeDash(), fetch=lambda t, after=None: (200, old))
+    db = database.SessionLocal()
+    try:
+        assert db.get(models.Portfolio, portfolio_id).incubation_cursor is None
+        assert db.query(models.IncubationTrade).filter_by(portfolio_id=portfolio_id).count() == 0
+    finally:
+        db.close()
+
+
 def test_the_capital_is_the_monte_carlo_drawdown_plus_3_sigma():
     """The Dash's "DD Máx +3σ" is the capital the strategies run with: the percentages are over it, not over the
     balance declared on the Dash."""
