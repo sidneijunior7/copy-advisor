@@ -62,7 +62,7 @@ export default function CopyIssues() {
             ) : issues.length === 0 ? (
                 <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhuma cópia com problema nos últimos {DAYS} dias.</p>
             ) : (
-                <Table>
+                <Table stack>
                     <TableHeader>
                         <TableRow>
                             <TableHead>Quando</TableHead>
@@ -77,23 +77,23 @@ export default function CopyIssues() {
                     <TableBody>
                         {issues.map((issue, i) => (
                             <TableRow key={`${issue.at}:${issue.login}:${issue.uid}:${i}`}>
-                                <TableCell className="tabular-nums">{formatDateTime(issue.at)}</TableCell>
-                                <TableCell className="font-mono font-semibold">
+                                <TableCell label="Quando" className="tabular-nums">{formatDateTime(issue.at)}</TableCell>
+                                <TableCell label="Conta" className="font-mono font-semibold">
                                     {issue.login}
                                     {issue.license_id == null && (
                                         <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">(sem licença)</span>
                                     )}
                                 </TableCell>
-                                <TableCell>{issue.portfolio_name}</TableCell>
-                                <TableCell className="font-mono text-xs text-muted-foreground">{issue.uid}</TableCell>
-                                <TableCell>{ACTIONS[issue.action] ?? issue.action}</TableCell>
-                                <TableCell className="text-right font-mono tabular-nums">
+                                <TableCell label="Portfólio">{issue.portfolio_name}</TableCell>
+                                <TableCell label="Posição do Master" className="font-mono text-xs text-muted-foreground">{issue.uid}</TableCell>
+                                <TableCell label="Operação">{ACTIONS[issue.action] ?? issue.action}</TableCell>
+                                <TableCell label="Volume" className="text-right font-mono tabular-nums">
                                     {issue.volume == null || issue.action === 'MODIFY' ? '—' : formatVolume(issue.volume)}
                                     {issue.retcode === LOT_LIMIT && (
                                         <span className="ml-1 font-sans text-xs text-muted-foreground">de fora</span>
                                     )}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell label="Motivo">
                                     <Badge variant={issue.retcode === LOT_LIMIT ? 'warning' : 'destructive'} title={`Código ${issue.retcode}`}>
                                         {REASONS[issue.retcode] ?? `Recusada (código ${issue.retcode})`}
                                     </Badge>

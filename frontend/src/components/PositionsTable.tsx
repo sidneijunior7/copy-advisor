@@ -24,7 +24,7 @@ export default function PositionsTable({
     }
 
     return (
-        <Table>
+        <Table stack>
             <TableHeader>
                 <TableRow>
                     <TableHead>Estratégia</TableHead>
@@ -46,19 +46,19 @@ export default function PositionsTable({
                             <TableCell className="font-medium">
                                 {t.strategy_name || <span className="text-muted-foreground">Magic {t.magic ?? '—'}</span>}
                             </TableCell>
-                            <TableCell className="font-mono font-semibold">{t.symbol}</TableCell>
-                            <TableCell>
+                            <TableCell label="Ativo" className="font-mono font-semibold">{t.symbol}</TableCell>
+                            <TableCell label="Lado">
                                 <Badge variant={isBuy ? 'success' : 'destructive'}>
                                     {isBuy ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
                                     {isBuy ? 'Compra' : 'Venda'}
                                 </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono tabular-nums">{t.volume}</TableCell>
-                            <TableCell className="text-right font-mono tabular-nums">{t.price}</TableCell>
-                            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{level(t.sl)}</TableCell>
-                            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{level(t.tp)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs text-muted-foreground">{t.ticket}</TableCell>
-                            <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                            <TableCell label="Lotes" className="text-right font-mono tabular-nums">{t.volume}</TableCell>
+                            <TableCell label="Preço" className="text-right font-mono tabular-nums">{t.price}</TableCell>
+                            <TableCell label="SL" className="text-right font-mono tabular-nums text-muted-foreground">{level(t.sl)}</TableCell>
+                            <TableCell label="TP" className="text-right font-mono tabular-nums text-muted-foreground">{level(t.tp)}</TableCell>
+                            <TableCell label="Ticket" className="text-right font-mono text-xs text-muted-foreground">{t.ticket}</TableCell>
+                            <TableCell label="Atualizado" className="text-right font-mono text-xs text-muted-foreground">
                                 {t.timestamp ? formatTime(t.timestamp * 1000) : '—'}
                             </TableCell>
                         </TableRow>

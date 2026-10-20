@@ -77,7 +77,7 @@ export default function Subscriptions() {
                     <EmptyState icon={<Inbox />} title={filter === 'pending' ? 'Nenhum pedido esperando' : 'Nenhum pedido ainda'}
                         description="Os pedidos chegam quando clientes assinam seus portfólios no marketplace." />
                 ) : (
-                    <Table>
+                    <Table stack>
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Quando</TableHead>
@@ -95,24 +95,24 @@ export default function Subscriptions() {
                                 return (
                                     <Fragment key={s.id}>
                                         <TableRow className={cn(open && 'border-b-0')}>
-                                            <TableCell className="tabular-nums">{formatDateTime(s.created_at)}</TableCell>
-                                            <TableCell>
+                                            <TableCell label="Quando" className="tabular-nums">{formatDateTime(s.created_at)}</TableCell>
+                                            <TableCell label="Cliente">
                                                 <p className="font-medium">{s.client?.name ?? s.client?.email}</p>
                                                 <p className="text-xs text-muted-foreground">{s.client?.email}</p>
                                             </TableCell>
-                                            <TableCell>
+                                            <TableCell label="Portfólio">
                                                 {s.listing.title}
                                                 {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
                                                 {s.note && <p className="text-xs text-muted-foreground">"{s.note}"</p>}
                                             </TableCell>
-                                            <TableCell className="font-mono">{s.mt5_login}</TableCell>
-                                            <TableCell>
+                                            <TableCell label="Conta MT5" className="font-mono">{s.mt5_login}</TableCell>
+                                            <TableCell label="Situação">
                                                 <Badge variant={status.variant}>{status.label}</Badge>
                                                 {s.decision_note && <p className="mt-1 text-xs text-muted-foreground">{s.decision_note}</p>}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 {s.status === 'pending' && !open && (
-                                                    <div className="flex justify-end gap-1">
+                                                    <div className="flex justify-end gap-1 max-md:justify-start">
                                                         <Button size="sm" onClick={() => setDecision({ id: s.id, kind: 'approve', note: '', max_lots: '', days: String(s.listing.default_days) })}>
                                                             <Check /> Aprovar
                                                         </Button>
@@ -125,7 +125,7 @@ export default function Subscriptions() {
                                             </TableCell>
                                         </TableRow>
                                         {open && (
-                                            <TableRow className="hover:bg-transparent">
+                                            <TableRow className="hover:bg-transparent max-md:pt-0">
                                                 <TableCell colSpan={6} className="whitespace-normal pt-0">
                                                     <form onSubmit={e => { e.preventDefault(); decide(); }}
                                                         className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/30 p-3 md:flex-row md:items-end">

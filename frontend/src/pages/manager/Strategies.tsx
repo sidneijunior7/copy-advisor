@@ -98,7 +98,7 @@ export default function Strategies() {
                     title="Suas estratégias"
                     description={loading ? undefined : `${strategies.length} ${strategies.length === 1 ? 'cadastrada' : 'cadastradas'}`}
                     icon={<Layers />}
-                    className="lg:col-span-2"
+                    className="max-lg:order-first lg:col-span-2"
                     flush
                 >
                     {loading ? (
@@ -110,7 +110,7 @@ export default function Strategies() {
                             description="Crie a primeira estratégia para começar a distribuir sinais."
                         />
                     ) : (
-                        <Table>
+                        <Table stack>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Nome</TableHead>
@@ -122,8 +122,8 @@ export default function Strategies() {
                                 {strategies.map(s => (
                                     <TableRow key={s.id}>
                                         <TableCell className="font-medium">{s.name}</TableCell>
-                                        <TableCell className="font-mono text-primary">{s.magic_number}</TableCell>
-                                        <TableCell className="text-right">
+                                        <TableCell label="Magic Number" className="font-mono text-primary">{s.magic_number}</TableCell>
+                                        <TableCell label="Status" className="text-right">
                                             <Badge variant={s.is_active ? 'success' : 'muted'}>
                                                 {s.is_active ? 'Ativa' : 'Inativa'}
                                             </Badge>

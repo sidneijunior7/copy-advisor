@@ -2,7 +2,7 @@
 import { Fragment, useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'react-router-dom';
-import { Ban, CalendarX, Check, KeyRound, Pencil, RefreshCw, RotateCcw, Search, Server, ShieldCheck, UserRound, Users, X } from 'lucide-react';
+import { Ban, CalendarX, Check, Filter, KeyRound, Pencil, RefreshCw, RotateCcw, Search, Server, ShieldCheck, UserRound, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type HostedTerminal, type HostingList, type License, type Portfolio, type Strategy } from '../../api';
 import Card from '../../components/Card';
@@ -14,7 +14,7 @@ import OneTimeKey from '../../components/OneTimeKey';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Field, Input, Select } from '../../components/ui/Field';
+import { Field, IconSelect, Input, Select } from '../../components/ui/Field';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
 import { apiError, cn, formatDate, formatDateTime, isPast, licenseIsValid, parseUtc } from '../../lib/utils';
 
@@ -54,6 +54,7 @@ export default function Clients() {
     // Portfolio filter lives in the URL so the Portfolios page can link to its clients
     const [searchParams, setSearchParams] = useSearchParams();
     const portfolioFilter = searchParams.get('portfolio') ?? '';
+    const setPortfolioFilter = (value: string) => setSearchParams(value ? { portfolio: value } : {}, { replace: true });
     const [action, setAction] = useState<RowAction | null>(null);
     const [busy, setBusy] = useState<number | null>(null);
     // Plain Slave keys live here, and only until the user closes the notice
@@ -210,6 +211,12 @@ export default function Clients() {
     );
     const activeCount = licenses.filter(licenseIsValid).length;
     const today = todayInput();
+    const portfolioOptions = (
+        <>
+            <option value="">Todos os portfólios</option>
+            {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </>
+    );
 
     return (
         <div className="space-y-6">
@@ -303,17 +310,28 @@ export default function Clients() {
                 description={loading ? undefined : `${licenses.length} ${licenses.length === 1 ? 'conta' : 'contas'}, ${activeCount} ${activeCount === 1 ? 'ativa' : 'ativas'}`}
                 icon={<Users />}
                 action={
-                    <div className="flex w-full max-w-lg flex-col gap-2 sm:flex-row">
-                        <Select
+                    <div className="flex w-full max-w-lg gap-2">
+                        <IconSelect
+                            icon={<Filter />}
+                            label="Filtrar por portfólio"
+                            active={!!portfolioFilter}
                             value={portfolioFilter}
-                            onChange={e => setSearchParams(e.target.value ? { portfolio: e.target.value } : {}, { replace: true })}
-                            className="h-9 sm:w-48"
-                            aria-label="Filtrar por portfólio"
+                            onChange={e => setPortfolioFilter(e.target.value)}
+                            className="order-last sm:hidden"
                         >
-                            <option value="">Todos os portfólios</option>
-                            {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </Select>
-                        <div className="flex-1">
+                            {portfolioOptions}
+                        </IconSelect>
+                        <div className="hidden sm:block">
+                            <Select
+                                value={portfolioFilter}
+                                onChange={e => setPortfolioFilter(e.target.value)}
+                                className="h-9 w-48"
+                                aria-label="Filtrar por portfólio"
+                            >
+                                {portfolioOptions}
+                            </Select>
+                        </div>
+                        <div className="min-w-0 flex-1">
                             <Input
                                 value={filter}
                                 onChange={e => setFilter(e.target.value)}
@@ -348,7 +366,7 @@ export default function Clients() {
                                 Contas revogadas ou expiradas ficam em <strong className="font-medium text-foreground">só gestão</strong>: o EA {MANAGE_ONLY}
                             </p>
                         )}
-                        <Table>
+                        <Table stack>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Conta</TableHead>
@@ -385,11 +403,11 @@ export default function Clients() {
                                                         </p>
                                                     )}
                                                 </TableCell>
-                                                <TableCell className="text-right font-mono tabular-nums">
+                                                <TableCell label="Limite de lotes" className="text-right font-mono tabular-nums">
                                                     {mine?.kind === 'limit' ? (
                                                         <form
                                                             onSubmit={e => { e.preventDefault(); saveLimit(l, mine.value); }}
-                                                            className="flex items-center justify-end gap-1"
+                                                            className="flex items-center justify-end gap-1 max-md:justify-start"
                                                         >
                                                             <Input
                                                                 autoFocus
@@ -410,7 +428,7 @@ export default function Clients() {
                                                             </Button>
                                                         </form>
                                                     ) : (
-                                                        <div className="flex items-center justify-end gap-1">
+                                                        <div className="flex items-center justify-end gap-1 max-md:justify-start">
                                                             {formatLots(l.max_lots)}
                                                             <Button
                                                                 variant="ghost"
@@ -425,8 +443,8 @@ export default function Clients() {
                                                         </div>
                                                     )}
                                                 </TableCell>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-2">
+                                                <TableCell label="Chave (EA v4)">
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                                         {l.has_key ? (
                                                             <>
                                                                 <code className="font-mono text-xs">{l.key_prefix}…</code>
@@ -453,7 +471,7 @@ export default function Clients() {
                                                         )}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell label="Validade">
                                                     <div className="flex items-center gap-1">
                                                         {!l.expires_at ? (
                                                             <span className="text-muted-foreground">Sem validade</span>
@@ -476,7 +494,7 @@ export default function Clients() {
                                                     </div>
                                                     <p className="text-xs text-muted-foreground">Autorizada em {formatDate(l.created_at)}</p>
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell label="Status">
                                                     <Badge variant={status === 'Ativa' ? 'success' : status === 'Expirada' ? 'warning' : 'muted'}>{status}</Badge>
                                                     {status !== 'Ativa' && (
                                                         <p className="mt-1 text-xs text-muted-foreground" title={`O EA ${MANAGE_ONLY}`}>Só gestão</p>
@@ -487,7 +505,7 @@ export default function Clients() {
                                                         </div>
                                                     )}
                                                 </TableCell>
-                                                <TableCell className="text-right">
+                                                <TableCell className="text-right max-md:-ml-3 max-md:flex max-md:flex-wrap max-md:gap-1">
                                                     {canHaveKey && (
                                                         <Button
                                                             variant="ghost"
@@ -529,7 +547,7 @@ export default function Clients() {
                                                 </TableCell>
                                             </TableRow>
                                             {(panel || shownKey) && (
-                                                <TableRow className="hover:bg-transparent">
+                                                <TableRow className="hover:bg-transparent max-md:pt-0">
                                                     <TableCell colSpan={6} className="whitespace-normal pt-0">
                                                         {panel?.kind === 'expiry' ? (
                                                             <form

@@ -39,6 +39,26 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
 );
 Select.displayName = 'Select';
 
+// A select shown as a square icon button (for phones): the native picker opens over it,
+// and a dot marks a filter that is narrowing the list
+interface IconSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+    icon: ReactNode;
+    label: string;
+    active?: boolean;
+}
+
+export function IconSelect({ icon, label, active, className, children, ...props }: IconSelectProps) {
+    return (
+        <div className={cn('relative flex size-10 shrink-0 items-center justify-center rounded-md border border-input bg-secondary text-foreground transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ring-offset-background [&_svg]:size-4', active && 'border-primary/60 text-primary', className)}>
+            {icon}
+            {active && <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary" />}
+            <select aria-label={label} title={label} className="absolute inset-0 cursor-pointer appearance-none opacity-0" {...props}>
+                {children}
+            </select>
+        </div>
+    );
+}
+
 interface FieldProps {
     label: string;
     htmlFor: string;

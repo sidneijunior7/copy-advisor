@@ -37,7 +37,10 @@ export default function LineChart({ series, ariaLabel, formatValue, formatTime, 
     const y = (v: number) => MARGIN.top + innerH - ((v - y0) / (y1 - y0 || 1)) * innerH;
     const path = (s: LineSeries) => s.points.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
     const floor = zeroLine && y0 <= 0 && y1 >= 0 ? y(0) : MARGIN.top + innerH;
-    const xTicks = Array.from(new Set([0, 1, 2, 3].map(i => Math.round((i / 3) * (base.length - 1))))).map(i => base[i].t);
+    // A date label takes ~70 px: as many as fit, from two on a phone to four
+    const nx = Math.max(2, Math.min(4, Math.floor(innerW / 90) + 1));
+    // Evenly spaced in time, not by point: points can bunch up, and their labels with them
+    const xTicks = t1 === t0 ? [t0] : Array.from({ length: nx }, (_, i) => t0 + (i / (nx - 1)) * (t1 - t0));
 
     const nearest = (px: number) => {
         let best = 0;

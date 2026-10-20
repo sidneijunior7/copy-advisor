@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Store } from 'lucide-react';
+import { ArrowUpDown, Filter, Store } from 'lucide-react';
 import api, { MARKETS, type PublicListing } from '../../api';
 import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
 import { Badge } from '../../components/ui/Badge';
-import { Select } from '../../components/ui/Field';
+import { IconSelect, Select } from '../../components/ui/Field';
 import { priceLabel } from '../../lib/money';
 import { cn } from '../../lib/utils';
 
@@ -36,16 +36,30 @@ export default function Catalog() {
         .sort((a, b) => SORTS[sort].key(a) - SORTS[sort].key(b));
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-6 sm:space-y-8">
             <div className="space-y-2">
-                <h1 className="text-3xl font-bold tracking-tight">Estratégias para copiar</h1>
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Estratégias para copiar</h1>
                 <p className="max-w-2xl text-muted-foreground">
                     Portfólios de gestores com o desempenho real das contas que operam, atualizado a cada operação fechada.
                     Assine, informe sua conta MetaTrader 5 e copie com o EA no seu computador ou hospedado com a gente.
                 </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex items-center justify-between gap-3 sm:hidden">
+                <p className="min-w-0 truncate text-sm text-muted-foreground">
+                    {market || 'Todos os mercados'} · {SORTS[sort].label}
+                </p>
+                <div className="flex gap-2">
+                    <IconSelect icon={<Filter />} label="Mercado" active={!!market} value={market} onChange={e => setMarket(e.target.value)}>
+                        <option value="">Todos os mercados</option>
+                        {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </IconSelect>
+                    <IconSelect icon={<ArrowUpDown />} label="Ordenar" value={sort} onChange={e => setSort(e.target.value as Sort)}>
+                        {(Object.keys(SORTS) as Sort[]).map(s => <option key={s} value={s}>{SORTS[s].label}</option>)}
+                    </IconSelect>
+                </div>
+            </div>
+            <div className="hidden flex-wrap gap-2 sm:flex">
                 <Select value={market} onChange={e => setMarket(e.target.value)} className="h-9 w-52" aria-label="Mercado">
                     <option value="">Todos os mercados</option>
                     {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import api, { type ClientLicense, type MyPerformance } from '../../api';
 import PerformanceView from '../PerformanceView';
-import { Select } from '../ui/Field';
-import { PERIODS } from '../../lib/labels';
+import PeriodSelect from '../PeriodSelect';
 import { cn, isOlderVersion } from '../../lib/utils';
 
 // The client's own result next to what the portfolio realized in the same period
@@ -31,9 +30,7 @@ export default function ClientPerformance({ license }: { license: ClientLicense 
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-3">
-                <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9 w-48" aria-label="Período">
-                    {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
-                </Select>
+                <PeriodSelect value={days} onChange={changeDays} />
                 {oldEa && (
                     <p className="text-xs text-muted-foreground">
                         O EA {license.connection?.ea_version} não informa o resultado em dinheiro: atualize para 4.04 em Instalação.

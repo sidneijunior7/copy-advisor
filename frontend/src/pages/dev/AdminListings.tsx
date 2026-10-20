@@ -59,7 +59,7 @@ export default function AdminListings() {
                 ) : rows.length === 0 ? (
                     <EmptyState icon={<Store />} title="Nenhum anúncio ainda" />
                 ) : (
-                    <Table>
+                    <Table stack>
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Anúncio</TableHead>
@@ -79,13 +79,13 @@ export default function AdminListings() {
                                                 : <span className="font-medium">{r.title}</span>}
                                             <p className="font-mono text-xs text-muted-foreground">/{r.slug}</p>
                                         </TableCell>
-                                        <TableCell className="text-sm">{r.manager}</TableCell>
-                                        <TableCell>
+                                        <TableCell label="Gestor" className="text-sm">{r.manager}</TableCell>
+                                        <TableCell label="Situação">
                                             <Badge variant={STATUS[r.status].variant}>{STATUS[r.status].label}</Badge>
                                             {r.suspended_reason && <p className="mt-1 text-xs text-muted-foreground">{r.suspended_reason}</p>}
                                         </TableCell>
-                                        <TableCell>{r.published_at ? formatDate(r.published_at) : '—'}</TableCell>
-                                        <TableCell className="text-right">
+                                        <TableCell label="Publicado em">{r.published_at ? formatDate(r.published_at) : '—'}</TableCell>
+                                        <TableCell className="text-right max-md:-ml-3">
                                             {r.status === 'suspended' ? (
                                                 <Button size="sm" variant="ghost" onClick={() => restore(r)}><RotateCcw /> Liberar</Button>
                                             ) : suspending?.id !== r.id && (
@@ -97,7 +97,7 @@ export default function AdminListings() {
                                         </TableCell>
                                     </TableRow>
                                     {suspending?.id === r.id && (
-                                        <TableRow className="hover:bg-transparent">
+                                        <TableRow className="hover:bg-transparent max-md:pt-0">
                                             <TableCell colSpan={5} className="whitespace-normal pt-0">
                                                 <form onSubmit={e => { e.preventDefault(); suspend(); }}
                                                     className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 sm:flex-row sm:items-center">

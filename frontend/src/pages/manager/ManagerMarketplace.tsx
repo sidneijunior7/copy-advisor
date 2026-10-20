@@ -91,7 +91,7 @@ export default function ManagerMarketplace() {
             </PageHeader>
 
             <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
-                <div className="xl:order-2">{me && <PublicProfile me={me} onSaved={setMe} />}</div>
+                <div className="order-last xl:order-2">{me && <PublicProfile me={me} onSaved={setMe} />}</div>
                 <div className="space-y-4 xl:col-span-2">
                     {items === null ? (
                         <p className="text-sm text-muted-foreground">Carregando...</p>

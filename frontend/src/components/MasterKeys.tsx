@@ -153,7 +153,7 @@ export default function MasterKeys() {
                         description="Crie uma chave para conectar seu EA Master."
                     />
                 ) : (
-                    <Table>
+                    <Table stack>
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Rótulo</TableHead>
@@ -172,12 +172,12 @@ export default function MasterKeys() {
                                     <Fragment key={k.id}>
                                         <TableRow className={cn(confirming && 'border-b-0', revoked && 'text-muted-foreground')}>
                                             <TableCell className={cn('font-medium', !revoked && 'text-foreground')}>{k.label}</TableCell>
-                                            <TableCell className="font-mono text-xs">{k.key_prefix}…</TableCell>
-                                            <TableCell className="text-muted-foreground">{formatDate(k.created_at)}</TableCell>
-                                            <TableCell className="text-muted-foreground">
+                                            <TableCell label="Prefixo" className="font-mono text-xs">{k.key_prefix}…</TableCell>
+                                            <TableCell label="Criada em" className="text-muted-foreground">{formatDate(k.created_at)}</TableCell>
+                                            <TableCell label="Último uso" className="text-muted-foreground">
                                                 {k.last_used_at ? formatDateTime(k.last_used_at) : 'Nunca usada'}
                                             </TableCell>
-                                            <TableCell>
+                                            <TableCell label="Estado">
                                                 <Badge
                                                     variant={revoked ? 'muted' : 'success'}
                                                     title={k.revoked_at ? `Revogada em ${formatDateTime(k.revoked_at)}` : undefined}
@@ -185,7 +185,7 @@ export default function MasterKeys() {
                                                     {revoked ? 'Revogada' : 'Ativa'}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="text-right">
+                                            <TableCell className="text-right max-md:-ml-3">
                                                 {!revoked && (
                                                     <Button
                                                         variant="ghost"
@@ -201,7 +201,7 @@ export default function MasterKeys() {
                                             </TableCell>
                                         </TableRow>
                                         {confirming && (
-                                            <TableRow className="hover:bg-transparent">
+                                            <TableRow className="hover:bg-transparent max-md:pt-0">
                                                 <TableCell colSpan={6} className="whitespace-normal pt-0">
                                                     <InlineConfirm
                                                         confirmLabel="Revogar chave"

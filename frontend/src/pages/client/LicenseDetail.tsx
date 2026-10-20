@@ -94,7 +94,7 @@ export default function LicenseDetail() {
                 <Badge variant={state.variant} className="text-sm">{state.label}</Badge>
             </PageHeader>
 
-            <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border">
+            <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border scrollbar-none">
                 {TABS.map(t => (
                     <button
                         key={t.id}

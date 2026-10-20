@@ -7,6 +7,7 @@ import api from '../api';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import KPICard from '../components/KPICard';
+import TileRow from '../components/TileRow';
 import PageHeader from '../components/PageHeader';
 import { Badge, type BadgeProps } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -75,11 +76,11 @@ export default function DevDashboard() {
                 icon={<ShieldCheck />}
             />
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <TileRow className="md:grid-cols-3 md:gap-4">
                 <KPICard label="Gestores" value={managers.length} subValue="Contas cadastradas" icon={<Users />} />
                 <KPICard label="Ativos" value={activeCount} subValue="Com acesso liberado" icon={<UserCheck />} valueClassName="text-success" />
                 <KPICard label="Bloqueados" value={managers.length - activeCount} subValue="Congelados ou arquivados" icon={<Lock />} />
-            </div>
+            </TileRow>
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
                 <Card title="Novo gestor" icon={<Plus />}>
@@ -114,13 +115,13 @@ export default function DevDashboard() {
                     </form>
                 </Card>
 
-                <Card title="Contas de gestor" icon={<Users />} className="lg:col-span-2" flush>
+                <Card title="Contas de gestor" icon={<Users />} className="max-lg:order-first lg:col-span-2" flush>
                     {loading ? (
                         <p className="px-5 pb-5 text-sm text-muted-foreground">Carregando...</p>
                     ) : managers.length === 0 ? (
                         <EmptyState icon={<Users />} title="Nenhum gestor cadastrado" description="Crie a primeira conta de gestor ao lado." />
                     ) : (
-                        <Table>
+                        <Table stack>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Gestor</TableHead>
@@ -138,12 +139,12 @@ export default function DevDashboard() {
                                                 <p className="font-medium">{m.email}</p>
                                                 <p className="font-mono text-xs text-muted-foreground">ID {m.id}</p>
                                             </TableCell>
-                                            <TableCell className="text-muted-foreground">{formatDate(m.created_at)}</TableCell>
-                                            <TableCell>
+                                            <TableCell label="Criado em" className="text-muted-foreground">{formatDate(m.created_at)}</TableCell>
+                                            <TableCell label="Status">
                                                 <Badge variant={current?.badge}>{current?.label ?? m.status}</Badge>
                                             </TableCell>
-                                            <TableCell>
-                                                <div className="ml-auto flex w-fit rounded-lg border border-border/40 bg-secondary/40 p-0.5">
+                                            <TableCell label="Acesso">
+                                                <div className="ml-auto flex w-fit max-md:ml-0 rounded-lg border border-border/40 bg-secondary/40 p-0.5">
                                                     {(Object.keys(statuses) as ManagerStatus[]).map(status => {
                                                         const { action, icon: Icon } = statuses[status];
                                                         const selected = m.status === status;

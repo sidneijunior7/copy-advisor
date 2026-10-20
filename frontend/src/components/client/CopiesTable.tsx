@@ -3,8 +3,8 @@ import { ListOrdered } from 'lucide-react';
 import api, { type ClientIssue, type CopyRow } from '../../api';
 import Card from '../Card';
 import EmptyState from '../EmptyState';
+import PeriodSelect from '../PeriodSelect';
 import { Badge } from '../ui/Badge';
-import { Select } from '../ui/Field';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { formatPrice } from '../../lib/clientLicense';
 import { ACTIONS, LOT_LIMIT, REASONS } from '../../lib/labels';
@@ -15,6 +15,8 @@ const STATUS = {
     closed: { label: 'Fechada', variant: 'muted' },
     failed: { label: 'Não copiada', variant: 'destructive' },
 } as const;
+
+const COPY_PERIODS = [7, 30, 90].map(days => ({ days, label: `Últimos ${days} dias` }));
 
 // The copies on the client's account, from what its Slave reported
 export function CopiesTable({ licenseId }: { licenseId: number }) {
@@ -46,11 +48,7 @@ export function CopiesTable({ licenseId }: { licenseId: number }) {
                 : 'O resultado é a diferença de preço entre saída e entrada, no sentido da operação.'}
             icon={<ListOrdered />}
             action={
-                <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9 w-40" aria-label="Período">
-                    <option value={7}>Últimos 7 dias</option>
-                    <option value={30}>Últimos 30 dias</option>
-                    <option value={90}>Últimos 90 dias</option>
-                </Select>
+                <PeriodSelect value={days} onChange={changeDays} periods={COPY_PERIODS} />
             }
             flush
         >
@@ -59,7 +57,7 @@ export function CopiesTable({ licenseId }: { licenseId: number }) {
             ) : rows.length === 0 ? (
                 <EmptyState icon={<ListOrdered />} title="Nenhuma cópia no período" description="As operações do portfólio aparecem aqui assim que forem copiadas para a sua conta." />
             ) : (
-                <Table>
+                <Table stack>
                     <TableHeader>
                         <TableRow>
                             <TableHead>Abertura</TableHead>
@@ -74,8 +72,8 @@ export function CopiesTable({ licenseId }: { licenseId: number }) {
                     <TableBody>
                         {rows.map(r => (
                             <TableRow key={r.uid}>
-                                <TableCell className="tabular-nums">{formatDateTime(r.opened_at)}</TableCell>
-                                <TableCell>
+                                <TableCell label="Abertura" className="tabular-nums">{formatDateTime(r.opened_at)}</TableCell>
+                                <TableCell label="Ativo">
                                     <span className="font-medium">{r.symbol ?? '—'}</span>
                                     {r.type && (
                                         <span className={cn('ml-2 text-xs font-semibold', r.type === 'buy' ? 'text-success' : 'text-destructive')}>
@@ -83,14 +81,14 @@ export function CopiesTable({ licenseId }: { licenseId: number }) {
                                         </span>
                                     )}
                                 </TableCell>
-                                <TableCell className="text-right font-mono tabular-nums">{r.volume ? r.volume.toLocaleString('pt-BR') : '—'}</TableCell>
-                                <TableCell className="text-right font-mono tabular-nums">{r.open_price != null ? formatPrice(r.open_price) : '—'}</TableCell>
-                                <TableCell className="text-right font-mono tabular-nums">{r.close_price != null ? formatPrice(r.close_price) : '—'}</TableCell>
-                                <TableCell className={cn('text-right font-mono font-semibold tabular-nums',
+                                <TableCell label="Volume" className="text-right font-mono tabular-nums">{r.volume ? r.volume.toLocaleString('pt-BR') : '—'}</TableCell>
+                                <TableCell label="Entrada" className="text-right font-mono tabular-nums">{r.open_price != null ? formatPrice(r.open_price) : '—'}</TableCell>
+                                <TableCell label="Saída" className="text-right font-mono tabular-nums">{r.close_price != null ? formatPrice(r.close_price) : '—'}</TableCell>
+                                <TableCell label="Resultado" className={cn('text-right font-mono font-semibold tabular-nums',
                                     r.result == null ? 'text-muted-foreground' : r.result > 0 ? 'text-success' : r.result < 0 ? 'text-destructive' : '')}>
                                     {r.result == null ? '—' : `${r.result > 0 ? '+' : ''}${formatPrice(r.result)}`}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell label="Situação">
                                     <Badge variant={STATUS[r.status].variant}>{STATUS[r.status].label}</Badge>
                                     {r.failures > 0 && r.status !== 'failed' && (
                                         <span className="ml-1 text-xs text-muted-foreground" title="Veja em Problemas">{r.failures} falha{r.failures > 1 ? 's' : ''}</span>
@@ -122,7 +120,7 @@ export function ClientIssues({ licenseId }: { licenseId: number }) {
             ) : rows.length === 0 ? (
                 <EmptyState icon={<ListOrdered />} title="Nenhum problema no período" />
             ) : (
-                <Table>
+                <Table stack>
                     <TableHeader>
                         <TableRow>
                             <TableHead>Quando</TableHead>
@@ -134,13 +132,13 @@ export function ClientIssues({ licenseId }: { licenseId: number }) {
                     <TableBody>
                         {rows.map((r, i) => (
                             <TableRow key={`${r.at}:${r.uid}:${i}`}>
-                                <TableCell className="tabular-nums">{formatDateTime(r.at)}</TableCell>
-                                <TableCell>{ACTIONS[r.action] ?? r.action}</TableCell>
-                                <TableCell className="text-right font-mono tabular-nums">
+                                <TableCell label="Quando" className="tabular-nums">{formatDateTime(r.at)}</TableCell>
+                                <TableCell label="Operação">{ACTIONS[r.action] ?? r.action}</TableCell>
+                                <TableCell label="Volume" className="text-right font-mono tabular-nums">
                                     {r.volume == null || r.action === 'MODIFY' ? '—' : r.volume.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                     {r.retcode === LOT_LIMIT && <span className="ml-1 font-sans text-xs text-muted-foreground">de fora</span>}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell label="Motivo">
                                     <Badge variant={r.retcode === LOT_LIMIT ? 'warning' : 'destructive'} title={`Código ${r.retcode}`}>
                                         {REASONS[r.retcode] ?? `Recusada (código ${r.retcode})`}
                                     </Badge>

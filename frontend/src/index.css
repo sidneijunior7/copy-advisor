@@ -157,7 +157,7 @@
 
 @layer components {
     .kpi-card {
-        @apply relative overflow-hidden rounded-xl border border-border bg-card p-5 transition-all duration-300;
+        @apply relative overflow-hidden rounded-xl border border-border bg-card p-4 transition-all duration-300 sm:p-5;
         background: var(--gradient-card);
         box-shadow: var(--shadow-card);
     }
@@ -190,6 +190,15 @@
 
     .font-spartan {
         font-family: 'League Spartan', sans-serif;
+    }
+
+    /* Rows that slide sideways on touch: no scrollbar under them */
+    .scrollbar-none {
+        scrollbar-width: none;
+    }
+
+    .scrollbar-none::-webkit-scrollbar {
+        display: none;
     }
 }
 

@@ -165,7 +165,7 @@ export default function Portfolios() {
                     </Card>
                 </div>
 
-                <div className="space-y-4 lg:col-span-2">
+                <div className="space-y-4 max-lg:order-first lg:col-span-2">
                     {loading ? (
                         <p className="text-sm text-muted-foreground">Carregando...</p>
                     ) : portfolios.length === 0 ? (
@@ -180,9 +180,9 @@ export default function Portfolios() {
                         const activeClients = licenses.filter(l => l.portfolio_id === p.id && licenseIsValid(l)).length;
                         return (
                             <Card key={p.id} className="transition-colors hover:border-primary/30">
-                                <div className="flex items-start justify-between gap-4">
+                                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                                     <h3 className="text-lg font-semibold">{p.name}</h3>
-                                    <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                         <span>{p.strategies.length} {p.strategies.length === 1 ? 'estratégia' : 'estratégias'}</span>
                                         <Link
                                             to={`/manager/portfolios/${p.id}/performance`}

@@ -2,6 +2,7 @@ import { LineChart as LineIcon, TrendingUp } from 'lucide-react';
 import type { CopiesPerformance, PerformanceStats, PortfolioPerformance } from '../api';
 import Card from './Card';
 import EmptyState from './EmptyState';
+import TileRow from './TileRow';
 import ColumnChart from './charts/ColumnChart';
 import LineChart from './charts/LineChart';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
@@ -89,7 +90,7 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
         <div className="space-y-6">
             {homologationNote}
             {beforeNote}
-            <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
+            <TileRow className={cn('md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
                 <Tile label="Resultado" value={money(stats.net)} tone={stats.net > 0 ? 'up' : stats.net < 0 ? 'down' : undefined} />
                 <Tile label="Retorno" value={pct(stats.return_pct)}
                     hint={returnHint} />
@@ -104,7 +105,7 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
                 <Tile label="Maior queda" value={money(-stats.max_drawdown)} hint={stats.max_drawdown_pct != null ? pct(-stats.max_drawdown_pct) : 'do resultado acumulado'} />
                 <Tile label="Operações" value={String(stats.trades)}
                     hint={stats.best != null && stats.worst != null ? `melhor ${money(stats.best)}, pior ${money(stats.worst)}` : undefined} />
-            </div>
+            </TileRow>
 
             {curve.length > 0 && (
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">

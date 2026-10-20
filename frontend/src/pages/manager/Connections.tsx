@@ -121,7 +121,7 @@ export default function Connections() {
                         {masters.length === 0 ? (
                             <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Master conectado.</p>
                         ) : (
-                            <Table>
+                            <Table stack>
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Chave</TableHead>
@@ -135,13 +135,13 @@ export default function Connections() {
                                     {masters.map(m => (
                                         <TableRow key={`${m.key_id}:${m.login}`}>
                                             <TableCell className="font-medium">{m.key_label ?? `Chave #${m.key_id}`}</TableCell>
-                                            <TableCell className="font-mono font-semibold">{m.login}</TableCell>
-                                            <TableCell><EaVersion version={m.ea_version} latest={data.latest?.master} /></TableCell>
-                                            <TableCell>
+                                            <TableCell label="Conta" className="font-mono font-semibold">{m.login}</TableCell>
+                                            <TableCell label="Versão do EA"><EaVersion version={m.ea_version} latest={data.latest?.master} /></TableCell>
+                                            <TableCell label="Conectado desde">
                                                 {formatDateTime(m.connected_at * 1000)}{' '}
                                                 <span className="text-muted-foreground">({connectedFor(m.connected_at)})</span>
                                             </TableCell>
-                                            <TableCell className="tabular-nums">{formatAgo(m.last_msg_age_s)}</TableCell>
+                                            <TableCell label="Última mensagem" className="tabular-nums">{formatAgo(m.last_msg_age_s)}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
@@ -158,7 +158,7 @@ export default function Connections() {
                         {slaves.length === 0 ? (
                             <p className="px-5 pb-5 text-sm text-muted-foreground">Nenhum Slave conectado.</p>
                         ) : (
-                            <Table>
+                            <Table stack>
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Portfólio</TableHead>
@@ -173,9 +173,9 @@ export default function Connections() {
                                     {slaves.map(s => (
                                         <TableRow key={s.license_id}>
                                             <TableCell className="font-medium">{s.portfolio_name}</TableCell>
-                                            <TableCell className="font-mono font-semibold">{s.login}</TableCell>
-                                            <TableCell><EaVersion version={s.ea_version} latest={data.latest?.slave} /></TableCell>
-                                            <TableCell>
+                                            <TableCell label="Conta" className="font-mono font-semibold">{s.login}</TableCell>
+                                            <TableCell label="Versão do EA"><EaVersion version={s.ea_version} latest={data.latest?.slave} /></TableCell>
+                                            <TableCell label="Modo">
                                                 {s.active ? (
                                                     <Badge variant="success">Ativo</Badge>
                                                 ) : (
@@ -187,7 +187,7 @@ export default function Connections() {
                                                     </Badge>
                                                 )}
                                             </TableCell>
-                                            <TableCell className="tabular-nums">
+                                            <TableCell label="Atraso" className="tabular-nums">
                                                 {s.lag == null ? (
                                                     <span className="text-muted-foreground">—</span>
                                                 ) : s.lag === 0 ? (
@@ -198,7 +198,7 @@ export default function Connections() {
                                                     </span>
                                                 )}
                                             </TableCell>
-                                            <TableCell className="tabular-nums">
+                                            <TableCell label="Último ACK" className="tabular-nums">
                                                 {s.last_ack_age_s == null
                                                     ? <span className="text-muted-foreground">Nenhum ainda</span>
                                                     : formatAgo(s.last_ack_age_s)}

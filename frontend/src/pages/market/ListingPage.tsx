@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, ExternalLink, MailCheck, Store } from 'lucide-react';
+import { ArrowLeft, CalendarDays, CheckCircle2, ExternalLink, MailCheck, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type BacktestView, type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
 import BacktestSection from '../../components/BacktestSection';
@@ -10,7 +10,7 @@ import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Field, Input, Select } from '../../components/ui/Field';
+import { Field, IconSelect, Input, Select } from '../../components/ui/Field';
 import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
 import { formatMoney, priceLabel } from '../../lib/money';
@@ -156,7 +156,7 @@ export default function ListingPage() {
             <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3">
                 <div className="space-y-4 lg:col-span-2">
                     <div className="flex flex-wrap gap-1">{listing.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}</div>
-                    <h1 className="text-3xl font-bold tracking-tight">{listing.title}</h1>
+                    <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{listing.title}</h1>
                     {listing.summary && <p className="text-lg text-muted-foreground">{listing.summary}</p>}
                     {listing.description && <p className="whitespace-pre-line text-sm leading-relaxed">{listing.description}</p>}
                     {listing.strategies.length > 0 && (
@@ -183,14 +183,20 @@ export default function ListingPage() {
             </div>
 
             <section className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start justify-between gap-3 sm:items-center">
                     <div>
                         <h2 className="text-xl font-semibold">Desempenho real</h2>
                         <p className="text-sm text-muted-foreground">As operações fechadas na conta do gestor, no tamanho dele. Resultados passados não garantem resultados futuros.</p>
+                        <p className="mt-1 text-xs font-medium sm:hidden">{PERIODS.find(p => p.days === days)?.label}</p>
                     </div>
-                    <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9 w-48" aria-label="Período">
+                    <IconSelect icon={<CalendarDays />} label="Período" value={days} onChange={e => changeDays(Number(e.target.value))} className="sm:hidden">
                         {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
-                    </Select>
+                    </IconSelect>
+                    <div className="hidden shrink-0 sm:block">
+                        <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9 w-48" aria-label="Período">
+                            {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
+                        </Select>
+                    </div>
                 </div>
                 {stats && (
                     <div className={cn('transition-opacity', loading && 'opacity-60')}>

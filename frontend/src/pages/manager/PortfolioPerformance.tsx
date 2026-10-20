@@ -6,8 +6,7 @@ import BacktestSection from '../../components/BacktestSection';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PageHeader from '../../components/PageHeader';
 import PerformanceView from '../../components/PerformanceView';
-import { Select } from '../../components/ui/Field';
-import { PERIODS } from '../../lib/labels';
+import PeriodSelect from '../../components/PeriodSelect';
 import { cn } from '../../lib/utils';
 
 // What the portfolio's strategies realized, from the deals the Master reports (Master 4.01+)
@@ -57,11 +56,7 @@ export default function PortfolioPerformance() {
                 description="As operações fechadas das estratégias do portfólio, na conta do Master. Vem do EA Master 4.01 ou mais novo."
                 icon={<TrendingUp />}
             />
-            <div className="w-48">{/* The chevron sits at the wrapper's edge: the wrapper takes the width */}
-                <Select value={days} onChange={e => changeDays(Number(e.target.value))} className="h-9" aria-label="Período">
-                    {PERIODS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
-                </Select>
-            </div>
+            <PeriodSelect value={days} onChange={changeDays} />
             {data === null ? (
                 <p className="text-sm text-muted-foreground">{failed ? 'Não foi possível carregar o desempenho.' : 'Carregando...'}</p>
             ) : (
