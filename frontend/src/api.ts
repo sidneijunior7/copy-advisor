@@ -64,7 +64,7 @@ export type License = {
     id: number;
     portfolio_id: number | null;
     strategy_id: number | null;
-    client_mt5_login: number;
+    client_mt5_login: number | null;
     max_lots: number;
     is_active: boolean;
     created_at: string;
@@ -199,7 +199,7 @@ export type ClientLicense = {
     id: number;
     portfolio: { id: number; name: string | null };
     manager: string | null;
-    mt5_login: number;
+    mt5_login: number | null; // null: bought without it, the client connects it next
     max_lots: number;
     is_active: boolean;
     valid: boolean; // Active and not expired
@@ -394,7 +394,7 @@ export type SubscriptionStatus = 'pending' | 'approved' | 'rejected' | 'cancelle
 export type Subscription = {
     id: number;
     listing: { id: number; slug: string; title: string; checkout_url: string | null; price: number | null; currency: string; default_days: number };
-    mt5_login: number;
+    mt5_login: number | null;
     kind: 'new' | 'renewal';
     status: SubscriptionStatus;
     note: string | null;

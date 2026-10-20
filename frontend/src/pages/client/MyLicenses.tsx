@@ -116,7 +116,7 @@ export default function MyLicenses() {
                                 <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">
                                     <div>
                                         <dt className="text-xs text-muted-foreground">Conta MT5</dt>
-                                        <dd className="font-mono font-semibold">{l.mt5_login}</dd>
+                                        <dd className="font-mono font-semibold">{l.mt5_login ?? '—'}</dd>
                                     </div>
                                     <div>
                                         <dt className="text-xs text-muted-foreground">Limite</dt>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpDown, ChevronLeft, ChevronRight, Filter, Store } from 'lucide-react';
+import { ArrowRight, ArrowUpDown, ChevronLeft, ChevronRight, Filter, Store } from 'lucide-react';
 import api, { MARKETS, type PublicListing } from '../../api';
 import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
@@ -70,7 +70,12 @@ function ListingCard({ l }: { l: PublicListing }) {
                 </dl>
                 <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} height={56} />
             </div>
-            <p className="mt-auto border-t border-border pt-3 text-sm font-medium">{priceLabel(l)}</p>
+            <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-3">
+                <p className="text-sm font-medium">{priceLabel(l)}</p>
+                <span className="inline-flex items-center gap-1 text-sm font-semibold text-primary group-hover:underline">
+                    Ver e copiar <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+                </span>
+            </div>
         </Link>
     );
 }
@@ -153,10 +158,7 @@ export default function Catalog() {
         <div className="space-y-6 sm:space-y-8">
             <div className="space-y-2">
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Estratégias para copiar</h1>
-                <p className="max-w-2xl text-muted-foreground">
-                    Portfólios de gestores com o desempenho real das contas que operam, atualizado a cada operação fechada.
-                    Assine, informe sua conta MetaTrader 5 e copie com o EA no seu computador ou hospedado com a gente.
-                </p>
+                <p className="max-w-2xl text-muted-foreground">O resultado real de cada gestor, copiado direto na sua conta MetaTrader 5.</p>
             </div>
 
             <div className="flex items-center justify-between gap-3 sm:hidden">

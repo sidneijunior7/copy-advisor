@@ -41,28 +41,29 @@ def link_token(body: str) -> str:
     return re.search(r"token=([\w-]+)", body).group(1)
 
 
-def test_confirm_email_before_subscribing(client, outbox):
+def test_buy_before_confirming_the_email_but_confirm_before_copying(client, outbox):
     _, mgr, _, listing = published(client, title=f"Email {uuid.uuid4().hex[:6]}")
     r, email = signup(client)
     me = {"Authorization": f"Bearer {r.json()['access_token']}"}
     [verify] = outbox
     assert verify["to"] == email and "/verificar-email?token=" in verify["body"]
     assert client.get("/me", headers=me).json()["email_verified"] is False
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242})
-    assert r.status_code == 403 and "Confirme" in r.json()["detail"]
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"note": "Oi"})
+    assert r.status_code == 200 and r.json()["mt5_login"] is None
+    notice = outbox[-1]
+    assert notice["subject"].startswith("Novo pedido de assinatura") and "None" not in notice["body"] and "Oi" in notice["body"]
+    client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={"note": "Bem-vindo"})
+    decision = outbox[-1]
+    assert decision["to"] == email and decision["subject"].startswith("Assinatura aprovada") and "Bem-vindo" in decision["body"]
 
+    [lic] = client.get("/me/licenses", headers=me).json()["licenses"]
+    r = client.put(f"/me/licenses/{lic['id']}/account", headers=me, json={"mt5_login": 4242})
+    assert r.status_code == 403 and "Confirme" in r.json()["detail"]
     token = link_token(verify["body"])
     assert client.post("/email/verify", json={"token": token}).status_code == 200
     assert client.post("/email/verify", json={"token": token}).status_code == 400  # Used up
     assert client.get("/me", headers=me).json()["email_verified"] is True
-
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"mt5_login": 4242, "note": "Oi"})
-    assert r.status_code == 200
-    notice = outbox[-1]
-    assert notice["subject"].startswith("Novo pedido de assinatura") and "4242" in notice["body"] and "Oi" in notice["body"]
-    client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={"note": "Bem-vindo"})
-    decision = outbox[-1]
-    assert decision["to"] == email and decision["subject"].startswith("Assinatura aprovada") and "Bem-vindo" in decision["body"]
+    assert client.put(f"/me/licenses/{lic['id']}/account", headers=me, json={"mt5_login": 4242}).json()["mt5_login"] == 4242
 
 
 def test_reset_password_ends_old_sessions(client, outbox):

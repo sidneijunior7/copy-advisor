@@ -38,6 +38,12 @@ function NavigateWrapper() {
   return <Navigate to="/client" replace />;
 }
 
+// A visitor lands on the marketplace, a signed-in user on their panel
+function Home() {
+  const { user } = useAuth();
+  return <Navigate to={user ? '/dashboard' : '/marketplace'} replace />;
+}
+
 function ThemedToaster() {
   const { theme } = useTheme();
   return (
@@ -108,7 +114,7 @@ function App() {
               <Route path="/dashboard" element={<NavigateWrapper />} />
             </Route>
 
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Home />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

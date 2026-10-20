@@ -175,11 +175,15 @@ def send_reset(user: models.User, token: str):
          "Se não foi você, ignore esta mensagem: a senha atual continua valendo.\n")
 
 
+def account_of(sub: models.Subscription) -> str:
+    return f" para a conta MT5 {sub.mt5_login}" if sub.mt5_login else ""
+
+
 def send_new_subscription(manager: models.User, sub: models.Subscription):
     client = sub.client
     send(manager.email, f"Novo pedido de assinatura: {sub.listing.title}",
          f"{client.name or client.email} ({client.email}) pediu {'a renovação de' if sub.kind == 'renewal' else ''} "
-         f"{sub.listing.title} para a conta MT5 {sub.mt5_login}.\n"
+         f"{sub.listing.title}{account_of(sub)}.\n"
          + (f"\nMensagem do cliente: {sub.note}\n" if sub.note else "")
          + f"\nAprove ou recuse em {public_url()}/manager/subscriptions\n")
 
@@ -189,11 +193,11 @@ def send_decision(sub: models.Subscription):
     if sub.status == "approved":
         lic = sub.license
         until = lic.expires_at.strftime("%d/%m/%Y") if lic and lic.expires_at else "sem data de validade"
-        body = (f"Sua assinatura de {sub.listing.title} para a conta MT5 {sub.mt5_login} foi aprovada, "
+        body = (f"Sua assinatura de {sub.listing.title}{account_of(sub)} foi aprovada, "
                 f"válida até {until}.\n\nVeja como começar a copiar em {public_url()}/client/licenses/{sub.license_id}\n")
         subject = f"Assinatura aprovada: {sub.listing.title}"
     else:
-        body = (f"Seu pedido de {sub.listing.title} para a conta MT5 {sub.mt5_login} foi recusado.\n"
+        body = (f"Seu pedido de {sub.listing.title}{account_of(sub)} foi recusado.\n"
                 + (f"\nMotivo: {sub.decision_note}\n" if sub.decision_note else "")
                 + f"\nDúvidas? Responda a quem vende o portfólio pelo marketplace: {public_url()}/marketplace/{sub.listing.slug}\n")
         subject = f"Pedido recusado: {sub.listing.title}"

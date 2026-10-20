@@ -9,6 +9,9 @@ export const copyState = (l: ClientLicense): CopyState => {
     if (!l.is_active) {
         return { label: 'Revogada', variant: 'muted', detail: 'Não abre posições novas; as abertas seguem o Master até fechar.' };
     }
+    if (l.mt5_login == null) {
+        return { label: 'Conecte sua conta', variant: 'warning', detail: 'Informe a conta MT5 que vai copiar para começar.' };
+    }
     if (!l.valid) {
         return { label: 'Vencida', variant: 'warning', detail: 'Renove para voltar a copiar. As posições abertas seguem o Master até fechar.' };
     }

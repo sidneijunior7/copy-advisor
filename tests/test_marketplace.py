@@ -116,6 +116,31 @@ def test_subscription_approved_creates_the_linked_license_and_renewal_extends_it
     assert (datetime.datetime.fromisoformat(lic["expires_at"]) - first_expiry).days == 60  # From the current expiry
 
 
+def test_buy_without_the_account_and_connect_it_on_the_license(client):
+    _, mgr, portfolio_id, listing = published(client, title=f"Sem conta {uuid.uuid4().hex[:6]}")
+    cli, _ = client_headers(client)
+    other, _ = client_headers(client)
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={})
+    assert r.status_code == 200 and r.json()["mt5_login"] is None and r.json()["kind"] == "new"
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={}).status_code == 409
+    client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={})
+    [lic] = client.get("/me/licenses", headers=cli).json()["licenses"]
+    assert lic["mt5_login"] is None and lic["valid"]
+    # Nothing copies, and nothing renews, before the account is there
+    assert client.post(f"/me/licenses/{lic['id']}/key", headers=cli).status_code == 409
+    assert client.post(f"/me/licenses/{lic['id']}/renew", headers=cli).status_code == 409
+
+    login = uuid.uuid4().int % 10**8
+    taken = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"mt5_login": login}).json()
+    client.post(f"/subscriptions/{taken['id']}/approve", headers=mgr, json={})
+    assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login}).status_code == 409
+    assert client.put(f"/me/licenses/{lic['id']}/account", headers=other, json={"mt5_login": login + 1}).status_code == 404
+    r = client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login + 1})
+    assert r.status_code == 200 and r.json()["mt5_login"] == login + 1
+    assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login + 2}).status_code == 409
+    assert client.post(f"/me/licenses/{lic['id']}/key", headers=cli).status_code == 200
+
+
 def test_reject_cancel_and_someone_elses_account(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Recusa {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)

@@ -48,7 +48,7 @@ class ListingIn(BaseModel):
 
 
 class SubscriptionIn(BaseModel):
-    mt5_login: int = Field(gt=0, le=10**12)
+    mt5_login: Optional[int] = Field(default=None, gt=0, le=10**12)  # None: connected on the license afterwards
     note: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -221,7 +221,8 @@ def approve(db: Session, sub: models.Subscription, decision: Decision, now: date
     listing = sub.listing
     days = decision.days or listing.default_days or 30
     max_lots = decision.max_lots or listing.default_max_lots or 1.0
-    lic = (db.query(models.License)
+    # Without an account yet the license is always new: the client connects it afterwards (connect_account)
+    lic = None if sub.mt5_login is None else (db.query(models.License)
            .filter(models.License.portfolio_id == listing.portfolio_id,
                    models.License.client_mt5_login == sub.mt5_login).first())
     if lic is None:

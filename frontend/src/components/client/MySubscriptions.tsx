@@ -58,7 +58,7 @@ export default function MySubscriptions() {
                                     {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
-                                    Conta {s.mt5_login} · pedido em {formatDate(s.created_at)} · {priceLabel(s.listing)}
+                                    {s.mt5_login != null && <>Conta {s.mt5_login} · </>}pedido em {formatDate(s.created_at)} · {priceLabel(s.listing)}
                                 </p>
                                 {s.decision_note && <p className="text-xs text-muted-foreground">Gestor: {s.decision_note}</p>}
                             </div>

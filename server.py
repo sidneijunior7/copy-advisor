@@ -1016,7 +1016,7 @@ signup_limiter = FailureLimiter(int(os.getenv("SIGNUP_MAX_PER_HOUR", "5")), 3600
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=200)
-    name: str = Field(min_length=1, max_length=100, pattern=hosting.ONE_LINE)
+    name: Optional[str] = Field(default=None, max_length=100, pattern=hosting.ONE_LINE)  # Filled in later
 
 
 class ClaimRequest(BaseModel):
@@ -1045,7 +1045,7 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     signup_limiter.fail(f"signup:{ip}")
     if db.query(models.User).filter(func.lower(models.User.email) == email).first():
         raise HTTPException(status_code=409, detail="Este email já tem conta: entre com ele")
-    user = models.User(email=email, name=data.name.strip(), password_hash=auth.get_password_hash(data.password),
+    user = models.User(email=email, name=(data.name or "").strip() or None, password_hash=auth.get_password_hash(data.password),
                        role="CLIENT", status="active")
     db.add(user)
     db.commit()
@@ -1140,16 +1140,43 @@ def update_my_hosting(license_id: int, changes: ClientHosting, current_user: mod
     """The client hosts its own license: the manager never sees the broker password."""
     f = hosting_cipher()
     lic = own_license(license_id, current_user, db)
+    account_required(lic)
     return save_hosting(lic, hosting.HostingUpdate(**changes.model_dump()), f, current_user, db)
 
 @app.delete("/me/licenses/{license_id}/hosting")
 def remove_my_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     return delete_hosting(own_license(license_id, current_user, db), current_user, db)
 
+class AccountIn(BaseModel):
+    mt5_login: int = Field(gt=0, le=10**12)
+
+@app.put("/me/licenses/{license_id}/account")
+def connect_account(license_id: int, data: AccountIn, current_user: models.User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """The MT5 account of a license bought without one. Once set, only the manager changes it."""
+    lic = own_license(license_id, current_user, db)
+    if lic.client_mt5_login is not None:
+        raise HTTPException(status_code=409, detail="Esta licença já tem conta. Para trocar, fale com o gestor")
+    if mailer.enabled() and current_user.email_verified_at is None:
+        raise HTTPException(status_code=403, detail="Confirme seu email antes de conectar a conta: o link está na sua caixa de entrada")
+    if db.query(models.License).filter(models.License.portfolio_id == lic.portfolio_id,
+                                       models.License.client_mt5_login == data.mt5_login).first():
+        raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio")
+    lic.client_mt5_login = data.mt5_login
+    db.commit()
+    logger.info(f"License {lic.id}: client {current_user.id} connected MT5 account {data.mt5_login}")
+    notify_hub()
+    return my_license_view(lic, db)
+
+def account_required(lic: models.License):
+    if lic.client_mt5_login is None:
+        raise HTTPException(status_code=409, detail="Conecte a conta MT5 da licença primeiro")
+
 @app.post("/me/licenses/{license_id}/key")
 def new_my_key(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """A key for the Slave on the client's own computer, shown once; the previous one stops working."""
     lic = own_license(license_id, current_user, db)
+    account_required(lic)
     if db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first():
         raise HTTPException(status_code=409, detail="Esta licença roda no nosso servidor e a chave fica com ele. "
                                                     "Remova a hospedagem para usar o EA no seu computador.")
@@ -1492,11 +1519,11 @@ subscribe_limiter = FailureLimiter(int(os.getenv("SUBSCRIBE_MAX_PER_DAY", "20"))
 @app.post("/api/marketplace/{slug}/subscribe")
 def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.User = Depends(get_current_user),
               db: Session = Depends(get_db)):
-    """A client asks for a listing with the MT5 account that will copy. The manager approves it once paid."""
+    """A client asks for a listing. The manager approves it once paid. The MT5 account is optional: without it, the
+    client connects it on the license afterwards, so buying never waits on looking the number up. Nor on the email
+    link: that is asked when connecting the account, before anything copies."""
     client_only(current_user)
     listing = published_listing(slug, db)
-    if mailer.enabled() and current_user.email_verified_at is None:
-        raise HTTPException(status_code=403, detail="Confirme seu email antes de assinar: o link está na sua caixa de entrada")
     pending = db.query(models.Subscription).filter(models.Subscription.client_user_id == current_user.id,
                                                    models.Subscription.status == "pending")
     if pending.count() >= marketplace.MAX_PENDING_PER_CLIENT:
@@ -1504,8 +1531,8 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     if pending.filter(models.Subscription.listing_id == listing.id,
                       models.Subscription.mt5_login == data.mt5_login).first():
         raise HTTPException(status_code=409, detail="Já existe um pedido desta conta esperando resposta")
-    existing = db.query(models.License).filter(models.License.portfolio_id == listing.portfolio_id,
-                                               models.License.client_mt5_login == data.mt5_login).first()
+    existing = None if data.mt5_login is None else db.query(models.License).filter(
+        models.License.portfolio_id == listing.portfolio_id, models.License.client_mt5_login == data.mt5_login).first()
     if existing is not None and existing.client_user_id not in (None, current_user.id):
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio em outro cadastro")
     if subscribe_limiter.blocked(f"subscribe:{current_user.id}"):
@@ -1530,6 +1557,7 @@ def renew_my_license(license_id: int, current_user: models.User = Depends(get_cu
                                               models.Listing.status == "published").first()
     if listing is None:
         raise HTTPException(status_code=409, detail="Este portfólio não está no marketplace: renove com quem vendeu a licença")
+    account_required(lic)
     return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login), current_user, db)
 
 @app.get("/me/subscriptions")

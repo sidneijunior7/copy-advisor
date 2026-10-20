@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import api, { type MyLicenses, type Subscription } from '../../api';
 import Card from '../../components/Card';
 import ClientHosting from '../../components/client/ClientHosting';
+import ConnectAccount from '../../components/client/ConnectAccount';
 import ClientPerformance from '../../components/client/ClientPerformance';
 import ClientSettingsForm from '../../components/client/ClientSettingsForm';
 import { ClientIssues, CopiesTable } from '../../components/client/CopiesTable';
@@ -88,12 +89,15 @@ export default function LicenseDetail() {
             </Link>
             <PageHeader
                 title={license.portfolio.name ?? `Portfólio #${license.portfolio.id}`}
-                description={`Conta MT5 ${license.mt5_login}${license.manager ? ` · por ${license.manager}` : ''}`}
+                description={`${license.mt5_login != null ? `Conta MT5 ${license.mt5_login}` : 'Sem conta MT5 ainda'}${license.manager ? ` · por ${license.manager}` : ''}`}
                 icon={<Briefcase />}
             >
                 <Badge variant={state.variant} className="text-sm">{state.label}</Badge>
             </PageHeader>
 
+            {license.mt5_login == null && <ConnectAccount license={license} onDone={refresh} />}
+
+            {license.mt5_login != null && <>
             <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border scrollbar-none">
                 {TABS.map(t => (
                     <button
@@ -170,6 +174,7 @@ export default function LicenseDetail() {
             {tab === 'copies' && <CopiesTable licenseId={license.id} />}
             {tab === 'settings' && <ClientSettingsForm key={JSON.stringify(license.settings)} license={license} onSaved={refresh} />}
             {tab === 'issues' && <ClientIssues licenseId={license.id} />}
+            </>}
         </div>
     );
 }

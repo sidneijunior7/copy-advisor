@@ -145,7 +145,7 @@ class Subscription(Base):
     id = Column(Integer, primary_key=True)
     listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False)
     client_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    mt5_login = Column(BigInteger, nullable=False)
+    mt5_login = Column(BigInteger, nullable=True) # NULL: the client connects the account after paying
     kind = Column(String(16), nullable=False, default="new") # new, renewal
     status = Column(String(16), nullable=False, default="pending") # pending, approved, rejected, cancelled
     note = Column(String(500)) # From the client
