@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, CheckCircle2, ExternalLink, MailCheck, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type BacktestView, type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
+import AboutAuthor, { AuthorLinks } from '../../components/AboutAuthor';
 import BacktestSection from '../../components/BacktestSection';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
@@ -157,15 +158,22 @@ export default function ListingPage() {
                 <div className="space-y-4 lg:col-span-2">
                     <div className="flex flex-wrap gap-1">{listing.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}</div>
                     <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{listing.title}</h1>
+                    <div className="flex items-center justify-between gap-3 md:hidden">
+                        <p className="min-w-0 truncate text-sm text-muted-foreground">por <span className="font-medium text-foreground">{listing.manager.name}</span></p>
+                        <AboutAuthor manager={listing.manager} />
+                    </div>
                     {listing.summary && <p className="text-lg text-muted-foreground">{listing.summary}</p>}
                     {listing.description && <p className="whitespace-pre-line text-sm leading-relaxed">{listing.description}</p>}
                     {listing.strategies.length > 0 && (
                         <p className="text-sm text-muted-foreground">Estratégias: {listing.strategies.join(', ')}</p>
                     )}
-                    <div className="rounded-lg border border-border bg-card p-4">
-                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Gestor</p>
-                        <p className="mt-1 font-semibold">{listing.manager.name}</p>
-                        {listing.manager.bio && <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">{listing.manager.bio}</p>}
+                    <div className="hidden space-y-3 rounded-lg border border-border bg-card p-4 md:block">
+                        <div>
+                            <p className="text-xs uppercase tracking-wider text-muted-foreground">Gestor</p>
+                            <p className="mt-1 font-semibold">{listing.manager.name}</p>
+                            {listing.manager.bio && <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">{listing.manager.bio}</p>}
+                        </div>
+                        <AuthorLinks manager={listing.manager} />
                     </div>
                 </div>
                 <aside className="panel space-y-4 p-5 lg:sticky lg:top-24">

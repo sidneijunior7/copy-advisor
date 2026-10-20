@@ -1434,6 +1434,7 @@ def reset_password(data: ResetIn, request: Request, db: Session = Depends(get_db
 @app.get("/me")
 def my_account(current_user: models.User = Depends(get_current_user)):
     return {"email": current_user.email, "name": current_user.name, "role": current_user.role, "bio": current_user.bio,
+            "youtube_url": current_user.youtube_url, "instagram_url": current_user.instagram_url,
             "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled()}
 
 @app.put("/me/profile")
@@ -1443,6 +1444,8 @@ def update_profile(data: marketplace.Profile, current_user: models.User = Depend
     current_user.name = data.name.strip()
     if current_user.role == "MANAGER":
         current_user.bio = (data.bio or "").strip() or None
+        current_user.youtube_url = data.youtube_url
+        current_user.instagram_url = data.instagram_url
     db.commit()
     marketplace.clear_cache()
     return my_account(current_user)

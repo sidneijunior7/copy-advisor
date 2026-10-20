@@ -3,7 +3,7 @@ import type { FollowerStats, PublicFollowerStats } from '../api';
 import Card from './Card';
 import EmptyState from './EmptyState';
 import { Tile } from './PerformanceView';
-import TileRow from './TileRow';
+import SlideRow from './SlideRow';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 
 const pct = (value: number | null | undefined) =>
@@ -46,14 +46,14 @@ export default function FollowerStatsView({ stats }: FollowerStatsViewProps) {
 
     return (
         <div className="space-y-6">
-            <TileRow className="md:grid-cols-2 xl:grid-cols-4">
+            <SlideRow className="md:grid-cols-2 xl:grid-cols-4">
                 <Tile label="Captura" value={pct(s.capture)}
                     hint={s.capture == null ? 'o Master não ganhou pontos no período' : 'do resultado do Master, em pontos'} />
                 <Tile label="Taxa de cópia" value={pct(s.copy_rate)} hint="das ordens enviadas, quantas abriram" />
                 <Tile label="Seguidores" value={String(s.followers)} hint={`${s.copies} cópias fechadas`} />
                 <Tile label="Tempo de cópia" value={s.latency_ms == null ? '—' : `${s.latency_ms.toLocaleString('pt-BR')} ms`}
                     hint="do Master à ordem do seguidor (mediana)" />
-            </TileRow>
+            </SlideRow>
             <Card title="Por ativo" icon={<Users />} flush
                 description="Média por operação, em pontos (diferença de preço). Custo positivo é um preço pior que o do Master; negativo, melhor.">
                 <div className="mt-4">

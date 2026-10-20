@@ -7,7 +7,7 @@ import ConnectionBadge from '../../components/ConnectionBadge';
 import KPICard from '../../components/KPICard';
 import PageHeader from '../../components/PageHeader';
 import PositionsTable from '../../components/PositionsTable';
-import TileRow from '../../components/TileRow';
+import SlideRow from '../../components/SlideRow';
 
 export default function ManagerOverview() {
     const { status, trades, logs } = useWebSocket();
@@ -27,7 +27,7 @@ export default function ManagerOverview() {
                 <ConnectionBadge status={status} />
             </PageHeader>
 
-            <TileRow className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
+            <SlideRow className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
                 <KPICard
                     label="Servidor"
                     value={connectionLabels[status]}
@@ -53,7 +53,7 @@ export default function ManagerOverview() {
                     subValue="Lotes nas contas Master"
                     icon={<Scale />}
                 />
-            </TileRow>
+            </SlideRow>
 
             <Card
                 title="Posições abertas"

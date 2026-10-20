@@ -25,6 +25,8 @@ class User(Base):
     status = Column(String(20), default="active") # active, frozen, archived
     name = Column(String(100), nullable=True) # Shown to the other side: a client's manager, a manager's clients
     bio = Column(Text, nullable=True) # A manager's public profile in the marketplace
+    youtube_url = Column(String(255), nullable=True) # Links on that profile, only to these two networks
+    instagram_url = Column(String(255), nullable=True)
     email_verified_at = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True) # Sessions that began before it are over
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

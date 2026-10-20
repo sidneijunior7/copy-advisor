@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
-import { Check, EyeOff, ExternalLink, Pencil, Plus, Send, Store, UserRound } from 'lucide-react';
+import { Check, EyeOff, ExternalLink, Instagram, Pencil, Plus, Send, Store, UserRound, Youtube } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Listing, type Me, type MyListing } from '../../api';
 import Card from '../../components/Card';
@@ -20,14 +20,26 @@ const STATUS = {
     suspended: { label: 'Suspenso', variant: 'destructive' },
 } as const;
 
+type ProfileForm = { name: string; bio: string; youtube_url: string; instagram_url: string };
+
+// The same rules as the API: each link only to its own network
+const YOUTUBE_URL = /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\/[^\s<>"']+$/;
+const INSTAGRAM_URL = /^https:\/\/(www\.)?instagram\.com\/[^\s<>"']+$/;
+
 function PublicProfile({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
-    const { register, handleSubmit, formState: { errors, isSubmitting, isDirty } } = useForm<{ name: string; bio: string }>({
-        defaultValues: { name: me.name ?? '', bio: me.bio ?? '' },
+    const { register, handleSubmit, reset, formState: { errors, isSubmitting, isDirty } } = useForm<ProfileForm>({
+        defaultValues: { name: me.name ?? '', bio: me.bio ?? '', youtube_url: me.youtube_url ?? '', instagram_url: me.instagram_url ?? '' },
     });
-    const save = async (data: { name: string; bio: string }) => {
+    const save = async (data: ProfileForm) => {
         try {
-            const res = await api.put<Me>('/me/profile', { name: data.name.trim(), bio: data.bio.trim() || null });
+            const res = await api.put<Me>('/me/profile', {
+                name: data.name.trim(),
+                bio: data.bio.trim() || null,
+                youtube_url: data.youtube_url.trim() || null,
+                instagram_url: data.instagram_url.trim() || null,
+            });
             onSaved(res.data);
+            reset({ name: res.data.name ?? '', bio: res.data.bio ?? '', youtube_url: res.data.youtube_url ?? '', instagram_url: res.data.instagram_url ?? '' });
             toast.success('Perfil público salvo');
         } catch (e) {
             toast.error(apiError(e, 'Não foi possível salvar o perfil.'));
@@ -41,6 +53,25 @@ function PublicProfile({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
                 </Field>
                 <Field label="Sobre você" htmlFor="profile-bio" error={errors.bio?.message} hint="Experiência, credenciais, como você opera.">
                     <Textarea {...register('bio', { maxLength: { value: 2000, message: 'Até 2.000 caracteres' } })} id="profile-bio" rows={4} />
+                </Field>
+                <Field label="YouTube (opcional)" htmlFor="profile-youtube" error={errors.youtube_url?.message}>
+                    <Input
+                        {...register('youtube_url', { validate: v => !v.trim() || YOUTUBE_URL.test(v.trim()) || 'Um endereço https do youtube.com ou youtu.be' })}
+                        id="profile-youtube"
+                        type="url"
+                        icon={<Youtube />}
+                        placeholder="https://www.youtube.com/@seucanal"
+                    />
+                </Field>
+                <Field label="Instagram (opcional)" htmlFor="profile-instagram" error={errors.instagram_url?.message}
+                    hint="Aparecem como ícones em Sobre o autor.">
+                    <Input
+                        {...register('instagram_url', { validate: v => !v.trim() || INSTAGRAM_URL.test(v.trim()) || 'Um endereço https do instagram.com' })}
+                        id="profile-instagram"
+                        type="url"
+                        icon={<Instagram />}
+                        placeholder="https://www.instagram.com/seuperfil"
+                    />
                 </Field>
                 <div className="flex justify-end">
                     <Button size="sm" loading={isSubmitting} disabled={!isDirty}>{!isSubmitting && <Check />} Salvar perfil</Button>

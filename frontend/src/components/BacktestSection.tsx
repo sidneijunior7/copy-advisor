@@ -3,7 +3,7 @@ import type { BacktestView } from '../api';
 import Card from './Card';
 import ConeChart from './charts/ConeChart';
 import { Tile } from './PerformanceView';
-import TileRow from './TileRow';
+import SlideRow from './SlideRow';
 import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { formatMoney, signedPct } from '../lib/money';
@@ -58,7 +58,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                 Simulação enviada pelo gestor ao Trademetric Dash, não é resultado real.
                 {b.strategies.length > 0 && <span>Estratégias: {b.strategies.join(', ')}.</span>}
             </p>
-            <TileRow className="md:grid-cols-3 xl:grid-cols-6">
+            <SlideRow className="md:grid-cols-3 xl:grid-cols-6">
                 <Tile label="Retorno" value={pct(b.return_pct)}
                     hint={capitalHint(b)} />
                 <Tile label="Maior queda" value={b.max_drawdown_pct == null ? '—' : pct(-b.max_drawdown_pct)} hint="do saldo" />
@@ -66,7 +66,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                 <Tile label="Fator de lucro" value={b.profit_factor == null ? '—' : b.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />
                 <Tile label="Operações" value={b.trades.toLocaleString('pt-BR')} hint={b.truncated ? 'as primeiras 20 mil' : undefined} />
                 <Tile label="Período" value={years(b.from, b.to)} hint={period} />
-            </TileRow>
+            </SlideRow>
             {inc && (
                 <div className="space-y-3">
                     <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -80,7 +80,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                             ? 'Fazem parte do histórico: vieram antes da primeira cópia.'
                             : `As ${inc.official} de antes da primeira cópia fazem parte do histórico; depois dela, vale o que os clientes receberam.`}
                     </p>
-                    <TileRow className="md:grid-cols-3 xl:grid-cols-6">
+                    <SlideRow className="md:grid-cols-3 xl:grid-cols-6">
                         <Tile label="Retorno" value={pct(inc.return_pct)}
                             hint={capitalHint(inc)} />
                         <Tile label="Maior queda" value={inc.max_drawdown_pct == null ? '—' : pct(-inc.max_drawdown_pct)} hint="do saldo" />
@@ -88,7 +88,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                         <Tile label="Fator de lucro" value={inc.profit_factor == null ? '—' : inc.profit_factor.toLocaleString('pt-BR')} hint="ganhos ÷ perdas" />
                         <Tile label="Operações" value={inc.trades.toLocaleString('pt-BR')} />
                         <Tile label="Período" value={incPeriod ?? '—'} />
-                    </TileRow>
+                    </SlideRow>
                 </div>
             )}
             <Card title="Ao vivo dentro do backtest" icon={<FlaskConical />}

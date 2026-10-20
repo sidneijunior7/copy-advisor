@@ -58,9 +58,16 @@ class Decision(BaseModel):
     days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
+# The profile links go only where their icon says
+YOUTUBE_URL = r"^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[^\s<>\"']+$"
+INSTAGRAM_URL = r"^https://(www\.)?instagram\.com/[^\s<>\"']+$"
+
+
 class Profile(BaseModel):
     name: str = Field(min_length=1, max_length=100, pattern=hosting.ONE_LINE)
     bio: Optional[str] = Field(default=None, max_length=2000)
+    youtube_url: Optional[str] = Field(default=None, max_length=255, pattern=YOUTUBE_URL)
+    instagram_url: Optional[str] = Field(default=None, max_length=255, pattern=INSTAGRAM_URL)
 
 
 def slugify(text: str) -> str:
@@ -113,7 +120,8 @@ def listing_out(listing: models.Listing) -> dict:
 
 def manager_profile(listing: models.Listing) -> dict:
     owner = listing.portfolio.owner if listing.portfolio else None
-    return {"name": (owner.name if owner else None) or "Gestor", "bio": owner.bio if owner else None}
+    return {"name": (owner.name if owner else None) or "Gestor", "bio": owner.bio if owner else None,
+            "youtube_url": owner.youtube_url if owner else None, "instagram_url": owner.instagram_url if owner else None}
 
 
 # --- Public performance, cached: the catalog must not compute every listing on every visit ---

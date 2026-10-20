@@ -347,7 +347,8 @@ export type BacktestView =
 // The marketplace shows the figures only past a minimum of followers and copies
 export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
 
-export type Me = { email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null; email_verified: boolean; email_enabled: boolean };
+export type Me = { email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;
+    youtube_url: string | null; instagram_url: string | null; email_verified: boolean; email_enabled: boolean };
 
 export const MARKETS = ['B3', 'Forex', 'Cripto', 'Índices', 'Commodities'] as const;
 export type Market = typeof MARKETS[number];
@@ -379,7 +380,7 @@ export type MyListing = { portfolio: { id: number; name: string; strategies: num
 
 // What anyone sees in the marketplace: the last 90 days in stats, the manager's public profile
 export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended_reason' | 'default_max_lots'> & {
-    manager: { name: string; bio: string | null };
+    manager: { name: string; bio: string | null; youtube_url: string | null; instagram_url: string | null };
     strategies: string[];
     stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & { curve: number[] };
 };

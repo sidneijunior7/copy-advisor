@@ -2,7 +2,7 @@ import { LineChart as LineIcon, TrendingUp } from 'lucide-react';
 import type { CopiesPerformance, PerformanceStats, PortfolioPerformance } from '../api';
 import Card from './Card';
 import EmptyState from './EmptyState';
-import TileRow from './TileRow';
+import SlideRow from './SlideRow';
 import ColumnChart from './charts/ColumnChart';
 import LineChart from './charts/LineChart';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
@@ -90,7 +90,7 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
         <div className="space-y-6">
             {homologationNote}
             {beforeNote}
-            <TileRow className={cn('md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
+            <SlideRow className={cn('md:grid-cols-3', perLot ? 'xl:grid-cols-7' : 'xl:grid-cols-6')}>
                 <Tile label="Resultado" value={money(stats.net)} tone={stats.net > 0 ? 'up' : stats.net < 0 ? 'down' : undefined} />
                 <Tile label="Retorno" value={pct(stats.return_pct)}
                     hint={returnHint} />
@@ -105,42 +105,47 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
                 <Tile label="Maior queda" value={money(-stats.max_drawdown)} hint={stats.max_drawdown_pct != null ? pct(-stats.max_drawdown_pct) : 'do resultado acumulado'} />
                 <Tile label="Operações" value={String(stats.trades)}
                     hint={stats.best != null && stats.worst != null ? `melhor ${money(stats.best)}, pior ${money(stats.worst)}` : undefined} />
-            </TileRow>
+            </SlideRow>
 
-            {curve.length > 0 && (
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-                    <Card title="Resultado acumulado" description="Soma das operações fechadas, na ordem em que fecharam." icon={<LineIcon />}>
-                        <LineChart
-                            series={[{ key: 'net', label: 'Resultado acumulado', color: 'var(--viz-series-1)', points: curve }]}
-                            ariaLabel={`Resultado acumulado: ${money(stats.net)} em ${stats.trades} operações`}
-                            formatValue={money}
-                            formatTime={day}
-                            zeroLine
-                            area
-                        />
-                    </Card>
-                    <Card title="Resultado por mês" description="Azul: meses positivos. Vermelho: negativos." icon={<TrendingUp />}>
-                        <ColumnChart
-                            data={stats.months.map(m => ({ label: monthLabel(m.month), value: m.net }))}
-                            ariaLabel="Resultado por mês"
-                            formatValue={money}
-                        />
-                    </Card>
-                </div>
-            )}
-
-            {equity.length > 1 && (
-                <Card title="Saldo e patrimônio da conta" description="O último valor de cada hora, como o EA informou." icon={<LineIcon />}>
-                    <LineChart
-                        series={[
-                            { key: 'balance', label: 'Saldo', color: 'var(--viz-series-1)', points: equity.map(e => ({ t: parseUtc(e.t).getTime(), v: e.balance! })) },
-                            { key: 'equity', label: 'Patrimônio', color: 'var(--viz-series-2)', points: equity.map(e => ({ t: parseUtc(e.t).getTime(), v: e.equity! })) },
-                        ]}
-                        ariaLabel="Saldo e patrimônio da conta ao longo do período"
-                        formatValue={money}
-                        formatTime={day}
-                    />
-                </Card>
+            {(curve.length > 0 || equity.length > 1) && (
+                // On phones the charts slide sideways; from md up they stack, the first two side by side from xl
+                <SlideRow wide className="md:grid-cols-1 md:gap-6 xl:grid-cols-2">
+                    {curve.length > 0 && (
+                        <Card title="Resultado acumulado" description="Soma das operações fechadas, na ordem em que fecharam." icon={<LineIcon />}>
+                            <LineChart
+                                series={[{ key: 'net', label: 'Resultado acumulado', color: 'var(--viz-series-1)', points: curve }]}
+                                ariaLabel={`Resultado acumulado: ${money(stats.net)} em ${stats.trades} operações`}
+                                formatValue={money}
+                                formatTime={day}
+                                zeroLine
+                                area
+                            />
+                        </Card>
+                    )}
+                    {curve.length > 0 && (
+                        <Card title="Resultado por mês" description="Azul: meses positivos. Vermelho: negativos." icon={<TrendingUp />}>
+                            <ColumnChart
+                                data={stats.months.map(m => ({ label: monthLabel(m.month), value: m.net }))}
+                                ariaLabel="Resultado por mês"
+                                formatValue={money}
+                            />
+                        </Card>
+                    )}
+                    {equity.length > 1 && (
+                        <Card title="Saldo e patrimônio da conta" description="O último valor de cada hora, como o EA informou." icon={<LineIcon />}
+                            className="xl:col-span-2">
+                            <LineChart
+                                series={[
+                                    { key: 'balance', label: 'Saldo', color: 'var(--viz-series-1)', points: equity.map(e => ({ t: parseUtc(e.t).getTime(), v: e.balance! })) },
+                                    { key: 'equity', label: 'Patrimônio', color: 'var(--viz-series-2)', points: equity.map(e => ({ t: parseUtc(e.t).getTime(), v: e.equity! })) },
+                                ]}
+                                ariaLabel="Saldo e patrimônio da conta ao longo do período"
+                                formatValue={money}
+                                formatTime={day}
+                            />
+                        </Card>
+                    )}
+                </SlideRow>
             )}
 
             <details className="panel p-5 text-sm">

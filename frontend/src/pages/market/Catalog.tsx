@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpDown, Filter, Store } from 'lucide-react';
+import { ArrowUpDown, ChevronLeft, ChevronRight, Filter, Store } from 'lucide-react';
 import api, { MARKETS, type PublicListing } from '../../api';
 import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
+import SlideRow from '../../components/SlideRow';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import { IconSelect, Select } from '../../components/ui/Field';
 import { priceLabel } from '../../lib/money';
 import { cn } from '../../lib/utils';
+
+// From this many portfolios on screen, the catalog turns into one row per market
+const SHELF_MIN = 8;
 
 const SORTS = {
     return: { label: 'Maior retorno', key: (l: PublicListing) => -(l.stats.return_pct ?? -Infinity) },
@@ -18,6 +23,86 @@ const SORTS = {
 type Sort = keyof typeof SORTS;
 
 const pct = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
+
+function ListingCard({ l }: { l: PublicListing }) {
+    return (
+        <Link to={`/marketplace/${l.slug}`} className="panel group flex flex-col p-5 transition-colors hover:border-primary/40">
+            <div className="flex flex-wrap gap-1">
+                {l.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}
+            </div>
+            <h3 className="mt-3 text-lg font-semibold leading-tight">{l.title}</h3>
+            <p className="text-xs text-muted-foreground">por {l.manager.name}</p>
+            {l.summary && <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{l.summary}</p>}
+            <div className="mb-4 mt-4 flex flex-wrap items-end justify-between gap-3">
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <div>
+                        <dt className="text-xs text-muted-foreground">Retorno 90 dias</dt>
+                        <dd className={cn('font-semibold', (l.stats.return_pct ?? 0) > 0 && 'text-success', (l.stats.return_pct ?? 0) < 0 && 'text-destructive')}>
+                            {pct(l.stats.return_pct)}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt className="text-xs text-muted-foreground">Maior queda</dt>
+                        <dd className="font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
+                    </div>
+                    <div>
+                        <dt className="text-xs text-muted-foreground">Acerto</dt>
+                        <dd>{l.stats.win_rate == null ? '—' : `${l.stats.win_rate.toLocaleString('pt-BR')}%`}</dd>
+                    </div>
+                    <div>
+                        <dt className="text-xs text-muted-foreground">Operações</dt>
+                        <dd>{l.stats.trades}</dd>
+                    </div>
+                </dl>
+                <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} width={110} height={44} />
+            </div>
+            <p className="mt-auto border-t border-border pt-3 text-sm font-medium">{priceLabel(l)}</p>
+        </Link>
+    );
+}
+
+// A row of one market that slides sideways at any width; arrows from md up, where not everyone swipes
+function Shelf({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+    const row = useRef<HTMLDivElement>(null);
+    const [edges, setEdges] = useState({ start: true, end: false });
+    const update = () => {
+        const el = row.current;
+        if (el) setEdges({ start: el.scrollLeft <= 4, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 4 });
+    };
+    // Again when the width changes: a rotated phone or a resized window shows more or fewer cards
+    useEffect(() => {
+        const el = row.current;
+        if (!el) return;
+        const observer = new ResizeObserver(update);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [count]);
+    const scroll = (direction: number) => row.current?.scrollBy({ left: direction * row.current.clientWidth * 0.9, behavior: 'smooth' });
+    return (
+        <section className="space-y-3" aria-label={title}>
+            <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">
+                    {title} <span className="text-sm font-normal text-muted-foreground">{count}</span>
+                </h2>
+                <div className="hidden gap-1 md:flex">
+                    <Button type="button" size="icon" variant="outline" disabled={edges.start} onClick={() => scroll(-1)} aria-label={`Voltar em ${title}`}>
+                        <ChevronLeft />
+                    </Button>
+                    <Button type="button" size="icon" variant="outline" disabled={edges.end} onClick={() => scroll(1)} aria-label={`Avançar em ${title}`}>
+                        <ChevronRight />
+                    </Button>
+                </div>
+            </div>
+            <div
+                ref={row}
+                onScroll={update}
+                className="-mx-4 flex snap-x snap-mandatory scroll-px-4 gap-4 overflow-x-auto px-4 py-1 scrollbar-none [&>*]:shrink-0 [&>*]:snap-start [&>*]:w-[85%] sm:[&>*]:w-[45%] md:[&>*]:w-[31%] xl:[&>*]:w-[23.5%]"
+            >
+                {children}
+            </div>
+        </section>
+    );
+}
 
 export default function Catalog() {
     const [listings, setListings] = useState<PublicListing[] | null>(null);
@@ -34,6 +119,10 @@ export default function Catalog() {
     const shown = (listings ?? [])
         .filter(l => !market || l.markets.includes(market as PublicListing['markets'][number]))
         .sort((a, b) => SORTS[sort].key(a) - SORTS[sort].key(b));
+    // Enough portfolios, in more than one market: one row per market, as in a streaming catalog. A portfolio
+    // in two markets shows in both. Filtering a market goes back to the plain list
+    const byMarket = MARKETS.map(m => ({ market: m, items: shown.filter(l => l.markets.includes(m)) })).filter(s => s.items.length > 0);
+    const shelves = !market && shown.length >= SHELF_MIN && byMarket.length > 1 ? byMarket : [];
 
     return (
         <div className="space-y-6 sm:space-y-8">
@@ -75,43 +164,19 @@ export default function Catalog() {
                 <div className="panel">
                     <EmptyState icon={<Store />} title="Nenhum portfólio aqui ainda" description="Volte em breve: novos gestores publicam portfólios com frequência." />
                 </div>
-            ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {shown.map(l => (
-                        <Link key={l.slug} to={`/marketplace/${l.slug}`} className="panel group flex flex-col p-5 transition-colors hover:border-primary/40">
-                            <div className="flex flex-wrap gap-1">
-                                {l.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}
-                            </div>
-                            <h2 className="mt-3 text-lg font-semibold leading-tight">{l.title}</h2>
-                            <p className="text-xs text-muted-foreground">por {l.manager.name}</p>
-                            {l.summary && <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{l.summary}</p>}
-                            <div className="mt-4 flex items-end justify-between gap-3">
-                                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                                    <div>
-                                        <dt className="text-xs text-muted-foreground">Retorno 90 dias</dt>
-                                        <dd className={cn('font-semibold', (l.stats.return_pct ?? 0) > 0 && 'text-success', (l.stats.return_pct ?? 0) < 0 && 'text-destructive')}>
-                                            {pct(l.stats.return_pct)}
-                                        </dd>
-                                    </div>
-                                    <div>
-                                        <dt className="text-xs text-muted-foreground">Maior queda</dt>
-                                        <dd className="font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
-                                    </div>
-                                    <div>
-                                        <dt className="text-xs text-muted-foreground">Acerto</dt>
-                                        <dd>{l.stats.win_rate == null ? '—' : `${l.stats.win_rate.toLocaleString('pt-BR')}%`}</dd>
-                                    </div>
-                                    <div>
-                                        <dt className="text-xs text-muted-foreground">Operações</dt>
-                                        <dd>{l.stats.trades}</dd>
-                                    </div>
-                                </dl>
-                                <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} width={110} height={44} />
-                            </div>
-                            <p className="mt-4 border-t border-border pt-3 text-sm font-medium">{priceLabel(l)}</p>
-                        </Link>
+            ) : shelves.length > 1 ? (
+                <div className="space-y-8">
+                    {shelves.map(shelf => (
+                        <Shelf key={shelf.market} title={shelf.market} count={shelf.items.length}>
+                            {shelf.items.map(l => <ListingCard key={l.slug} l={l} />)}
+                        </Shelf>
                     ))}
                 </div>
+            ) : (
+                // A few portfolios: they slide on phones, a grid from md up
+                <SlideRow wide className="md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+                    {shown.map(l => <ListingCard key={l.slug} l={l} />)}
+                </SlideRow>
             )}
         </div>
     );

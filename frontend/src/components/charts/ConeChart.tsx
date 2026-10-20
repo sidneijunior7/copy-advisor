@@ -67,10 +67,12 @@ export default function ConeChart({ bands, ariaLabel, height = 260 }: ConeChartP
                 role="img"
                 aria-label={ariaLabel}
                 tabIndex={0}
-                className="block touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="block outline-none focus-visible:ring-2 focus-visible:ring-ring md:touch-none"
+                // On touch the page and the slides keep their swipe: a tap shows the point, a tap elsewhere hides it
+                onPointerDown={onMove}
                 onPointerMove={onMove}
-                onPointerLeave={() => setActive(null)}
-                onFocus={() => setActive(bands.length - 1)}
+                onPointerLeave={e => { if (e.pointerType !== 'touch') setActive(null); }}
+                onFocus={e => { if (e.currentTarget.matches(':focus-visible')) setActive(bands.length - 1); }} // From the keyboard, not a tap
                 onBlur={() => setActive(null)}
                 onKeyDown={onKey}
             >

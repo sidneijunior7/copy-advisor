@@ -7,7 +7,7 @@ import api from '../api';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import KPICard from '../components/KPICard';
-import TileRow from '../components/TileRow';
+import SlideRow from '../components/SlideRow';
 import PageHeader from '../components/PageHeader';
 import { Badge, type BadgeProps } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -76,11 +76,11 @@ export default function DevDashboard() {
                 icon={<ShieldCheck />}
             />
 
-            <TileRow className="md:grid-cols-3 md:gap-4">
+            <SlideRow className="md:grid-cols-3 md:gap-4">
                 <KPICard label="Gestores" value={managers.length} subValue="Contas cadastradas" icon={<Users />} />
                 <KPICard label="Ativos" value={activeCount} subValue="Com acesso liberado" icon={<UserCheck />} valueClassName="text-success" />
                 <KPICard label="Bloqueados" value={managers.length - activeCount} subValue="Congelados ou arquivados" icon={<Lock />} />
-            </TileRow>
+            </SlideRow>
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
                 <Card title="Novo gestor" icon={<Plus />}>

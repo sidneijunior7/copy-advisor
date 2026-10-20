@@ -62,12 +62,27 @@ def test_public_catalog_shows_only_published(client):
     slugs = [l["slug"] for l in client.get("/api/marketplace").json()]
     assert listing["slug"] in slugs
     detail = client.get(f"/api/marketplace/{listing['slug']}").json()
-    assert detail["manager"] == {"name": "Gestor Teste", "bio": "Opera índice"} and detail["strategies"] == ["Scalper"]
+    assert detail["manager"] == {"name": "Gestor Teste", "bio": "Opera índice", "youtube_url": None, "instagram_url": None}
+    assert detail["strategies"] == ["Scalper"]
     assert "portfolio_id" not in detail and detail["stats"]["trades"] == 0
     assert client.get(f"/api/marketplace/{listing['slug']}/performance", params={"days": 100}).status_code == 200
     client.post(f"/portfolios/{portfolio_id}/listing/unpublish", headers=mgr)
     assert client.get(f"/api/marketplace/{listing['slug']}").status_code == 404
     assert listing["slug"] not in [l["slug"] for l in client.get("/api/marketplace").json()]
+
+
+def test_profile_links_go_only_to_their_network(client):
+    _, mgr, _, listing = published(client, title=f"Links {uuid.uuid4().hex[:6]}")
+    links = {"youtube_url": "https://www.youtube.com/@gestor", "instagram_url": "https://instagram.com/gestor"}
+    r = client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste", "bio": None, **links})
+    assert r.status_code == 200 and r.json()["youtube_url"] == links["youtube_url"]
+    manager = client.get(f"/api/marketplace/{listing['slug']}").json()["manager"]
+    assert (manager["youtube_url"], manager["instagram_url"]) == (links["youtube_url"], links["instagram_url"])
+    for bad in ({"youtube_url": "https://evil.example.com/youtube.com"}, {"youtube_url": "http://youtube.com/@gestor"},
+                {"instagram_url": "https://www.youtube.com/@gestor"}, {"instagram_url": "https://instagram.com.evil.io/x"},
+                {"youtube_url": "javascript:alert(1)"}):
+        assert client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste", **bad}).status_code == 422, bad
+    assert client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste"}).json()["instagram_url"] is None  # Cleared
 
 
 def test_subscription_approved_creates_the_linked_license_and_renewal_extends_it(client):
