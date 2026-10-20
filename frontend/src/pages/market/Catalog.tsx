@@ -13,6 +13,10 @@ import { cn } from '../../lib/utils';
 
 // From this many portfolios on screen, the catalog turns into one row per market
 const SHELF_MIN = 8;
+// The rows by asset that go last, in this order: what has no result per lot to compare yet
+const NO_ASSET = 'Ativo não informado';
+const NO_TRADES = 'Sem operações ainda';
+const LAST = [NO_ASSET, NO_TRADES];
 
 const SORTS = {
     return: { label: 'Maior retorno', key: (l: PublicListing) => -(l.stats.return_pct ?? -Infinity) },
@@ -28,8 +32,15 @@ const pct = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.t
 function ListingCard({ l }: { l: PublicListing }) {
     return (
         <Link to={`/marketplace/${l.slug}`} className="panel group flex flex-col p-5 transition-colors hover:border-primary/40">
-            <div className="flex flex-wrap gap-1">
-                {l.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}
+            <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-wrap gap-1">
+                    {l.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}
+                </div>
+                {l.stats.assets.length > 0 && (
+                    <span className="truncate font-mono text-xs text-muted-foreground" title="Os ativos das cópias nos últimos 90 dias">
+                        {l.stats.assets.join(' + ')}
+                    </span>
+                )}
             </div>
             <h3 className="mt-3 text-lg font-semibold leading-tight">{l.title}</h3>
             <p className="text-xs text-muted-foreground">por {l.manager.name}</p>
@@ -124,8 +135,19 @@ export default function Catalog() {
         .sort((a, b) => SORTS[sort].key(a) - SORTS[sort].key(b));
     // Enough portfolios, in more than one market: one row per market, as in a streaming catalog. A portfolio
     // in two markets shows in both. Filtering a market goes back to the plain list
-    const byMarket = MARKETS.map(m => ({ market: m, items: shown.filter(l => l.markets.includes(m)) })).filter(s => s.items.length > 0);
-    const shelves = !market && shown.length >= SHELF_MIN && byMarket.length > 1 ? byMarket : [];
+    const byMarket = MARKETS.map(m => ({ title: m as string, items: shown.filter(l => l.markets.includes(m)) })).filter(s => s.items.length > 0);
+    // The result per lot only compares within an asset (a lot of WIN is not one of WDO): sorted by it, one row per
+    // main asset, at any count. A portfolio goes in the row of the asset it traded the most lots of
+    const assetRows = new Map<string, PublicListing[]>();
+    for (const l of shown) {
+        const title = l.stats.per_lot == null ? NO_TRADES : l.stats.assets[0] ?? NO_ASSET;
+        assetRows.set(title, [...(assetRows.get(title) ?? []), l]);
+    }
+    const byAsset = [...assetRows].map(([title, items]) => ({ title, items }))
+        .sort((a, b) => LAST.indexOf(a.title) - LAST.indexOf(b.title) || b.items.length - a.items.length || a.title.localeCompare(b.title));
+    const shelves = sort === 'perLot'
+        ? (byAsset.length > 1 ? byAsset : [])
+        : !market && shown.length >= SHELF_MIN && byMarket.length > 1 ? byMarket : [];
 
     return (
         <div className="space-y-6 sm:space-y-8">
@@ -161,6 +183,12 @@ export default function Catalog() {
                 </Select>
             </div>
 
+            {sort === 'perLot' && (
+                <p className="-mt-3 text-xs text-muted-foreground sm:-mt-5">
+                    Lucro por lote comparado dentro de cada ativo: um lote de WIN não tem o tamanho de um de WDO, nem de um de EURUSD.
+                </p>
+            )}
+
             {listings === null ? (
                 <p className="text-sm text-muted-foreground">{failed ? 'Não foi possível carregar o marketplace.' : 'Carregando...'}</p>
             ) : shown.length === 0 ? (
@@ -170,7 +198,7 @@ export default function Catalog() {
             ) : shelves.length > 1 ? (
                 <div className="space-y-8">
                     {shelves.map(shelf => (
-                        <Shelf key={shelf.market} title={shelf.market} count={shelf.items.length}>
+                        <Shelf key={shelf.title} title={shelf.title} count={shelf.items.length}>
                             {shelf.items.map(l => <ListingCard key={l.slug} l={l} />)}
                         </Shelf>
                     ))}

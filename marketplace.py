@@ -171,6 +171,13 @@ def clear_cache():
         _cache.clear()
 
 
+def public_assets(db: Session, listing: models.Listing, now: datetime.datetime) -> List[str]:
+    """The assets of the catalog card. The catalog compares the result per lot within an asset: a lot of WIN and one
+    of WDO are not the same size."""
+    start = performance.since(PUBLIC_DAYS, now)
+    return _cached(("assets", listing.id, PUBLIC_DAYS), lambda: {"list": performance.assets(db, listing.portfolio, start)})["list"]
+
+
 def summary(stats: dict) -> dict:
     """What a catalog card shows."""
     curve = stats["curve"]
@@ -188,6 +195,7 @@ def public_listing(db: Session, listing: models.Listing, now: datetime.datetime)
     out["manager"] = manager_profile(listing)
     out["strategies"] = [s.name for s in listing.portfolio.strategies] if listing.portfolio else []
     out["stats"] = summary(public_performance(db, listing, PUBLIC_DAYS, now))
+    out["stats"]["assets"] = public_assets(db, listing, now)
     return out
 
 

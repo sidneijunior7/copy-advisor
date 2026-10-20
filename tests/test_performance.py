@@ -256,3 +256,30 @@ def test_a_test_account_can_be_taken_out_once(client, capsys, monkeypatch):
     assert "Taken out: 2" in run(portfolio_id, login + 1, "--apply")
     p = client.get(url, headers=mgr).json()
     assert (p["trades"], p["net"], p["currency"]) == (1, 300.0, "BRL")
+
+
+def test_asset_names_across_brokers_and_contracts():
+    names = ["WINZ26", "WINV26", "WIN$N", "WDOV26", "DI1F27", "EURUSD.r", "EURUSDm", "XAUUSD-ECN", "eurusd", "PETR4", "US500.cash"]
+    assert [performance.asset_of(s) for s in names] == \
+        ["WIN", "WIN", "WIN", "WDO", "DI1", "EURUSD", "EURUSD", "XAUUSD", "EURUSD", "PETR4", "US500"]
+
+
+def test_the_assets_of_the_copy_by_lots(client):
+    manager_id, _, portfolio_id, magic, strategy_id = portfolio_with_strategy(client, "Mix")
+    db = database.SessionLocal()
+    try:
+        # WIN in two contracts (5 lots), WDO (1 lot), EURUSD under a tenth of the lots, and an old WDO out of the period
+        for pos_id, symbol, lots, days in ((1, "WINZ26", 3, 2), (2, "WINV26", 2, 3), (3, "WDOZ26", 1, 4),
+                                           (4, "EURUSD.r", 0.2, 5), (5, "WDOZ26", 50, 400)):
+            db.add(models.PortfolioTrade(portfolio_id=portfolio_id, manager_id=manager_id, master_login=950, pos_id=pos_id,
+                                         strategy_id=strategy_id, sent_at=ago(days + 1)))
+            for n, entry in enumerate((0, 1)):
+                db.add(models.MasterDeal(manager_id=manager_id, master_login=950, deal_id=pos_id * 10 + n, pos_id=pos_id,
+                                         entry=entry, type=0, symbol=symbol, volume=lots, price=1, profit=0, swap=0,
+                                         commission=0, time=ago(days), magic=magic))
+        db.commit()
+        p = db.get(models.Portfolio, portfolio_id)
+        assert performance.assets(db, p, ago(90)) == ["WIN", "WDO"]
+        assert performance.assets(db, p, ago(1)) == []
+    finally:
+        db.close()

@@ -384,6 +384,7 @@ export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended
     strategies: string[];
     stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & {
         per_lot: number | null; // The average result per lot closed, in the portfolio's currency
+        assets: string[]; // What the copy traded, the most lots first (WIN, WDO, EURUSD...); empty without copies
         curve: number[];
     };
 };

@@ -18,6 +18,7 @@ Master account behind a portfolio they are left out: the accounts do not add up 
 import bisect
 import datetime
 import json
+import re
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
@@ -145,6 +146,41 @@ def _results(db: Session, p: models.Portfolio, start: datetime.datetime):
         out.append((closed[0], closed[1], strategy_of[key], closed[2], closed[3]))
         logins.add(key[0])
     return out, sorted(logins)
+
+
+# A B3 futures contract: root, month letter, two-digit year (WINZ26, WDOV26, DI1F27)
+FUTURE = re.compile(r"^([A-Z0-9]{3})[FGHJKMNQUVXZ]\d{2}$")
+ASSET_SHARE = 0.1  # An asset with less than this share of the lots is not named on the card
+
+
+def asset_of(symbol: str) -> str:
+    """The asset a symbol trades, the same across brokers and contracts: the broker's suffix goes (EURUSD.r, EURUSDm,
+    XAUUSD-ECN are EURUSD and XAUUSD), and a future is its root (WINZ26 and WINV26 are WIN)."""
+    text = symbol.strip()
+    match = re.match(r"[A-Z0-9]+", text)  # Up to the broker's suffix
+    root = match.group(0) if match else text.upper()
+    future = FUTURE.match(root)
+    return future.group(1) if future else root
+
+
+def assets(db: Session, p: models.Portfolio, start: datetime.datetime) -> List[str]:
+    """The assets of the copy since start, the one with the most lots closed first, leaving out those under ASSET_SHARE
+    of them. The homologation is not here: the Dash does not send the symbol of its trades."""
+    lots: Dict[str, float] = {}
+    for symbol, volume in (
+            db.query(models.MasterDeal.symbol, func.sum(models.MasterDeal.volume))
+            .join(models.PortfolioTrade, (models.PortfolioTrade.manager_id == models.MasterDeal.manager_id)
+                  & (models.PortfolioTrade.master_login == models.MasterDeal.master_login)
+                  & (models.PortfolioTrade.pos_id == models.MasterDeal.pos_id))
+            .filter(models.PortfolioTrade.portfolio_id == p.id, models.MasterDeal.entry.in_(DEAL_OUT),
+                    models.MasterDeal.time >= start, models.MasterDeal.symbol.isnot(None))
+            .group_by(models.MasterDeal.symbol)):
+        if symbol.strip():
+            asset = asset_of(symbol)
+            lots[asset] = lots.get(asset, 0.0) + (volume or 0.0)
+    total = sum(lots.values())
+    ranked = sorted(lots.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [a for a, v in ranked if total > 0 and v / total >= ASSET_SHARE] or [a for a, _ in ranked[:1]]
 
 
 def copy_start(db: Session, p: models.Portfolio) -> Optional[datetime.datetime]:
