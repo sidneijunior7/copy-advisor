@@ -33,7 +33,7 @@ function ListingCard({ l }: { l: PublicListing }) {
             <h3 className="mt-3 text-lg font-semibold leading-tight">{l.title}</h3>
             <p className="text-xs text-muted-foreground">por {l.manager.name}</p>
             {l.summary && <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{l.summary}</p>}
-            <div className="mb-4 mt-4 flex flex-wrap items-end justify-between gap-3">
+            <div className="mb-4 mt-4 space-y-3">
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div>
                         <dt className="text-xs text-muted-foreground">Retorno 90 dias</dt>
@@ -54,7 +54,7 @@ function ListingCard({ l }: { l: PublicListing }) {
                         <dd>{l.stats.trades}</dd>
                     </div>
                 </dl>
-                <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} width={110} height={44} />
+                <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} height={56} />
             </div>
             <p className="mt-auto border-t border-border pt-3 text-sm font-medium">{priceLabel(l)}</p>
         </Link>

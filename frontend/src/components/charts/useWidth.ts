@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 
 // Width of the element, kept current: the charts draw in real pixels so marks keep their fixed sizes
-export function useWidth<T extends HTMLElement>(initial = 640) {
+export function useWidth<T extends HTMLElement>(initial = 640, min = 240) {
     const ref = useRef<T>(null);
     const [width, setWidth] = useState(initial);
     useEffect(() => {
         const el = ref.current;
         if (!el) return;
-        const observer = new ResizeObserver(entries => setWidth(Math.max(240, Math.floor(entries[0].contentRect.width))));
+        const observer = new ResizeObserver(entries => setWidth(Math.max(min, Math.floor(entries[0].contentRect.width))));
         observer.observe(el);
         return () => observer.disconnect();
-    }, []);
+    }, [min]);
     return [ref, width] as const;
 }
 
