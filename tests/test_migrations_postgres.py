@@ -74,8 +74,12 @@ def test_migrate_from_every_origin(pg_url, origin):
     run(pg_url, "migrate.py")  # Idempotent: the API runs it on every start
 
     insp = inspect(engine)
+    # A license and a subscription may wait for the client's MT5 account, whatever schema they came from
+    for table in ("licenses", "subscriptions"):
+        column = "client_mt5_login" if table == "licenses" else "mt5_login"
+        assert next(c for c in insp.get_columns(table) if c["name"] == column)["nullable"], (origin, table)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0018_subscription_account_later"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0019_license_account_later"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
             # The plain-text master key was adopted as a hashed master key, exactly once, and revoked at the
@@ -124,7 +128,7 @@ def test_concurrent_migrations_are_serialized(pg_url):
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0018_subscription_account_later"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0019_license_account_later"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0
 
