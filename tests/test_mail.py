@@ -144,3 +144,42 @@ def test_delivery_over_smtp(monkeypatch):
             break
         time.sleep(0.02)
     assert calls == [("connect", "smtp.example.com", 587), ("starttls",), ("login", "mailer"), ("send", "a@b.com", "Assunto")]
+
+
+def test_dev_email_test_shows_what_the_server_answered(client, monkeypatch):
+    from test_management import make_manager
+    _, dev = make_manager(role="TDM_DEV")
+    _, mgr = make_manager()
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None, context=None):
+            pass
+
+        def login(self, user, password):
+            if password != "right":
+                raise mailer.smtplib.SMTPAuthenticationError(535, b"5.7.8 Error: authentication failed")
+
+        def send_message(self, msg):
+            sent.append(msg["To"])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSMTP)
+    for k, v in (("SMTP_HOST", "smtp.example.com"), ("SMTP_PORT", "465"), ("SMTP_FROM", "no-reply@example.com"),
+                 ("SMTP_USER", "no-reply@example.com"), ("SMTP_PASSWORD", "wrong")):
+        monkeypatch.setenv(k, v)
+    assert client.post("/admin/email-test", headers=mgr, json={"to": "a@b.com"}).status_code == 403
+    assert client.post("/admin/email-test", headers=dev, json={"to": "sem-arroba"}).status_code == 422
+    r = client.post("/admin/email-test", headers=dev, json={"to": "a@b.com"}).json()
+    assert r["ok"] is False and r["error"].startswith("SMTPAuthenticationError") and r["port"] == 465 and not sent
+    assert "wrong" not in str(r)  # Never the password
+    monkeypatch.setenv("SMTP_PASSWORD", "right")
+    r = client.post("/admin/email-test", headers=dev, json={"to": "a@b.com"}).json()
+    assert r["ok"] is True and r["error"] is None and sent == ["a@b.com"]
+    monkeypatch.delenv("SMTP_HOST")
+    assert client.post("/admin/email-test", headers=dev, json={"to": "a@b.com"}).json()["ok"] is False

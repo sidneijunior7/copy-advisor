@@ -54,6 +54,7 @@ def send(to: str, subject: str, body: str):
     except queue.Full:
         logger.error(f"Email queue full: dropped '{subject}' to {to}")
         return
+    logger.info(f"Email queued: '{subject}' to {to}")
     _ensure_worker()
 
 
@@ -88,6 +89,27 @@ def _deliver(msg: EmailMessage):
         if user:
             server.login(user, password)
         server.send_message(msg)
+
+
+def test(to: str) -> dict:
+    """Sends one message now, outside the queue, for the dev dashboard: what the SMTP server answered, and how the
+    queue is (a message stuck in it with no worker alive means nothing goes out)."""
+    with _worker_lock:
+        worker_alive = _worker is not None and _worker.is_alive()
+    out = {"host": os.getenv("SMTP_HOST") or None, "port": int(os.getenv("SMTP_PORT", "587")),
+           "sender": os.getenv("SMTP_FROM") or None, "queued": _outbox.qsize(), "worker_alive": worker_alive}
+    if not enabled():
+        return {**out, "ok": False, "error": "SMTP_HOST ou SMTP_FROM não configurados"}
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = os.environ["SMTP_FROM"], to, "Teste de envio do Trademetric Mirror"
+    msg.set_content(f"Este é um teste do envio de emails do Trademetric Mirror ({public_url()}). Se chegou, o envio funciona.\n")
+    try:
+        _deliver(msg)
+    except Exception as e:  # The server's message, never the credentials
+        logger.error(f"Test email to {to} failed ({type(e).__name__}: {str(e)[:200]})")
+        return {**out, "ok": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
+    logger.info(f"Test email sent to {to}")
+    return {**out, "ok": True, "error": None}
 
 
 # --- One-time links ---

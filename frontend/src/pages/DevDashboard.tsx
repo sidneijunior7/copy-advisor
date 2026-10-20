@@ -5,6 +5,7 @@ import { Archive, Lock, Mail, Plus, ShieldCheck, Unlock, UserCheck, Users, type 
 import { toast } from 'sonner';
 import api from '../api';
 import Card from '../components/Card';
+import EmailTest from '../components/EmailTest';
 import EmptyState from '../components/EmptyState';
 import KPICard from '../components/KPICard';
 import SlideRow from '../components/SlideRow';
@@ -174,6 +175,8 @@ export default function DevDashboard() {
                     )}
                 </Card>
             </div>
+
+            <EmailTest />
         </div>
     );
 }

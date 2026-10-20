@@ -1655,6 +1655,19 @@ def unpublish_listing(portfolio_id: int, current_user: models.User = Depends(get
 class Suspension(BaseModel):
     reason: str = Field(min_length=3, max_length=255, pattern=hosting.ONE_LINE)
 
+class EmailTestIn(BaseModel):
+    to: str = Field(min_length=3, max_length=255)
+
+
+@app.post("/admin/email-test")
+def email_test(data: EmailTestIn, current_user: models.User = Depends(get_current_user)):
+    """One message now, outside the queue, with what the SMTP server answered (mailer.test)."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    to = data.to.strip().lower()
+    if not EMAIL_PATTERN.match(to):
+        raise HTTPException(status_code=422, detail="Email inválido")
+    return mailer.test(to)
+
 @app.get("/admin/listings")
 def admin_list_listings(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
