@@ -110,7 +110,7 @@ export default function Clients() {
                 expires_at: data.expires_on ? endOfDay(data.expires_on) : null,
             });
             reset();
-            setCreated({ login: res.data.client_mt5_login, key: res.data.license_key ?? '' });
+            setCreated({ login: res.data.client_mt5_login ?? parseInt(data.client_mt5_login), key: res.data.license_key ?? '' });
             toast.success(`Conta ${data.client_mt5_login} autorizada`);
             refresh();
         } catch (e) {
