@@ -8,7 +8,7 @@ import SlideRow from '../../components/SlideRow';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { IconSelect, Select } from '../../components/ui/Field';
-import { priceLabel } from '../../lib/money';
+import { formatMoney, priceLabel } from '../../lib/money';
 import { cn } from '../../lib/utils';
 
 // From this many portfolios on screen, the catalog turns into one row per market
@@ -17,6 +17,7 @@ const SHELF_MIN = 8;
 const SORTS = {
     return: { label: 'Maior retorno', key: (l: PublicListing) => -(l.stats.return_pct ?? -Infinity) },
     drawdown: { label: 'Menor queda', key: (l: PublicListing) => l.stats.max_drawdown_pct ?? Infinity },
+    perLot: { label: 'Maior lucro por lote', key: (l: PublicListing) => -(l.stats.per_lot ?? -Infinity) },
     trades: { label: 'Mais operações', key: (l: PublicListing) => -l.stats.trades },
     recent: { label: 'Mais recentes', key: (l: PublicListing) => -new Date(l.published_at ?? 0).getTime() },
 } as const;
@@ -45,9 +46,11 @@ function ListingCard({ l }: { l: PublicListing }) {
                         <dt className="text-xs text-muted-foreground">Maior queda</dt>
                         <dd className="font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
                     </div>
-                    <div>
-                        <dt className="text-xs text-muted-foreground">Acerto</dt>
-                        <dd>{l.stats.win_rate == null ? '—' : `${l.stats.win_rate.toLocaleString('pt-BR')}%`}</dd>
+                    <div title="O resultado médio de cada lote fechado: quanto maior, mais folga para slippage e custos">
+                        <dt className="text-xs text-muted-foreground">Lucro por lote</dt>
+                        <dd className={cn((l.stats.per_lot ?? 0) > 0 && 'text-success', (l.stats.per_lot ?? 0) < 0 && 'text-destructive')}>
+                            {l.stats.per_lot == null ? '—' : formatMoney(l.stats.per_lot, l.stats.currency)}
+                        </dd>
                     </div>
                     <div>
                         <dt className="text-xs text-muted-foreground">Operações</dt>

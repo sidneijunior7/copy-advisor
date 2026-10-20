@@ -179,7 +179,7 @@ def summary(stats: dict) -> dict:
     if curve and points[-1] is not curve[-1]:
         points.append(curve[-1])
     return {k: stats[k] for k in ("currency", "trades", "win_rate", "net", "return_pct", "max_drawdown_pct",
-                                  "profit_factor")} | {"curve": [p["v"] for p in points]}
+                                  "profit_factor", "per_lot")} | {"curve": [p["v"] for p in points]}
 
 
 def public_listing(db: Session, listing: models.Listing, now: datetime.datetime) -> dict:

@@ -64,7 +64,7 @@ def test_public_catalog_shows_only_published(client):
     detail = client.get(f"/api/marketplace/{listing['slug']}").json()
     assert detail["manager"] == {"name": "Gestor Teste", "bio": "Opera índice", "youtube_url": None, "instagram_url": None}
     assert detail["strategies"] == ["Scalper"]
-    assert "portfolio_id" not in detail and detail["stats"]["trades"] == 0
+    assert "portfolio_id" not in detail and detail["stats"]["trades"] == 0 and detail["stats"]["per_lot"] is None
     assert client.get(f"/api/marketplace/{listing['slug']}/performance", params={"days": 100}).status_code == 200
     client.post(f"/portfolios/{portfolio_id}/listing/unpublish", headers=mgr)
     assert client.get(f"/api/marketplace/{listing['slug']}").status_code == 404

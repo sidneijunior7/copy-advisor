@@ -382,7 +382,10 @@ export type MyListing = { portfolio: { id: number; name: string; strategies: num
 export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended_reason' | 'default_max_lots'> & {
     manager: { name: string; bio: string | null; youtube_url: string | null; instagram_url: string | null };
     strategies: string[];
-    stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & { curve: number[] };
+    stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & {
+        per_lot: number | null; // The average result per lot closed, in the portfolio's currency
+        curve: number[];
+    };
 };
 
 export type SubscriptionStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
