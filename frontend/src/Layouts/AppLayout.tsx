@@ -46,7 +46,8 @@ const navByRole: Record<string, NavSection[]> = {
         {
             title: 'Conta',
             items: [
-                { path: '/client', label: 'Minhas licenças', icon: KeyRound, end: true },
+                { path: '/client', label: 'Painel de controle', icon: LayoutDashboard, end: true },
+                { path: '/client/licenses', label: 'Minhas licenças', icon: KeyRound },
                 { path: '/client/install', label: 'Instalação', icon: Download },
                 { path: '/marketplace', label: 'Marketplace', icon: Store },
             ],

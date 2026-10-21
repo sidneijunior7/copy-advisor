@@ -27,6 +27,7 @@ import ManagerMarketplace from './pages/manager/ManagerMarketplace';
 import Subscriptions from './pages/manager/Subscriptions';
 
 // Client Pages
+import ClientDashboard from './pages/client/ClientDashboard';
 import MyLicenses from './pages/client/MyLicenses';
 import LicenseDetail from './pages/client/LicenseDetail';
 import ClientInstall from './pages/client/ClientInstall';
@@ -104,7 +105,8 @@ function App() {
             {/* Client Routes */}
             <Route element={<ProtectedRoute allowedRoles={['CLIENT']} />}>
               <Route path="/client" element={<AppLayout />}>
-                <Route index element={<MyLicenses />} />
+                <Route index element={<ClientDashboard />} />
+                <Route path="licenses" element={<MyLicenses />} />
                 <Route path="licenses/:id" element={<LicenseDetail />} />
                 <Route path="install" element={<ClientInstall />} />
               </Route>

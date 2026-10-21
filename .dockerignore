@@ -2,13 +2,15 @@
 .env
 .env.*
 
-# Python virtual env
+# Python virtual env & test cache
 .venv
 __pycache__
 *.pyc
+.pytest_cache
 
 # SQLite local DBs
 *.db
+*.sqlite*
 
 # Frontend build artifacts (rebuilt in Docker)
 frontend/node_modules
@@ -22,8 +24,9 @@ frontend/dist
 .vscode
 .idea
 
-# Gemini Agent
+# Agent artifacts
 .gemini/
+.agents/
 
 # Debug/test scripts
 check_users.py

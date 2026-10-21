@@ -503,6 +503,8 @@ class Edge:
                 since.append(lic.revoked_at)
             else:  # Revoked outside the API: from the first time this hub noticed
                 since.append(self.inactive_seen.setdefault(lic.id, now))
+        if getattr(lic, "is_paused", False):
+            since.append(lic.paused_at if getattr(lic, "paused_at", None) is not None else now)
         return min(since) if since else None
 
     def _public(self, now: float) -> dict:

@@ -159,6 +159,8 @@ def license_view(lic: models.License, terminal: Optional[models.HostedTerminal],
         "mt5_login": lic.client_mt5_login,
         "max_lots": lic.max_lots,
         "is_active": lic.is_active,
+        "is_paused": bool(lic.is_paused),
+        "paused_at": lic.paused_at,
         "valid": license_valid(lic, now),
         "expires_at": lic.expires_at,
         "has_key": lic.key_hash is not None,
@@ -233,3 +235,211 @@ def copies(db: Session, lic: models.License, days: int, now: datetime.datetime) 
         })
     out.sort(key=lambda c: c["opened_at"], reverse=True)
     return out[:COPIES_LIMIT]
+
+
+def set_pause(lic: models.License, paused: bool, now: datetime.datetime):
+    lic.is_paused = paused
+    lic.paused_at = now if paused else None
+
+
+def client_dashboard(db: Session, user: models.User, now: datetime.datetime, days: int = 30) -> dict:
+    """Subscriber dashboard: today/week/month profit, running strategies today, cumulative curve and traders list."""
+    lics = db.query(models.License).filter(models.License.client_user_id == user.id).order_by(models.License.id).all()
+    if not lics:
+        # Lead view: no licenses claimed yet, highlight published marketplace portfolios
+        import marketplace
+        listings = (db.query(models.Listing).filter(models.Listing.status == "published")
+                    .order_by(models.Listing.published_at.desc()).limit(4).all())
+        lead_highlights = [marketplace.public_listing(db, l, now) for l in listings]
+        return {
+            "is_lead": True,
+            "profit_today": 0.0,
+            "trades_today": 0,
+            "profit_week": 0.0,
+            "trades_week": 0,
+            "profit_month": 0.0,
+            "trades_month": 0,
+            "total_profit": 0.0,
+            "currency": "BRL",
+            "curve": [],
+            "running_today": [],
+            "traders": [],
+            "all_paused": False,
+            "lead_highlights": lead_highlights,
+        }
+
+    since = now - datetime.timedelta(days=max(1, min(days, 365)))
+    today_start = datetime.datetime(now.year, now.month, now.day)
+    week_start = now - datetime.timedelta(days=7)
+    month_start = now - datetime.timedelta(days=30)
+
+    # Map (portfolio_id, mt5_login) -> license
+    lic_map: Dict[Tuple[int, int], models.License] = {}
+    portfolio_ids, mt5_logins = set(), set()
+    for l in lics:
+        if l.portfolio_id and l.client_mt5_login:
+            lic_map[(l.portfolio_id, l.client_mt5_login)] = l
+            portfolio_ids.add(l.portfolio_id)
+            mt5_logins.add(l.client_mt5_login)
+
+    closed_trades: List[Tuple[datetime.datetime, float, int, Optional[str], Optional[int]]] = []
+    open_trades: List[dict] = []
+
+    if portfolio_ids and mt5_logins:
+        rows = (db.query(models.Execution)
+                .filter(models.Execution.portfolio_id.in_(list(portfolio_ids)),
+                        models.Execution.mt5_login.in_(list(mt5_logins)),
+                        models.Execution.created_at >= since)
+                .order_by(models.Execution.id).all())
+
+        by_uid: Dict[Tuple[int, int, str], list] = {}
+        for r in rows:
+            if r.action in OPENING + CLOSING or r.retcode not in DONE:
+                by_uid.setdefault((r.portfolio_id, r.mt5_login, r.uid), []).append(r)
+
+        # Lookup MasterPositions
+        uids = {uid for (_, _, uid) in by_uid}
+        pairs = [uid.split("_", 1) for uid in uids if "_" in uid]
+        pos_ids = [int(p) for _, p in pairs if p.isdigit()]
+        positions = {}
+        if pos_ids:
+            for mp in db.query(models.MasterPosition).filter(models.MasterPosition.pos_id.in_(pos_ids)).all():
+                positions[f"{mp.master_login}_{mp.pos_id}"] = mp
+
+        for (pid, login, uid), execs in by_uid.items():
+            done = [e for e in execs if e.retcode in DONE]
+            opened = [e for e in done if e.action in OPENING and e.volume and e.price]
+            closed = [e for e in done if e.action in CLOSING and e.volume and e.price]
+            vol_in = sum(e.volume for e in opened)
+            vol_out = sum(e.volume for e in closed)
+            profits = [e.profit for e in done if e.profit is not None]
+            pos_profit = sum(profits) if profits else 0.0
+
+            mp = positions.get(uid)
+            lic = lic_map.get((pid, login))
+            lic_id = lic.id if lic else 0
+            sym = mp.symbol if mp else None
+            strat_id = mp.strategy_id if mp else None
+
+            if vol_in - vol_out > 1e-9 and opened:
+                open_trades.append({
+                    "license_id": lic_id,
+                    "portfolio_id": pid,
+                    "symbol": sym,
+                    "strategy_id": strat_id,
+                    "opened_at": opened[0].created_at,
+                    "volume": round(vol_in - vol_out, 8),
+                })
+            elif closed:
+                close_time = closed[-1].created_at
+                closed_trades.append((close_time, pos_profit, lic_id, sym, strat_id))
+
+    # Calculate aggregate profit and trade counts
+    profit_today = sum(p for t, p, _, _, _ in closed_trades if t >= today_start)
+    trades_today = sum(1 for t, _, _, _, _ in closed_trades if t >= today_start)
+    profit_week = sum(p for t, p, _, _, _ in closed_trades if t >= week_start)
+    trades_week = sum(1 for t, _, _, _, _ in closed_trades if t >= week_start)
+    profit_month = sum(p for t, p, _, _, _ in closed_trades if t >= month_start)
+    trades_month = sum(1 for t, _, _, _, _ in closed_trades if t >= month_start)
+    total_profit = sum(p for _, p, _, _, _ in closed_trades)
+
+    # Cumulative curve
+    closed_trades.sort(key=lambda x: x[0])
+    curve = []
+    cum = 0.0
+    for t, p, _, _, _ in closed_trades:
+        cum += p
+        curve.append({"t": t.isoformat(), "v": round(cum, 2)})
+
+    # Detect currency
+    currency = "BRL"
+    snap = (db.query(models.AccountSnapshot)
+            .filter(models.AccountSnapshot.kind == "slave",
+                    models.AccountSnapshot.owner_id.in_([l.id for l in lics]),
+                    models.AccountSnapshot.currency.isnot(None))
+            .order_by(models.AccountSnapshot.hour.desc()).first())
+    if snap and snap.currency:
+        currency = snap.currency
+
+    # Running today strategies
+    running_today = []
+    for l in lics:
+        if not license_valid(l, now) or not l.portfolio:
+            continue
+        p = l.portfolio
+        for s in p.strategies:
+            s_trades_today = [pnl for t, pnl, lid, _, sid in closed_trades
+                              if lid == l.id and sid == s.id and t >= today_start]
+            s_open = [op for op in open_trades if op["license_id"] == l.id and op["strategy_id"] == s.id]
+            
+            if l.is_paused:
+                status = "Pausado"
+            elif s_open:
+                status = "Posição aberta"
+            elif s_trades_today:
+                status = "Operou hoje"
+            else:
+                status = "Ativo"
+
+            running_today.append({
+                "license_id": l.id,
+                "portfolio_name": p.name or f"Portfólio #{p.id}",
+                "manager_name": manager_name(p),
+                "strategy_name": s.name,
+                "magic_number": s.magic_number,
+                "is_paused": bool(l.is_paused),
+                "status": status,
+                "trades_today": len(s_trades_today),
+                "profit_today": round(sum(s_trades_today), 2),
+                "open_positions": len(s_open),
+            })
+
+    # Traders summary list
+    traders = []
+    valid_lics = [l for l in lics if license_valid(l, now)]
+    all_paused = bool(valid_lics) and all(bool(l.is_paused) for l in valid_lics)
+
+    for l in lics:
+        p_today = sum(pnl for t, pnl, lid, _, _ in closed_trades if lid == l.id and t >= today_start)
+        p_week = sum(pnl for t, pnl, lid, _, _ in closed_trades if lid == l.id and t >= week_start)
+        p_month = sum(pnl for t, pnl, lid, _, _ in closed_trades if lid == l.id and t >= month_start)
+        open_count = sum(1 for op in open_trades if op["license_id"] == l.id)
+        trades_count = sum(1 for _, _, lid, _, _ in closed_trades if lid == l.id)
+
+        traders.append({
+            "license_id": l.id,
+            "portfolio_id": l.portfolio_id,
+            "portfolio_name": l.portfolio.name if l.portfolio else f"Portfólio #{l.portfolio_id}",
+            "manager_name": manager_name(l.portfolio),
+            "mt5_login": l.client_mt5_login,
+            "max_lots": l.max_lots,
+            "is_active": l.is_active,
+            "is_paused": bool(l.is_paused),
+            "paused_at": l.paused_at.isoformat() if l.paused_at else None,
+            "valid": license_valid(l, now),
+            "expires_at": l.expires_at.isoformat() if l.expires_at else None,
+            "profit_today": round(p_today, 2),
+            "profit_week": round(p_week, 2),
+            "profit_month": round(p_month, 2),
+            "open_positions": open_count,
+            "trades_count": trades_count,
+            "strategies": [s.name for s in l.portfolio.strategies] if l.portfolio else [],
+        })
+
+    return {
+        "is_lead": False,
+        "profit_today": round(profit_today, 2),
+        "trades_today": trades_today,
+        "profit_week": round(profit_week, 2),
+        "trades_week": trades_week,
+        "profit_month": round(profit_month, 2),
+        "trades_month": trades_month,
+        "total_profit": round(total_profit, 2),
+        "currency": currency,
+        "curve": curve,
+        "running_today": running_today,
+        "traders": traders,
+        "all_paused": all_paused,
+        "lead_highlights": [],
+    }
+

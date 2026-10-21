@@ -5,6 +5,7 @@ import { ChevronRight, KeyRound, Monitor, Server, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type ClientLicense, type MyLicenses as MyLicensesData } from '../../api';
 import Card from '../../components/Card';
+import CopyToggle from '../../components/client/CopyToggle';
 import EmptyState from '../../components/EmptyState';
 import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
 import PageHeader from '../../components/PageHeader';
@@ -110,7 +111,18 @@ export default function MyLicenses() {
                                         <p className="truncate text-lg font-semibold">{l.portfolio.name ?? `Portfólio #${l.portfolio.id}`}</p>
                                         {l.manager && <p className="text-xs text-muted-foreground">por {l.manager}</p>}
                                     </div>
-                                    <Badge variant={state.variant}>{state.label}</Badge>
+                                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                        <CopyToggle
+                                            licenseId={l.id}
+                                            isPaused={Boolean(l.is_paused)}
+                                            disabled={!l.valid}
+                                            traderName={l.portfolio.name ?? undefined}
+                                            onChanged={() => setReload(n => n + 1)}
+                                            size="sm"
+                                            showLabel={false}
+                                        />
+                                        <Badge variant={state.variant}>{state.label}</Badge>
+                                    </div>
                                 </div>
                                 {state.detail && <p className="mt-2 text-xs text-muted-foreground">{state.detail}</p>}
                                 <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">

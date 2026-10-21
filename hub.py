@@ -121,6 +121,8 @@ class LicenseInfo:
     key_hash: str
     revoked_at: Optional[float] = None  # Unix time the license was deactivated
     settings: str = ""  # licenses.settings (JSON): sent to the Slave as CFG
+    is_paused: bool = False
+    paused_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -171,7 +173,8 @@ def load_directory(session) -> Directory:
             portfolio_logins[pid] = int(login)
     licenses = [
         LicenseInfo(l.id, l.portfolio_id, int(l.client_mt5_login or 0), float(l.max_lots or 0), bool(l.is_active),
-                    _unix(l.expires_at), l.key_hash, _unix(l.revoked_at), l.settings or "")
+                    _unix(l.expires_at), l.key_hash, _unix(l.revoked_at), l.settings or "",
+                    bool(getattr(l, "is_paused", False)), _unix(getattr(l, "paused_at", None)))
         for l in session.query(models.License).filter(models.License.key_hash.isnot(None),
                                                       models.License.portfolio_id.isnot(None))
     ]

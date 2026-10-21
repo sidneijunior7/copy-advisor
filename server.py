@@ -1072,6 +1072,43 @@ def my_license_view(lic: models.License, db: Session) -> dict:
                     if s.get("kind") == "slave" and s.get("license_id") == lic.id), None)
     return clients.license_view(lic, terminal, session, datetime.datetime.utcnow())
 
+class PauseIn(BaseModel):
+    paused: bool
+
+@app.get("/me/dashboard")
+def get_client_dashboard(days: int = 30, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Overview for the client/subscriber: today, week and month profit, running strategies, cumulative curve, traders."""
+    client_only(current_user)
+    return clients.client_dashboard(db, current_user, datetime.datetime.utcnow(), days=days)
+
+@app.put("/me/licenses/{license_id}/pause")
+def pause_my_license(license_id: int, data: PauseIn, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Soft pause toggle: when paused, stops opening new positions but keeps managing and closing open ones."""
+    lic = own_license(license_id, current_user, db)
+    now = datetime.datetime.utcnow()
+    clients.set_pause(lic, data.paused, now)
+    db.commit()
+    logger.info(f"License {lic.id}: pause set to {data.paused} by client {current_user.id}")
+    notify_hub()
+    db.refresh(lic)
+    return my_license_view(lic, db)
+
+@app.post("/me/licenses/pause-all")
+def pause_all_my_licenses(data: PauseIn, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Master pause toggle: pause or resume all active licenses belonging to this client."""
+    client_only(current_user)
+    now = datetime.datetime.utcnow()
+    lics = db.query(models.License).filter(models.License.client_user_id == current_user.id).all()
+    count = 0
+    for lic in lics:
+        if clients.license_valid(lic, now):
+            clients.set_pause(lic, data.paused, now)
+            count += 1
+    db.commit()
+    logger.info(f"Client {current_user.id} set pause={data.paused} for {count} licenses")
+    notify_hub()
+    return {"paused": data.paused, "count": count}
+
 @app.get("/me/licenses")
 def list_my_licenses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The client's licenses, with how each one is copying right now."""

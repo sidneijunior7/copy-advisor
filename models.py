@@ -83,6 +83,8 @@ class License(Base):
     key_prefix = Column(String(16), nullable=True)
     expires_at = Column(DateTime, nullable=True) # UTC; NULL = no expiry. Expired = revoked for the hub
     revoked_at = Column(DateTime, nullable=True) # UTC, set when is_active goes false: positions opened after it are never sent
+    is_paused = Column(Boolean, default=False, nullable=False) # Paused by client: manage-only, no new positions opened
+    paused_at = Column(DateTime, nullable=True) # UTC when client paused copy
     # The client account it belongs to, linked with a one-time access code (clients.py)
     client_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     claim_hash = Column(String(64), nullable=True, unique=True, index=True) # Pending access code, hashed; cleared once used

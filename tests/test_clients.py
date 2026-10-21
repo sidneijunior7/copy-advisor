@@ -227,3 +227,50 @@ def test_claim_code_format():
     code = clients.new_claim_code()
     assert all(c in clients.CLAIM_ALPHABET for c in code.replace("-", ""))
     assert clients.claim_hash(code) == clients.claim_hash(f" {code.lower()} ")
+
+
+def test_client_dashboard_lead(client):
+    cli, _ = client_headers(client)
+    r = client.get("/me/dashboard", headers=cli)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_lead"] is True
+    assert data["profit_today"] == 0.0
+    assert data["traders"] == []
+
+
+def test_client_pause_toggle_and_master(client):
+    _, _, _, lic, cli, _ = claimed_license(client)
+
+    # Initially not paused
+    dash = client.get("/me/dashboard", headers=cli).json()
+    assert dash["is_lead"] is False
+    assert len(dash["traders"]) == 1
+    assert dash["traders"][0]["is_paused"] is False
+    assert dash["all_paused"] is False
+
+    # Pause this license
+    r = client.put(f"/me/licenses/{lic['id']}/pause", headers=cli, json={"paused": True})
+    assert r.status_code == 200
+    assert r.json()["is_paused"] is True
+    assert r.json()["paused_at"] is not None
+
+    # Check in dashboard
+    dash = client.get("/me/dashboard", headers=cli).json()
+    assert dash["traders"][0]["is_paused"] is True
+    assert dash["all_paused"] is True
+
+    # Master toggle: resume all
+    r = client.post("/me/licenses/pause-all", headers=cli, json={"paused": False})
+    assert r.status_code == 200 and r.json()["count"] >= 1
+    dash = client.get("/me/dashboard", headers=cli).json()
+    assert dash["traders"][0]["is_paused"] is False
+    assert dash["all_paused"] is False
+
+    # Master toggle: pause all
+    r = client.post("/me/licenses/pause-all", headers=cli, json={"paused": True})
+    assert r.status_code == 200
+    dash = client.get("/me/dashboard", headers=cli).json()
+    assert dash["traders"][0]["is_paused"] is True
+    assert dash["all_paused"] is True
+

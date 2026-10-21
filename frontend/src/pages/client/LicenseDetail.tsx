@@ -6,6 +6,7 @@ import api, { type MyLicenses, type Subscription } from '../../api';
 import Card from '../../components/Card';
 import ClientHosting from '../../components/client/ClientHosting';
 import ConnectAccount from '../../components/client/ConnectAccount';
+import CopyToggle from '../../components/client/CopyToggle';
 import ClientPerformance from '../../components/client/ClientPerformance';
 import ClientSettingsForm from '../../components/client/ClientSettingsForm';
 import { ClientIssues, CopiesTable } from '../../components/client/CopiesTable';
@@ -92,7 +93,16 @@ export default function LicenseDetail() {
                 description={`${license.mt5_login != null ? `Conta MT5 ${license.mt5_login}` : 'Sem conta MT5 ainda'}${license.manager ? ` · por ${license.manager}` : ''}`}
                 icon={<Briefcase />}
             >
-                <Badge variant={state.variant} className="text-sm">{state.label}</Badge>
+                <div className="flex flex-wrap items-center gap-3">
+                    <CopyToggle
+                        licenseId={license.id}
+                        isPaused={Boolean(license.is_paused)}
+                        disabled={!license.valid}
+                        traderName={license.portfolio.name ?? undefined}
+                        onChanged={refresh}
+                    />
+                    <Badge variant={state.variant} className="text-sm">{state.label}</Badge>
+                </div>
             </PageHeader>
 
             {license.mt5_login == null && <ConnectAccount license={license} onDone={refresh} />}

@@ -67,6 +67,8 @@ export type License = {
     client_mt5_login: number | null;
     max_lots: number;
     is_active: boolean;
+    is_paused?: boolean;
+    paused_at?: string | null;
     created_at: string;
     expires_at: string | null;
     revoked_at: string | null;
@@ -202,6 +204,8 @@ export type ClientLicense = {
     mt5_login: number | null; // null: bought without it, the client connects it next
     max_lots: number;
     is_active: boolean;
+    is_paused: boolean;
+    paused_at: string | null;
     valid: boolean; // Active and not expired
     expires_at: string | null;
     has_key: boolean;
@@ -210,6 +214,56 @@ export type ClientLicense = {
     limits: ClientLimits;
     hosting: { server: string; enabled: boolean; state: HostingState; detail: string | null; status_at: string | null } | null;
     connection: { ea_version: string | null; connected_at: number | null; active: boolean; last_ack_age_s: number | null } | null;
+};
+
+export type DashboardTrader = {
+    license_id: number;
+    portfolio_id: number;
+    portfolio_name: string;
+    manager_name: string | null;
+    mt5_login: number | null;
+    max_lots: number;
+    is_active: boolean;
+    is_paused: boolean;
+    paused_at: string | null;
+    valid: boolean;
+    expires_at: string | null;
+    profit_today: number;
+    profit_week: number;
+    profit_month: number;
+    open_positions: number;
+    trades_count: number;
+    strategies: string[];
+};
+
+export type RunningStrategy = {
+    license_id: number;
+    portfolio_name: string;
+    manager_name: string | null;
+    strategy_name: string;
+    magic_number: number | null;
+    is_paused: boolean;
+    status: string;
+    trades_today: number;
+    profit_today: number;
+    open_positions: number;
+};
+
+export type ClientDashboardData = {
+    is_lead: boolean;
+    profit_today: number;
+    trades_today: number;
+    profit_week: number;
+    trades_week: number;
+    profit_month: number;
+    trades_month: number;
+    total_profit: number;
+    currency: string;
+    curve: { t: string; v: number }[];
+    running_today: RunningStrategy[];
+    traders: DashboardTrader[];
+    all_paused: boolean;
+    lead_highlights: PublicListing[];
 };
 
 export type MyLicenses = { hosting_available: boolean; servers: string[]; licenses: ClientLicense[] };

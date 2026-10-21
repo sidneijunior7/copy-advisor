@@ -1,25 +1,49 @@
-# --- Python ---
+# --- Python & Virtual Environments ---
 .venv/
+venv/
+env/
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
-# --- Environment / Secrets ---
+# --- Environment & Secrets ---
 .env
 .env.*
 !.env.example
+*.local
 
-# --- SQLite (local dev) ---
+# --- Database (SQLite Local Dev) ---
 *.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
-# --- Node / Frontend ---
+# --- Frontend & Node ---
 frontend/node_modules/
 frontend/dist/
+frontend/dist-ssr/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- MetaTrader / MQL5 Compiled Binaries ---
+# Release binaries for user download are kept in downloads/
+*.ex5
+!downloads/*.ex5
 
 # --- Logs ---
 *.log
 
-# --- Editor / IDE ---
+# --- Editors & OS Artifacts ---
 .vscode/
 .idea/
 *.suo
@@ -27,28 +51,25 @@ frontend/dist/
 *.njsproj
 *.sln
 *.sw?
+*~
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# --- Gemini Agent ---
+# --- Agent Artifacts ---
 .gemini/
+.agents/
 
-# --- Documentos internos (auditoria, notas) ---
+# --- Documentos Internos (auditorias, notas estratégicas) ---
 AUDITORIA.md
 PLANO_TRANSPORTE.md
+ESTIMATIVA_HOSPEDAGEM.md
+ANALISE_RES21.md
+PLANO_ECOSSISTEMA.md
+AUDITORIA_PERFORMANCE.md
 
-# --- Hosted-terminal spike (tools/spike) ---
+# --- Spikes & Ferramentas Internas ---
 tools/spike/ea/
 tools/spike/out/
 tools/spike/private/
-
-# Estimativa comercial (preços e margens)
-ESTIMATIVA_HOSPEDAGEM.md
-
-# Análise regulatória (Res. CVM 21)
-ANALISE_RES21.md
-PLANO_ECOSSISTEMA.md
-
-# Auditoria de performance (descreve vetores de abuso ainda abertos) e o laboratório de carga
-AUDITORIA_PERFORMANCE.md
 tools/perf/
