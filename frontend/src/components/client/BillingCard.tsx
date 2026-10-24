@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { CreditCard, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Billing, type Subscription } from '../../api';
@@ -12,7 +12,9 @@ import { apiError, formatDate } from '../../lib/utils';
 
 // A license paid in Stripe, managed from here: the plan, cancelling or resuming the renewal. The card and the
 // invoices are on Stripe's own page
-export default function BillingCard({ billing, onChanged }: { billing: Billing; onChanged: () => void }) {
+export default function BillingCard({ billing, onChanged, title = 'Assinatura', description, action }: {
+    billing: Billing; onChanged: () => void; title?: string; description?: string; action?: ReactNode;
+}) {
     const [planId, setPlanId] = useState<number | null>(billing.plan?.id ?? null);
     const [confirming, setConfirming] = useState(false); // The cancellation waits on a second click
     const [busy, setBusy] = useState(false);
@@ -45,7 +47,7 @@ export default function BillingCard({ billing, onChanged }: { billing: Billing; 
                 : { variant: 'success' as const, label: 'Ativa', text: `Renova sozinha em ${until ?? 'breve'}, no cartão.` };
 
     return (
-        <Card title="Assinatura" icon={<CreditCard />}>
+        <Card title={title} description={description} action={action} icon={<CreditCard />}>
             <div className="space-y-4 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>

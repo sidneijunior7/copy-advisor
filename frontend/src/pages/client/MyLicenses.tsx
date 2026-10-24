@@ -7,7 +7,7 @@ import api, { type ClientLicense, type MyLicenses as MyLicensesData } from '../.
 import Card from '../../components/Card';
 import CopyToggle from '../../components/client/CopyToggle';
 import EmptyState from '../../components/EmptyState';
-import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
+import { EmailReminder } from '../../components/client/MySubscriptions';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -71,7 +71,6 @@ export default function MyLicenses() {
             />
 
             <EmailReminder />
-            <MySubscriptions />
 
             <Card
                 title="Adicionar licença"

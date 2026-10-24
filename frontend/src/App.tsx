@@ -31,6 +31,7 @@ import ClientDashboard from './pages/client/ClientDashboard';
 import MyLicenses from './pages/client/MyLicenses';
 import LicenseDetail from './pages/client/LicenseDetail';
 import ClientInstall from './pages/client/ClientInstall';
+import MySubscriptionsPage from './pages/client/MySubscriptionsPage';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -108,6 +109,7 @@ function App() {
                 <Route index element={<ClientDashboard />} />
                 <Route path="licenses" element={<MyLicenses />} />
                 <Route path="licenses/:id" element={<LicenseDetail />} />
+                <Route path="subscriptions" element={<MySubscriptionsPage />} />
                 <Route path="install" element={<ClientInstall />} />
               </Route>
             </Route>
