@@ -214,6 +214,30 @@ export type ClientLicense = {
     limits: ClientLimits;
     hosting: { server: string; enabled: boolean; state: HostingState; detail: string | null; status_at: string | null } | null;
     connection: { ea_version: string | null; connected_at: number | null; active: boolean; last_ack_age_s: number | null } | null;
+    billing: Billing | null; // Paid in Stripe
+};
+
+// A plan of a listing paid in Stripe: the lot limit it buys, at the price Stripe charges
+export type Plan = {
+    id: number;
+    name: string;
+    max_lots: number;
+    price: number;
+    currency: string;
+    days: number;
+    archived: boolean;
+    stripe_price_id?: string; // Only for the listing's manager
+};
+
+// How a license is paid in Stripe, and the plans it can change to
+export type Billing = {
+    subscription_id: number;
+    status: string | null; // active, trialing, past_due, canceled...
+    renewing: boolean; // Alive in Stripe: no renewal by hand
+    cancel_at_period_end: boolean;
+    period_end: string | null;
+    plan: Plan | null;
+    plans: Plan[];
 };
 
 export type DashboardTrader = {
@@ -419,6 +443,8 @@ export type Listing = {
     price: number | null;
     currency: 'BRL' | 'USD';
     checkout_url: string | null;
+    plans: Plan[]; // Paid in Stripe when there are any; the listing's price is the cheapest
+    pay_online: boolean; // Paid in Stripe, approved by the payment
     default_days: number;
     default_max_lots: number;
     min_capital: number | null;
@@ -447,7 +473,7 @@ export type SubscriptionStatus = 'pending' | 'approved' | 'rejected' | 'cancelle
 
 export type Subscription = {
     id: number;
-    listing: { id: number; slug: string; title: string; checkout_url: string | null; price: number | null; currency: string; default_days: number };
+    listing: { id: number; slug: string; title: string; checkout_url: string | null; pay_online: boolean; price: number | null; currency: string; default_days: number };
     mt5_login: number | null;
     kind: 'new' | 'renewal';
     status: SubscriptionStatus;
@@ -456,6 +482,11 @@ export type Subscription = {
     license_id: number | null;
     created_at: string;
     decided_at: string | null;
+    plan: Plan | null;
+    paid_online: boolean;
+    stripe_status: string | null;
+    stripe_period_end: string | null;
+    stripe_cancel_at_period_end: boolean;
     client?: { name: string | null; email: string }; // Only for the manager
 };
 

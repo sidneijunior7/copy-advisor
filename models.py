@@ -29,6 +29,7 @@ class User(Base):
     instagram_url = Column(String(255), nullable=True)
     email_verified_at = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True) # Sessions that began before it are over
+    stripe_customer_id = Column(String(64), nullable=True) # The client's customer in Stripe (payments.py)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -126,7 +127,7 @@ class Listing(Base):
     markets = Column(String(100)) # Comma-separated (marketplace.MARKETS)
     price = Column(Float) # Per period of default_days, in currency
     currency = Column(String(3), default="BRL")
-    checkout_url = Column(String(500)) # Where the client pays, until payments are built in
+    checkout_url = Column(String(500)) # Where the client pays outside, approved by hand; not used with plans
     default_days = Column(Integer, default=30) # Validity an approved subscription grants
     default_max_lots = Column(Float, default=1.0)
     min_capital = Column(Float)
@@ -138,11 +139,32 @@ class Listing(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     portfolio = relationship("Portfolio")
+    plans = relationship("ListingPlan", order_by="ListingPlan.position", back_populates="listing")
+
+class ListingPlan(Base):
+    """A plan paid in Stripe (payments.py): a recurring price and the lot limit it buys. Price, currency and period
+    are copied from Stripe when saved. Archived instead of deleted: subscriptions keep pointing at it."""
+    __tablename__ = "listing_plans"
+    __table_args__ = (UniqueConstraint("stripe_price_id", name="uq_listing_plans_stripe_price"),)
+
+    id = Column(Integer, primary_key=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
+    stripe_price_id = Column(String(64), nullable=False)
+    name = Column(String(80), nullable=False) # The price's nickname in Stripe, or the lots
+    max_lots = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False)
+    days = Column(Integer, nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    archived = Column(Boolean, nullable=False, default=False)
+
+    listing = relationship("Listing", back_populates="plans")
 
 class Subscription(Base):
     """A client asking for a listing (or to renew its license). Approving creates or extends the license."""
     __tablename__ = "subscriptions"
-    __table_args__ = (Index("ix_subscriptions_listing_status", "listing_id", "status"),)
+    __table_args__ = (Index("ix_subscriptions_listing_status", "listing_id", "status"),
+                      Index("ix_subscriptions_stripe_subscription", "stripe_subscription_id"))
 
     id = Column(Integer, primary_key=True)
     listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False)
@@ -155,8 +177,15 @@ class Subscription(Base):
     license_id = Column(Integer, ForeignKey("licenses.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     decided_at = Column(DateTime)
+    plan_id = Column(Integer, ForeignKey("listing_plans.id", name="fk_subscriptions_plan"), nullable=True)
+    stripe_session_id = Column(String(255)) # The last Checkout opened for it
+    stripe_subscription_id = Column(String(64)) # Once paid: Stripe renews it and each payment extends the license
+    stripe_status = Column(String(32)) # active, trialing, past_due, canceled...
+    stripe_period_end = Column(DateTime) # The paid period's end, as Stripe last said
+    stripe_cancel_at_period_end = Column(Boolean, nullable=False, default=False) # Cancelled: ends with the period
 
     listing = relationship("Listing")
+    plan = relationship("ListingPlan")
     client = relationship("User")
     license = relationship("License")
 

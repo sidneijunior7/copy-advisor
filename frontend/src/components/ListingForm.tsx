@@ -1,5 +1,5 @@
-import { useForm } from 'react-hook-form';
-import { Check } from 'lucide-react';
+import { useFieldArray, useForm, useWatch } from 'react-hook-form';
+import { Check, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { MARKETS, type Listing } from '../api';
 import { Button } from './ui/Button';
@@ -15,6 +15,7 @@ type ListingFormData = {
     price: string;
     currency: Listing['currency'];
     checkout_url: string;
+    plans: { stripe_price_id: string; max_lots: string }[];
     default_days: string;
     default_max_lots: string;
     min_capital: string;
@@ -32,7 +33,7 @@ interface ListingFormProps {
 
 // What the marketplace shows about a portfolio. Saving a published listing changes it at once
 export default function ListingForm({ portfolioId, portfolioName, listing, onSaved, onCancel }: ListingFormProps) {
-    const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ListingFormData>({
+    const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<ListingFormData>({
         defaultValues: {
             title: listing?.title ?? portfolioName,
             slug: listing?.slug ?? '',
@@ -42,6 +43,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
             price: listing?.price != null ? String(listing.price) : '',
             currency: listing?.currency ?? 'BRL',
             checkout_url: listing?.checkout_url ?? '',
+            plans: (listing?.plans ?? []).map(p => ({ stripe_price_id: p.stripe_price_id ?? '', max_lots: String(p.max_lots) })),
             default_days: String(listing?.default_days ?? 30),
             default_max_lots: String(listing?.default_max_lots ?? 1),
             min_capital: listing?.min_capital != null ? String(listing.min_capital) : '',
@@ -49,6 +51,9 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
             show_backtest: listing?.show_backtest ?? false,
         },
     });
+
+    const plans = useFieldArray({ control, name: 'plans' });
+    const fromStripe = (useWatch({ control, name: 'plans' }) ?? []).length > 0; // Price, currency and period come from the plans
 
     const save = async (data: ListingFormData) => {
         try {
@@ -61,6 +66,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
                 price: data.price === '' ? null : parseFloat(data.price),
                 currency: data.currency,
                 checkout_url: data.checkout_url.trim() || null,
+                plans: data.plans.map(p => ({ stripe_price_id: p.stripe_price_id.trim(), max_lots: parseFloat(p.max_lots) })),
                 default_days: parseInt(data.default_days),
                 default_max_lots: parseFloat(data.default_max_lots),
                 min_capital: data.min_capital === '' ? null : parseFloat(data.min_capital),
@@ -108,7 +114,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
             <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-3">
                 <Field label="Preço" htmlFor={`price-${portfolioId}`} error={errors.price?.message} hint="Em branco: sob consulta. 0: gratuito.">
                     <Input {...register('price', { validate: v => v === '' || parseFloat(v) >= 0 || 'Não pode ser negativo' })}
-                        id={`price-${portfolioId}`} type="number" step="0.01" min="0" className="font-mono" />
+                        id={`price-${portfolioId}`} type="number" step="0.01" min="0" className="font-mono" readOnly={fromStripe} />
                 </Field>
                 <Field label="Moeda" htmlFor={`currency-${portfolioId}`}>
                     <Select {...register('currency')} id={`currency-${portfolioId}`}>
@@ -118,11 +124,38 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
                 </Field>
                 <Field label="Validade por pagamento (dias)" htmlFor={`days-${portfolioId}`} error={errors.default_days?.message}>
                     <Input {...register('default_days', { validate: v => (parseInt(v) >= 1 && parseInt(v) <= 3650) || 'De 1 a 3650' })}
-                        id={`days-${portfolioId}`} type="number" min="1" className="font-mono" />
+                        id={`days-${portfolioId}`} type="number" min="1" className="font-mono" readOnly={fromStripe} />
                 </Field>
             </div>
+            <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Planos pagos pela Stripe</legend>
+                <p className="text-xs text-muted-foreground">
+                    Cada plano é o price ID de um preço recorrente (price_...) e o limite de lotes que ele compra. O cliente escolhe o plano, paga no cartão,
+                    a licença sai sozinha e renova a cada cobrança. Valor, moeda e período vêm da Stripe; o nome, do apelido do preço.
+                </p>
+                {plans.fields.map((f, i) => (
+                    <div key={f.id} className="grid grid-cols-[1fr_8rem_auto] items-start gap-2">
+                        <Field label={`Price ID do plano ${i + 1}`} htmlFor={`plan-${portfolioId}-${i}`} error={errors.plans?.[i]?.stripe_price_id?.message}>
+                            <Input {...register(`plans.${i}.stripe_price_id`, { required: 'Obrigatório', pattern: { value: /^price_[A-Za-z0-9]+$/, message: 'Comece com price_' } })}
+                                id={`plan-${portfolioId}-${i}`} placeholder="price_..." className="font-mono" />
+                        </Field>
+                        <Field label="Lotes" htmlFor={`plan-lots-${portfolioId}-${i}`} error={errors.plans?.[i]?.max_lots?.message}>
+                            <Input {...register(`plans.${i}.max_lots`, { validate: v => (parseFloat(v) > 0 && parseFloat(v) <= 1000) || 'De 0,01 a 1000' })}
+                                id={`plan-lots-${portfolioId}-${i}`} type="number" step="0.01" min="0.01" className="font-mono" />
+                        </Field>
+                        <Button type="button" size="sm" variant="ghost" className="mt-7" onClick={() => plans.remove(i)} aria-label={`Remover o plano ${i + 1}`}>
+                            <Trash2 />
+                        </Button>
+                    </div>
+                ))}
+                {plans.fields.length < 6 && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => plans.append({ stripe_price_id: '', max_lots: '1' })}>
+                        <Plus /> Adicionar plano
+                    </Button>
+                )}
+            </fieldset>
             <Field label="Link de pagamento" htmlFor={`checkout-${portfolioId}`} error={errors.checkout_url?.message}
-                hint="Hotmart, Kiwify ou outro checkout. O cliente paga ali, e você aprova o pedido em Assinaturas.">
+                hint={fromStripe ? 'Não usado enquanto houver planos na Stripe.' : 'Hotmart, Kiwify ou outro checkout. O cliente paga ali, e você aprova o pedido em Assinaturas.'}>
                 <Input {...register('checkout_url', { pattern: { value: /^(https:\/\/\S+)?$/, message: 'Use um link https://' } })}
                     id={`checkout-${portfolioId}`} placeholder="https://" />
             </Field>

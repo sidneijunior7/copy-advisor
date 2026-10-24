@@ -188,6 +188,14 @@ def send_new_subscription(manager: models.User, sub: models.Subscription):
          + f"\nAprove ou recuse em {public_url()}/manager/subscriptions\n")
 
 
+def send_sale(manager: models.User, sub: models.Subscription):
+    """Paid in Stripe: the license is out already, nothing for the manager to approve."""
+    client = sub.client
+    send(manager.email, f"Nova assinatura paga: {sub.listing.title}",
+         f"{client.name or client.email} ({client.email}) assinou {sub.listing.title}{account_of(sub)} "
+         f"e pagou pela Stripe. A licença já foi liberada.\n\nVeja em {public_url()}/manager/subscriptions\n")
+
+
 def send_decision(sub: models.Subscription):
     client = sub.client
     if sub.status == "approved":

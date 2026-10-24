@@ -36,6 +36,7 @@ import models
 import auth
 import backtest
 import observability
+import payments
 import performance
 
 observability.setup("api")
@@ -1070,7 +1071,24 @@ def my_license_view(lic: models.License, db: Session) -> dict:
     terminal = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
     session = next((s for s in (fetch_hub_sessions() or [])
                     if s.get("kind") == "slave" and s.get("license_id") == lic.id), None)
-    return clients.license_view(lic, terminal, session, datetime.datetime.utcnow())
+    return clients.license_view(lic, terminal, session, datetime.datetime.utcnow()) | {
+        "billing": billing_view(stripe_subscriptions([lic.id], db).get(lic.id))}
+
+def stripe_subscriptions(license_ids, db: Session) -> Dict[int, models.Subscription]:
+    """The Stripe subscription behind each license, the latest when it had several."""
+    if not license_ids: return {}
+    rows = (db.query(models.Subscription)
+            .filter(models.Subscription.license_id.in_(license_ids), models.Subscription.stripe_subscription_id.isnot(None))
+            .order_by(models.Subscription.id).all())
+    return {s.license_id: s for s in rows}
+
+def billing_view(sub: Optional[models.Subscription]) -> Optional[dict]:
+    """How the license is paid in Stripe, and the plans it can change to."""
+    if sub is None: return None
+    return {"subscription_id": sub.id, "status": sub.stripe_status, "renewing": sub.stripe_status in payments.RENEWING,
+            "cancel_at_period_end": bool(sub.stripe_cancel_at_period_end), "period_end": sub.stripe_period_end,
+            "plan": marketplace.plan_out(sub.plan, public=True),
+            "plans": [marketplace.plan_out(p, public=True) for p in marketplace.active_plans(sub.listing)]}
 
 class PauseIn(BaseModel):
     paused: bool
@@ -1119,8 +1137,10 @@ def list_my_licenses(current_user: models.User = Depends(get_current_user), db: 
     terminals = {t.license_id: t for t in db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id.in_(ids))} if ids else {}
     sessions = {s.get("license_id"): s for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if ids else {}
     available = hosting.cipher() is not None
+    billing = stripe_subscriptions(ids, db)
     return {"hosting_available": available, "servers": hosting.known_servers(db, now) if available else [],
-            "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) for l in lics]}
+            "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) | {"billing": billing_view(billing.get(l.id))}
+                         for l in lics]}
 
 @app.post("/me/licenses/claim")
 def claim_license(data: ClaimRequest, request: Request, current_user: models.User = Depends(get_current_user),
@@ -1556,18 +1576,28 @@ subscribe_limiter = FailureLimiter(int(os.getenv("SUBSCRIBE_MAX_PER_DAY", "20"))
 @app.post("/api/marketplace/{slug}/subscribe")
 def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.User = Depends(get_current_user),
               db: Session = Depends(get_db)):
-    """A client asks for a listing. The manager approves it once paid. The MT5 account is optional: without it, the
+    """A client asks for a listing. The manager approves it once paid, or Stripe's payment does when the listing is
+    paid online: the client then opens /me/subscriptions/{id}/checkout. The MT5 account is optional: without it, the
     client connects it on the license afterwards, so buying never waits on looking the number up. Nor on the email
     link: that is asked when connecting the account, before anything copies."""
     client_only(current_user)
     listing = published_listing(slug, db)
+    plan = None
+    if marketplace.pay_online(listing):
+        plan = next((p for p in marketplace.active_plans(listing) if p.id == data.plan_id), None)
+        if plan is None: raise HTTPException(status_code=422, detail="Escolha um dos planos do portfólio")
     pending = db.query(models.Subscription).filter(models.Subscription.client_user_id == current_user.id,
                                                    models.Subscription.status == "pending")
+    same = pending.filter(models.Subscription.listing_id == listing.id,
+                          models.Subscription.mt5_login == data.mt5_login).first()
+    if same is not None and plan is not None:
+        same.plan = plan  # Back from an abandoned Checkout: pay that one, maybe on another plan
+        db.commit()
+        return marketplace.subscription_out(same, for_manager=False)
+    if same is not None:
+        raise HTTPException(status_code=409, detail="Já existe um pedido desta conta esperando resposta")
     if pending.count() >= marketplace.MAX_PENDING_PER_CLIENT:
         raise HTTPException(status_code=429, detail="Você tem pedidos demais esperando resposta")
-    if pending.filter(models.Subscription.listing_id == listing.id,
-                      models.Subscription.mt5_login == data.mt5_login).first():
-        raise HTTPException(status_code=409, detail="Já existe um pedido desta conta esperando resposta")
     existing = None if data.mt5_login is None else db.query(models.License).filter(
         models.License.portfolio_id == listing.portfolio_id, models.License.client_mt5_login == data.mt5_login).first()
     if existing is not None and existing.client_user_id not in (None, current_user.id):
@@ -1576,26 +1606,133 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
         raise HTTPException(status_code=429, detail="Pedidos demais hoje. Tente de novo amanhã ou fale com o gestor")
     subscribe_limiter.fail(f"subscribe:{current_user.id}")
     sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
-                              kind="renewal" if existing is not None else "new",
+                              kind="renewal" if existing is not None else "new", plan=plan,
                               note=(data.note or "").strip() or None, created_at=datetime.datetime.utcnow())
     db.add(sub)
     db.commit()
     db.refresh(sub)
     logger.info(f"Subscription {sub.id}: client {current_user.id} asked for listing {listing.id}")
-    if listing.portfolio and listing.portfolio.owner:
+    if listing.portfolio and listing.portfolio.owner and not marketplace.pay_online(listing):
         mailer.send_new_subscription(listing.portfolio.owner, sub)
     return marketplace.subscription_out(sub, for_manager=False)
 
+class RenewIn(BaseModel):
+    plan_id: Optional[int] = None  # Default: the plan the license had, if it is still sold
+
 @app.post("/me/licenses/{license_id}/renew")
-def renew_my_license(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """A renewal request for the portfolio's listing: approving it extends the license."""
+def renew_my_license(license_id: int, data: Optional[RenewIn] = None, current_user: models.User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    """A renewal request for the portfolio's listing: approving it, or paying it in Stripe, extends the license."""
     lic = own_license(license_id, current_user, db)
     listing = db.query(models.Listing).filter(models.Listing.portfolio_id == lic.portfolio_id,
                                               models.Listing.status == "published").first()
     if listing is None:
         raise HTTPException(status_code=409, detail="Este portfólio não está no marketplace: renove com quem vendeu a licença")
     account_required(lic)
-    return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login), current_user, db)
+    paid = stripe_subscriptions([lic.id], db).get(lic.id)
+    if paid is not None and paid.stripe_status in payments.RENEWING:
+        raise HTTPException(status_code=409, detail="Esta licença já renova sozinha pelo cartão")
+    plan_id = data.plan_id if data and data.plan_id else (paid.plan_id if paid else None)
+    return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login, plan_id=plan_id), current_user, db)
+
+@app.post("/me/subscriptions/{subscription_id}/checkout")
+def open_checkout(subscription_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Stripe's payment page for a pending request of a listing paid online. A new one each call: the previous
+    Checkout is closed, so one request is never paid twice."""
+    client_only(current_user)
+    sub = db.get(models.Subscription, subscription_id)
+    if sub is None or sub.client_user_id != current_user.id: raise HTTPException(status_code=404)
+    if sub.status != "pending": raise HTTPException(status_code=409, detail="Este pedido já foi respondido")
+    if sub.listing.status != "published" or not marketplace.pay_online(sub.listing):
+        raise HTTPException(status_code=409, detail="Este portfólio não aceita pagamento online. Fale com o gestor")
+    if sub.plan is None or sub.plan.archived or sub.plan.listing_id != sub.listing_id:
+        raise HTTPException(status_code=409, detail="Este plano não é mais vendido. Assine de novo pela página do portfólio")
+    try:
+        url = payments.checkout(db, sub, datetime.datetime.utcnow())
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    return {"url": url}
+
+@app.post("/me/billing/portal")
+def open_billing_portal(current_user: models.User = Depends(get_current_user)):
+    """Stripe's page where the client changes the card and sees the invoices."""
+    client_only(current_user)
+    if not payments.enabled(): raise HTTPException(status_code=409, detail="Pagamento online indisponível")
+    try:
+        return {"url": payments.portal(current_user)}
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+
+def paid_subscription(subscription_id: int, user: models.User, db: Session) -> models.Subscription:
+    """The client's own subscription paid in Stripe and still alive there."""
+    client_only(user)
+    sub = db.get(models.Subscription, subscription_id)
+    if sub is None or sub.client_user_id != user.id: raise HTTPException(status_code=404)
+    if not payments.enabled() or sub.stripe_subscription_id is None or sub.stripe_status not in payments.RENEWING:
+        raise HTTPException(status_code=409, detail="Esta assinatura não está ativa na Stripe")
+    return sub
+
+class PlanChange(BaseModel):
+    plan_id: int
+
+@app.post("/me/subscriptions/{subscription_id}/plan")
+def change_my_plan(subscription_id: int, data: PlanChange, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Another plan of the same listing. The prorated difference is charged (or credited) now, and the license's
+    lot limit follows once Stripe takes it."""
+    sub = paid_subscription(subscription_id, current_user, db)
+    plan = next((p for p in marketplace.active_plans(sub.listing) if p.id == data.plan_id), None)
+    if plan is None: raise HTTPException(status_code=422, detail="Escolha um dos planos do portfólio")
+    if plan.id == sub.plan_id: raise HTTPException(status_code=409, detail="Este já é o seu plano")
+    if sub.stripe_status == "past_due":
+        raise HTTPException(status_code=409, detail="A última cobrança falhou: atualize o cartão em Pagamentos antes de trocar de plano")
+    try:
+        payments.change_plan(db, sub, plan, datetime.datetime.utcnow())
+    except payments.PaymentError as e:
+        db.commit()  # What Stripe did say is kept
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    logger.info(f"Subscription {sub.id}: client {current_user.id} moved to plan {sub.plan_id}")
+    notify_hub()
+    return marketplace.subscription_out(sub, for_manager=False)
+
+class RenewalChange(BaseModel):
+    renew: bool  # False: ends with the paid period; True: undoes that
+
+@app.post("/me/subscriptions/{subscription_id}/renewal")
+def set_my_renewal(subscription_id: int, data: RenewalChange, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Cancels the renewal (the license stays valid until the paid period ends) or resumes it."""
+    sub = paid_subscription(subscription_id, current_user, db)
+    try:
+        payments.set_renewal(db, sub, data.renew, datetime.datetime.utcnow())
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    logger.info(f"Subscription {sub.id}: client {current_user.id} set renewal to {data.renew}")
+    return marketplace.subscription_out(sub, for_manager=False)
+
+async def raw_body(request: Request) -> bytes:
+    return await request.body()  # The signature covers the exact bytes Stripe sent
+
+@app.post("/api/stripe/webhook")
+def stripe_webhook(request: Request, payload: bytes = Depends(raw_body), db: Session = Depends(get_db)):
+    """Stripe's events (payments.handle). An error answers 5xx, and Stripe sends the event again later."""
+    if not payments.enabled() or not os.getenv("STRIPE_WEBHOOK_SECRET"):
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    try:
+        sub, approved = payments.handle(db, payload, request.headers.get("stripe-signature", ""), datetime.datetime.utcnow())
+    except payments.stripe.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Bad signature")
+    db.commit()
+    if sub is not None and sub.license_id is not None:
+        notify_hub()
+    if approved:
+        mailer.send_decision(sub)
+        if sub.listing.portfolio and sub.listing.portfolio.owner:
+            mailer.send_sale(sub.listing.portfolio.owner, sub)
+    return {"ok": True}
 
 @app.get("/me/subscriptions")
 def list_my_subscriptions(status_filter: Optional[str] = None, current_user: models.User = Depends(get_current_user),
@@ -1629,6 +1766,7 @@ def approve_subscription(subscription_id: int, decision: marketplace.Decision,
     """Creates the license for the client's account (or extends it), already linked to the client."""
     sub = managed_subscription(subscription_id, current_user, db)
     lic = marketplace.approve(db, sub, decision, datetime.datetime.utcnow())
+    payments.expire_checkout(sub)  # Approved by hand: its Stripe Checkout must not charge it too
     db.commit()
     logger.info(f"Subscription {sub.id} approved by manager {current_user.id}: license {lic.id} until {lic.expires_at}")
     notify_hub()
@@ -1641,6 +1779,7 @@ def reject_subscription(subscription_id: int, decision: marketplace.Decision,
     sub = managed_subscription(subscription_id, current_user, db)
     sub.status, sub.decided_at = "rejected", datetime.datetime.utcnow()
     sub.decision_note = (decision.note or "").strip() or None
+    payments.expire_checkout(sub)
     db.commit()
     mailer.send_decision(sub)
     return marketplace.subscription_out(sub, for_manager=True)
@@ -1653,6 +1792,7 @@ def cancel_my_subscription(subscription_id: int, current_user: models.User = Dep
     if sub is None or sub.client_user_id != current_user.id: raise HTTPException(status_code=404)
     if sub.status != "pending": raise HTTPException(status_code=409, detail="Este pedido já foi respondido")
     sub.status, sub.decided_at = "cancelled", datetime.datetime.utcnow()
+    payments.expire_checkout(sub)
     db.commit()
     return marketplace.subscription_out(sub, for_manager=False)
 
@@ -1684,6 +1824,12 @@ def save_listing(portfolio_id: int, data: marketplace.ListingIn, current_user: m
         db.add(listing)
     slug = marketplace.unique_slug(db, data.slug or marketplace.slugify(data.title), listing.id)
     marketplace.apply(listing, data, slug, now)
+    db.flush()
+    try:
+        payments.save_plans(db, listing, data.plans)  # The plans' price, currency and period come from Stripe
+    except payments.PaymentError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status, detail=str(e))
     db.commit()
     db.refresh(listing)
     marketplace.clear_cache()

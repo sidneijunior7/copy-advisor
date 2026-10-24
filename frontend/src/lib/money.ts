@@ -10,9 +10,13 @@ export const formatMoney = (value: number, currency: string | null) => {
     return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// What a listing costs, per period of validity
-export const priceLabel = (l: { price: number | null; currency: string; default_days: number }) =>
-    l.price == null ? 'Preço sob consulta' : l.price === 0 ? 'Gratuito' : `${formatMoney(l.price, l.currency)} / ${l.default_days} dias`;
+// A period of validity in words: 30 days read as a month
+export const periodLabel = (days: number) => (days === 30 ? 'mês' : days === 365 ? 'ano' : `${days} dias`);
+
+// What a listing costs, per period of validity; with plans, from the cheapest
+export const priceLabel = (l: { price: number | null; currency: string; default_days: number; plans?: unknown[] }) =>
+    l.price == null ? 'Preço sob consulta' : l.price === 0 ? 'Gratuito'
+        : `${(l.plans?.length ?? 0) > 1 ? 'A partir de ' : ''}${formatMoney(l.price, l.currency)} / ${periodLabel(l.default_days)}`;
 
 // A percentage with its sign: +1,25% or -0,4%
 export const signedPct = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;

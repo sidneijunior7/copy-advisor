@@ -4,6 +4,7 @@ import { ArrowLeft, Briefcase, ExternalLink, KeyRound, RefreshCw } from 'lucide-
 import { toast } from 'sonner';
 import api, { type MyLicenses, type Subscription } from '../../api';
 import Card from '../../components/Card';
+import BillingCard from '../../components/client/BillingCard';
 import ClientHosting from '../../components/client/ClientHosting';
 import ConnectAccount from '../../components/client/ConnectAccount';
 import CopyToggle from '../../components/client/CopyToggle';
@@ -16,6 +17,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { copyState } from '../../lib/clientLicense';
 import { SIZING_LABELS, SLTP_LABELS } from '../../lib/labels';
+import { openCheckout } from '../../lib/stripe';
 import { apiError, cn, formatDate } from '../../lib/utils';
 
 const POLL_MS = 15_000;
@@ -73,6 +75,10 @@ export default function LicenseDetail() {
         setRenewing(true);
         try {
             const res = await api.post<Subscription>(`/me/licenses/${license.id}/renew`);
+            if (res.data.listing.pay_online) {
+                await openCheckout(res.data.id); // Charged only when the current validity ends
+                return;
+            }
             setRenewal(res.data);
             toast.success('Pedido de renovação enviado', { description: 'O gestor estende a validade depois do pagamento.' });
         } catch (e) {
@@ -154,6 +160,7 @@ export default function LicenseDetail() {
                                     <dd>{SLTP_LABELS[s.sltp_mode ?? 'distance']}</dd>
                                 </div>
                             </dl>
+                            {!license.billing?.renewing && (
                             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
                                 {renewal ? (
                                     <>
@@ -170,7 +177,9 @@ export default function LicenseDetail() {
                                     </Button>
                                 )}
                             </div>
+                            )}
                         </Card>
+                        {license.billing && <BillingCard billing={license.billing} onChanged={refresh} />}
                     </div>
                     <ClientHosting
                         license={license}

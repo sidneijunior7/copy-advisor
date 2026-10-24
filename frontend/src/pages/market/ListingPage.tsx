@@ -9,12 +9,14 @@ import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
+import PlanPicker from '../../components/PlanPicker';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { IconSelect, Select } from '../../components/ui/Field';
 import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
 import { formatMoney, priceLabel } from '../../lib/money';
+import { openCheckout } from '../../lib/stripe';
 import { apiError, cn } from '../../lib/utils';
 
 function SubscribeBox({ listing }: { listing: PublicListing }) {
@@ -22,6 +24,7 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
     const [me, setMe] = useState<Me | null>(null);
     const [done, setDone] = useState<Subscription | null>(null);
     const [sending, setSending] = useState(false);
+    const [planId, setPlanId] = useState<number | null>(listing.plans[0]?.id ?? null);
     const next = encodeURIComponent(`/marketplace/${listing.slug}`);
 
     useEffect(() => {
@@ -32,7 +35,12 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
     const subscribe = async () => {
         setSending(true);
         try {
-            const res = await api.post<Subscription>(`/api/marketplace/${listing.slug}/subscribe`, {});
+            const res = await api.post<Subscription>(`/api/marketplace/${listing.slug}/subscribe`,
+                listing.pay_online ? { plan_id: planId } : {});
+            if (res.data.listing.pay_online) {
+                await openCheckout(res.data.id); // Stripe's page; paying approves the request by itself
+                return;
+            }
             setDone(res.data);
             if (res.data.listing.checkout_url) window.open(res.data.listing.checkout_url, '_blank', 'noopener,noreferrer');
         } catch (e) {
@@ -74,9 +82,15 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
         );
     }
     return (
-        <Button size="lg" className="w-full" loading={sending} onClick={subscribe}>
-            Assinar {listing.checkout_url ? 'e pagar' : 'agora'} {!sending && <ArrowRight />}
-        </Button>
+        <div className="space-y-3">
+            {listing.pay_online && <PlanPicker plans={listing.plans} value={planId} onChange={setPlanId} />}
+            <Button size="lg" className="w-full" loading={sending} disabled={listing.pay_online && planId == null} onClick={subscribe}>
+                Assinar {listing.pay_online || listing.checkout_url ? 'e pagar' : 'agora'} {!sending && <ArrowRight />}
+            </Button>
+            {listing.pay_online && (
+                <p className="text-xs text-muted-foreground">Pagamento no cartão pela Stripe. Renova todo mês; troque de plano ou cancele quando quiser em Minhas licenças.</p>
+            )}
+        </div>
     );
 }
 

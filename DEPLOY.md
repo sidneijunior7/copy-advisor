@@ -198,7 +198,15 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - sem `SMTP_HOST` e `SMTP_FROM`, nada é enviado, a recuperação de senha responde que não está disponível e qualquer cliente assina;
   - os links valem uma vez, e o banco guarda só o hash. Trocar a senha encerra as sessões abertas antes da troca;
   - o pedido de recuperação responde igual para emails com e sem conta, e conta no limite de tentativas por IP.
-- **Pagamento:** por enquanto é o link do gestor e a aprovação manual.
+- **Pagamento pela Stripe** (`payments.py`, conta da plataforma; o Stripe Connect fica para depois):
+  - variáveis da API: `STRIPE_SECRET_KEY` (`sk_test_...` ou `sk_live_...`), `STRIPE_WEBHOOK_SECRET` (`whsec_...`) e `PUBLIC_URL`;
+  - na Stripe, crie um webhook para `{PUBLIC_URL}/api/stripe/webhook` com os eventos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` e `invoice.paid`;
+  - o portal da Stripe (Settings → Billing → Customer portal) é o botão "Cartão e faturas" do cliente. A troca de plano e o cancelamento ficam no próprio Mirror, mas, se o portal também permitir, o webhook acompanha;
+  - o anúncio vende **planos**: cada um é o price ID de um preço recorrente (`price_...`) e o limite de lotes que ele compra (ex.: 2, 5 e 15 contratos). Valor, moeda e período vêm da Stripe, e o nome vem do apelido do preço. Cada preço vai em um anúncio só, e um plano retirado do anúncio é arquivado, não apagado;
+  - o pagamento aprova o pedido sozinho, com o limite de lotes do plano. Cada cobrança estende a licença até o fim do período pago mais 2 dias. Se uma cobrança falha, nada muda e a licença vence sozinha;
+  - em Minhas licenças → licença → Assinatura, o cliente troca de plano (a diferença proporcional é cobrada ou creditada na hora, e o limite muda quando a cobrança passa) e cancela ou retoma a renovação (cancelada, a licença vale até o fim do período pago);
+  - quem renova uma licença com mais de 2 dias de validade só é cobrado quando ela vence (trial na Stripe);
+  - anúncio sem planos continua com o link do gestor e a aprovação manual.
 - **Deploy:** a migração `0011` cria as tabelas. Configure as variáveis do SMTP na API antes de anunciar o cadastro: sem elas, quem esquecer a senha depende do suporte.
 
 ### Como os seguidores copiaram

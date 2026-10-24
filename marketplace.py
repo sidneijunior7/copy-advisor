@@ -3,10 +3,12 @@ Marketplace: a manager publishes a portfolio as a listing; anyone sees the publi
 performance (the Master's deals, performance.py); a client asks for one with its MT5 account, and the manager
 approves it, which creates the license already linked to the client, or extends the one it has.
 
-Payment happens outside for now: the listing carries the manager's checkout link (Hotmart, Kiwify...) and the
-manager approves once paid. A TDM_DEV can suspend a listing; its manager cannot publish it again.
+Payment happens in Stripe when the listing has plans (payments.py): paying approves the request by itself.
+Otherwise the listing carries the manager's checkout link (Hotmart, Kiwify...) and the manager approves once paid.
+A TDM_DEV can suspend a listing; its manager cannot publish it again.
 """
 import datetime
+import os
 import re
 import threading
 import time
@@ -31,6 +33,14 @@ CURVE_POINTS = 40  # Sparkline of a catalog card
 SLUG = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
 
+MAX_PLANS = 6
+
+
+class PlanIn(BaseModel):
+    stripe_price_id: str = Field(max_length=64, pattern=r"^price_[A-Za-z0-9]+$")
+    max_lots: float = Field(gt=0, le=1000)
+
+
 class ListingIn(BaseModel):
     title: str = Field(min_length=3, max_length=80, pattern=hosting.ONE_LINE)
     slug: Optional[str] = Field(default=None, min_length=3, max_length=80, pattern=SLUG)
@@ -40,6 +50,7 @@ class ListingIn(BaseModel):
     price: Optional[float] = Field(default=None, ge=0, le=1_000_000)
     currency: Literal["BRL", "USD"] = "BRL"
     checkout_url: Optional[str] = Field(default=None, max_length=500, pattern=r"^https://[^\s<>\"']+$")
+    plans: List["PlanIn"] = Field(default_factory=list, max_length=MAX_PLANS)  # Paid in Stripe when there are any
     default_days: int = Field(default=30, ge=1, le=3650)
     default_max_lots: float = Field(default=1.0, gt=0, le=1000)
     min_capital: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
@@ -49,6 +60,7 @@ class ListingIn(BaseModel):
 
 class SubscriptionIn(BaseModel):
     mt5_login: Optional[int] = Field(default=None, gt=0, le=10**12)  # None: connected on the license afterwards
+    plan_id: Optional[int] = None  # Required when the listing has plans
     note: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -104,6 +116,23 @@ def apply(listing: models.Listing, data: ListingIn, slug: str, now: datetime.dat
     listing.updated_at = now
 
 
+def active_plans(listing: models.Listing) -> List[models.ListingPlan]:
+    return [p for p in listing.plans if not p.archived]
+
+
+def pay_online(listing: models.Listing) -> bool:
+    """Paid in Stripe, approved by the payment (payments.enabled, without importing it: it imports this module)."""
+    return bool(active_plans(listing)) and bool(os.getenv("STRIPE_SECRET_KEY"))
+
+
+def plan_out(plan: Optional[models.ListingPlan], public: bool = False) -> Optional[dict]:
+    if plan is None:
+        return None
+    out = {"id": plan.id, "name": plan.name, "max_lots": plan.max_lots, "price": plan.price,
+           "currency": plan.currency, "days": plan.days, "archived": bool(plan.archived)}
+    return out if public else out | {"stripe_price_id": plan.stripe_price_id}
+
+
 def listing_out(listing: models.Listing) -> dict:
     """Everything about a listing: what its manager edits, and the public view starts from."""
     return {
@@ -111,6 +140,7 @@ def listing_out(listing: models.Listing) -> dict:
         "summary": listing.summary, "description": listing.description,
         "markets": [m for m in (listing.markets or "").split(",") if m],
         "price": listing.price, "currency": listing.currency or "BRL", "checkout_url": listing.checkout_url,
+        "plans": [plan_out(p) for p in active_plans(listing)], "pay_online": pay_online(listing),
         "default_days": listing.default_days, "default_max_lots": listing.default_max_lots,
         "min_capital": listing.min_capital, "hosting_allowed": bool(listing.hosting_allowed),
         "show_backtest": bool(listing.show_backtest), "status": listing.status, "suspended_reason": listing.suspended_reason,
@@ -192,6 +222,7 @@ def summary(stats: dict) -> dict:
 def public_listing(db: Session, listing: models.Listing, now: datetime.datetime) -> dict:
     out = {k: v for k, v in listing_out(listing).items()
            if k not in ("portfolio_id", "status", "suspended_reason", "default_max_lots")}
+    out["plans"] = [plan_out(p, public=True) for p in active_plans(listing)]
     out["manager"] = manager_profile(listing)
     out["strategies"] = [s.name for s in listing.portfolio.strategies] if listing.portfolio else []
     out["stats"] = summary(public_performance(db, listing, PUBLIC_DAYS, now))
@@ -204,11 +235,14 @@ def public_listing(db: Session, listing: models.Listing, now: datetime.datetime)
 def subscription_out(s: models.Subscription, for_manager: bool) -> dict:
     out = {
         "id": s.id, "listing": {"id": s.listing_id, "slug": s.listing.slug, "title": s.listing.title,
-                                "checkout_url": s.listing.checkout_url, "price": s.listing.price,
+                                "checkout_url": s.listing.checkout_url, "pay_online": pay_online(s.listing),
+                                "price": s.listing.price,
                                 "currency": s.listing.currency or "BRL", "default_days": s.listing.default_days},
         "mt5_login": s.mt5_login, "kind": s.kind, "status": s.status, "note": s.note,
         "decision_note": s.decision_note, "license_id": s.license_id, "created_at": s.created_at,
-        "decided_at": s.decided_at,
+        "decided_at": s.decided_at, "plan": plan_out(s.plan, public=True),
+        "paid_online": s.stripe_subscription_id is not None, "stripe_status": s.stripe_status,
+        "stripe_period_end": s.stripe_period_end, "stripe_cancel_at_period_end": bool(s.stripe_cancel_at_period_end),
     }
     if for_manager:
         out["client"] = {"name": s.client.name, "email": s.client.email}
@@ -220,7 +254,7 @@ def approve(db: Session, sub: models.Subscription, decision: Decision, now: date
     now, if already expired). Either way it ends up active and linked to the client."""
     listing = sub.listing
     days = decision.days or listing.default_days or 30
-    max_lots = decision.max_lots or listing.default_max_lots or 1.0
+    max_lots = decision.max_lots or (sub.plan.max_lots if sub.plan else None) or listing.default_max_lots or 1.0
     # Without an account yet the license is always new: the client connects it afterwards (connect_account)
     lic = None if sub.mt5_login is None else (db.query(models.License)
            .filter(models.License.portfolio_id == listing.portfolio_id,

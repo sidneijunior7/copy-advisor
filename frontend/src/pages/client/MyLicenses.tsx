@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ChevronRight, KeyRound, Monitor, Server, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type ClientLicense, type MyLicenses as MyLicensesData } from '../../api';
@@ -24,6 +24,18 @@ export default function MyLicenses() {
     const [failed, setFailed] = useState(false);
     const [reload, setReload] = useState(0); // Bumped to load again now, after adding a license
     const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<ClaimForm>();
+    const [params, setParams] = useSearchParams();
+
+    // Back from Stripe's Checkout: the webhook frees the license within seconds, sooner than the next poll
+    useEffect(() => {
+        if (params.get('pagamento') !== 'ok') return;
+        toast.success('Pagamento recebido', { description: 'A licença aparece aqui em instantes. Depois, conecte sua conta MT5.' });
+        const timers = [3_000, 8_000].map(ms => window.setTimeout(() => setReload(n => n + 1), ms));
+        setParams({}, { replace: true });
+        return () => timers.forEach(t => window.clearTimeout(t));
+        // Once, on arrival: clearing the address must not cancel the reloads
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         const load = () => api.get<MyLicensesData>('/me/licenses')

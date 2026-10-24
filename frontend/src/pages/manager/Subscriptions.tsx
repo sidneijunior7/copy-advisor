@@ -103,6 +103,7 @@ export default function Subscriptions() {
                                             <TableCell label="Portfólio">
                                                 {s.listing.title}
                                                 {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
+                                                {s.paid_online && <span className="ml-1 text-xs text-muted-foreground">(pago pela Stripe)</span>}
                                                 {s.note && <p className="text-xs text-muted-foreground">"{s.note}"</p>}
                                             </TableCell>
                                             <TableCell label="Conta MT5" className="font-mono">{s.mt5_login ?? <span className="font-sans text-muted-foreground">Depois do pagamento</span>}</TableCell>

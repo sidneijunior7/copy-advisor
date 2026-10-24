@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, MailWarning, ShoppingBag, X } from 'lucide-react';
+import { CreditCard, ExternalLink, MailWarning, ShoppingBag, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Me, type Subscription } from '../../api';
 import Card from '../Card';
@@ -8,7 +8,8 @@ import ResendLinkButton from '../ResendLinkButton';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { SUBSCRIPTION_STATUS } from '../../lib/labels';
-import { priceLabel } from '../../lib/money';
+import { formatMoney, periodLabel, priceLabel } from '../../lib/money';
+import { openCheckout } from '../../lib/stripe';
 import { apiError, formatDate } from '../../lib/utils';
 
 // The email confirmation reminder: subscribing needs it once the server sends email
@@ -46,7 +47,7 @@ export default function MySubscriptions() {
 
     if (!rows || rows.length === 0) return null;
     return (
-        <Card title="Minhas assinaturas" description="Pedidos no marketplace. Quando o gestor aprova, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
+        <Card title="Minhas assinaturas" description="Pedidos no marketplace. Pago online ou aprovado pelo gestor, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
             <ul className="divide-y divide-border">
                 {rows.slice(0, 10).map(s => {
                     const status = SUBSCRIPTION_STATUS[s.status];
@@ -58,13 +59,17 @@ export default function MySubscriptions() {
                                     {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
-                                    {s.mt5_login != null && <>Conta {s.mt5_login} · </>}pedido em {formatDate(s.created_at)} · {priceLabel(s.listing)}
+                                    {s.mt5_login != null && <>Conta {s.mt5_login} · </>}pedido em {formatDate(s.created_at)} ·{' '}
+                                    {s.plan ? `${s.plan.name}, ${formatMoney(s.plan.price, s.plan.currency)} / ${periodLabel(s.plan.days)}` : priceLabel(s.listing)}
                                 </p>
                                 {s.decision_note && <p className="text-xs text-muted-foreground">Gestor: {s.decision_note}</p>}
                             </div>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Badge variant={status.variant}>{status.label}</Badge>
-                                {s.status === 'pending' && s.listing.checkout_url && (
+                                {s.status === 'pending' && s.listing.pay_online && (
+                                    <Button size="sm" onClick={() => openCheckout(s.id)}><CreditCard /> Pagar</Button>
+                                )}
+                                {s.status === 'pending' && !s.listing.pay_online && s.listing.checkout_url && (
                                     <a href={s.listing.checkout_url} target="_blank" rel="noopener noreferrer">
                                         <Button size="sm"><ExternalLink /> Pagar</Button>
                                     </a>
