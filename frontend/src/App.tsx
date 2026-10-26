@@ -11,6 +11,7 @@ import Register from './pages/Register';
 import { ForgotPassword, ResetPassword, VerifyEmail } from './pages/EmailLinks';
 import Catalog from './pages/market/Catalog';
 import ListingPage from './pages/market/ListingPage';
+import AdminHosting from './pages/dev/AdminHosting';
 import AdminListings from './pages/dev/AdminListings';
 import NotFound from './pages/NotFound';
 import DevDashboard from './pages/DevDashboard';
@@ -32,6 +33,7 @@ import MyLicenses from './pages/client/MyLicenses';
 import LicenseDetail from './pages/client/LicenseDetail';
 import ClientInstall from './pages/client/ClientInstall';
 import MySubscriptionsPage from './pages/client/MySubscriptionsPage';
+import ClientHostingPage from './pages/client/ClientHostingPage';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -85,6 +87,7 @@ function App() {
               <Route element={<AppLayout />}>
                 <Route path="/dev" element={<DevDashboard />} />
                 <Route path="/dev/marketplace" element={<AdminListings />} />
+                <Route path="/dev/hosting" element={<AdminHosting />} />
               </Route>
             </Route>
 
@@ -110,6 +113,7 @@ function App() {
                 <Route path="licenses" element={<MyLicenses />} />
                 <Route path="licenses/:id" element={<LicenseDetail />} />
                 <Route path="subscriptions" element={<MySubscriptionsPage />} />
+                <Route path="hosting" element={<ClientHostingPage />} />
                 <Route path="install" element={<ClientInstall />} />
               </Route>
             </Route>

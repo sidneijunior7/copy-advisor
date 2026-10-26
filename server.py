@@ -1955,6 +1955,44 @@ def admin_restore_listing(listing_id: int, current_user: models.User = Depends(g
         db.commit()
     return marketplace.listing_out(listing)
 
+# --- Hosting across the platform (TDM_DEV) ---
+
+@app.get("/admin/hosting")
+def admin_list_hosting(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Every hosted terminal, whose it is and how it is paid, and the pods running them."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    now = datetime.datetime.utcnow()
+    terminals = db.query(models.HostedTerminal).order_by(models.HostedTerminal.id).all()
+    connected = {s.get("license_id") for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if terminals else set()
+    pods = db.query(models.HostedPod).filter(models.HostedPod.revoked_at.is_(None)).order_by(models.HostedPod.id).all()
+    return {"available": hosting.cipher() is not None, "charged": payments.hosting_price() is not None,
+            "price": payments.hosting_terms(), "pods": [hosting.pod_out(p, terminals, now) for p in pods],
+            "terminals": [admin_terminal_out(t, now, t.license_id in connected) for t in terminals]}
+
+def admin_terminal_out(t: models.HostedTerminal, now: datetime.datetime, connected: bool = False) -> dict:
+    lic = t.license
+    client, portfolio = lic.client, lic.portfolio
+    return hosting.terminal_out(t, now, connected) | {
+        "id": t.id, "mt5_login": lic.client_mt5_login,
+        "client": {"id": client.id, "email": client.email, "name": client.name} if client else None,
+        "portfolio": portfolio.name if portfolio else None, "manager": clients.manager_name(portfolio)}
+
+class ExemptIn(BaseModel):
+    exempt: bool
+
+@app.put("/admin/hosting/{terminal_id}/exempt")
+def admin_set_hosting_exempt(terminal_id: int, data: ExemptIn, current_user: models.User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Exempts a terminal from paying, or makes it pay: without a paid subscription it stops at the pod's next sync."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    t = db.get(models.HostedTerminal, terminal_id)
+    if t is None: raise HTTPException(status_code=404)
+    now = datetime.datetime.utcnow()
+    if hosting.set_exempt(t, data.exempt, now):
+        db.commit()
+        logger.info(f"Hosted terminal {t.id} (license {t.license_id}): exempt={data.exempt} by admin {current_user.id}")
+    return admin_terminal_out(t, now)
+
 @app.post("/pods/sync")
 def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(get_db)):
     """A hosting pod (pod_agent.py) reports its terminals and gets the ones it runs, credentials included."""

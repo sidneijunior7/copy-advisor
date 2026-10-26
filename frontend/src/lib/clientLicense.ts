@@ -1,4 +1,4 @@
-import type { ClientLicense } from '../api';
+import type { ClientLicense, MyLicenses } from '../api';
 import type { BadgeProps } from '../components/ui/Badge';
 import { HOSTING_STATES } from './labels';
 
@@ -34,3 +34,10 @@ export const copyState = (l: ClientLicense): CopyState => {
 
 export const formatPrice = (value: number) =>
     Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 5 });
+
+// The licenses the hosting offer is for: valid, with their MT5 account, copying from the client's own computer.
+// None while hosting is off or not charged
+export const hostingCandidates = (data: MyLicenses | null): ClientLicense[] =>
+    data?.hosting_available && data.hosting_price
+        ? data.licenses.filter(l => !l.hosting && l.valid && l.mt5_login != null)
+        : [];

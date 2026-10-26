@@ -214,6 +214,32 @@ def billing_out(t: models.HostedTerminal, now: datetime.datetime) -> dict:
             "cancel_at_period_end": bool(t.stripe_cancel_at_period_end), "period_end": t.stripe_period_end}
 
 
+def set_exempt(t: models.HostedTerminal, exempt: bool, now: datetime.datetime) -> bool:
+    """Exempts the terminal from paying, or makes it pay again: without a paid subscription it stops. A terminal
+    that starts running again gets a new configuration version, which the pod restarts it on. Whether it changed."""
+    if bool(t.exempt) == exempt:
+        return False
+    was_paid = paid(t, now)
+    t.exempt = exempt
+    if paid(t, now) and not was_paid:
+        t.config_version += 1
+    t.updated_at = now
+    return True
+
+
+def pod_out(pod: models.HostedPod, terminals: List[models.HostedTerminal], now: datetime.datetime) -> dict:
+    """A pod as the platform's admin sees it: never its key."""
+    try:
+        info = json.loads(pod.info or "{}")
+    except ValueError:
+        info = {}
+    return {"id": pod.id, "name": pod.name, "online": pod_online(pod, now), "last_seen_at": pod.last_seen_at,
+            "capacity": pod.capacity, "running": sum(1 for t in terminals if t.pod_id == pod.id and runs(t, now)),
+            "assigned": sum(1 for t in terminals if t.pod_id == pod.id), "agent": info.get("agent"),
+            "memory_mb": info.get("memory_mb"),
+            "servers": len(info.get("servers") or [])}
+
+
 def known_servers(db: Session, now: datetime.datetime) -> List[str]:
     """Broker servers the pods online have a servers.dat for: a terminal on any other cannot connect."""
     servers = set()

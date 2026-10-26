@@ -1,6 +1,8 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Server, Sparkles } from 'lucide-react';
-import type { HostingPrice } from '../../api';
+import api, { type ClientLicense, type HostingPrice, type MyLicenses } from '../../api';
+import { hostingCandidates } from '../../lib/clientLicense';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { formatMoney, periodLabel } from '../../lib/money';
@@ -71,4 +73,41 @@ export default function HostingOffer({ price, stage = 'offer', onYes, onLater, a
             </div>
         </section>
     );
+}
+
+// The offer for several accounts at once: a yes per account, which opens its license with the form ready
+export function HostingOfferList({ price, licenses, className }: { price: HostingPrice; licenses: ClientLicense[]; className?: string }) {
+    const navigate = useNavigate();
+    if (licenses.length === 0) return null;
+    return (
+        <HostingOffer
+            price={price}
+            className={className}
+            actions={
+                <ul className="divide-y divide-border rounded-lg border border-border bg-card text-sm">
+                    {licenses.map(l => (
+                        <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                            <span>
+                                <span className="font-medium">Conta {l.mt5_login}</span>
+                                <span className="text-muted-foreground"> · {l.portfolio.name ?? `Portfólio #${l.portfolio.id}`}</span>
+                            </span>
+                            <Button size="sm" onClick={() => navigate(`/client/licenses/${l.id}?hospedar=1`)}>
+                                <Server /> Sim, hospedar esta conta
+                            </Button>
+                        </li>
+                    ))}
+                </ul>
+            }
+        />
+    );
+}
+
+// The same offer on pages that do not load the licenses themselves: shown while some license has no hosting
+export function HostingOfferBanner({ className }: { className?: string }) {
+    const [data, setData] = useState<MyLicenses | null>(null);
+    useEffect(() => {
+        api.get<MyLicenses>('/me/licenses').then(res => setData(res.data)).catch(e => console.error(e));
+    }, []);
+    if (!data?.hosting_price) return null;
+    return <HostingOfferList price={data.hosting_price} licenses={hostingCandidates(data)} className={className} />;
 }

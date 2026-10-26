@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, CreditCard, Download, Inbox, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, ShieldCheck, Store, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, CreditCard, Download, Inbox, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, Server, ShieldCheck, Store, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -40,6 +40,7 @@ const navByRole: Record<string, NavSection[]> = {
         items: [
             { path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true },
             { path: '/dev/marketplace', label: 'Marketplace', icon: Store },
+            { path: '/dev/hosting', label: 'Hospedagem', icon: Server },
         ],
     }],
     CLIENT: [
@@ -49,6 +50,7 @@ const navByRole: Record<string, NavSection[]> = {
                 { path: '/client', label: 'Painel de controle', icon: LayoutDashboard, end: true },
                 { path: '/client/licenses', label: 'Minhas licenças', icon: KeyRound },
                 { path: '/client/subscriptions', label: 'Assinaturas', icon: CreditCard },
+                { path: '/client/hosting', label: 'Hospedagem', icon: Server },
                 { path: '/client/install', label: 'Instalação', icon: Download },
                 { path: '/marketplace', label: 'Marketplace', icon: Store },
             ],

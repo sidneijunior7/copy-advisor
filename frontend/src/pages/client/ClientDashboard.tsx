@@ -24,6 +24,7 @@ import Card from '../../components/Card';
 import LineChart from '../../components/charts/LineChart';
 import Sparkline from '../../components/charts/Sparkline';
 import CopyToggle from '../../components/client/CopyToggle';
+import { HostingOfferBanner } from '../../components/client/HostingOffer';
 import KPICard from '../../components/KPICard';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
@@ -329,6 +330,9 @@ export default function ClientDashboard() {
                     </Button>
                 </div>
             </div>
+
+            {/* Hosting upsell: while some license copies from the client's own computer */}
+            <HostingOfferBanner />
 
             {/* Top KPI Cards Row */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -189,6 +189,34 @@ export type HostedTerminal = {
     billing: HostingBilling;
 };
 
+// The platform's view of hosting (TDM_DEV): every terminal, whose it is, and the pods running them
+export type AdminHostedTerminal = HostedTerminal & {
+    id: number;
+    mt5_login: number | null;
+    client: { id: number; email: string; name: string | null } | null;
+    portfolio: string | null;
+    manager: string | null;
+};
+export type AdminPod = {
+    id: number;
+    name: string;
+    online: boolean;
+    last_seen_at: string | null;
+    capacity: number;
+    running: number;
+    assigned: number;
+    agent: string | null;
+    memory_mb: number | null;
+    servers: number;
+};
+export type AdminHosting = {
+    available: boolean;
+    charged: boolean; // STRIPE_HOSTING_PRICE_ID is set
+    price: HostingPrice | null;
+    pods: AdminPod[];
+    terminals: AdminHostedTerminal[];
+};
+
 // available: false while the server has no HOSTING_SECRET. servers: the broker servers the pods can log into
 export type HostingList = { available: boolean; servers: string[]; terminals: HostedTerminal[] };
 

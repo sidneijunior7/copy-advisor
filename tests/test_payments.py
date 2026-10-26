@@ -423,3 +423,26 @@ def test_hosting_by_the_manager_is_exempt(client, hosting_on):
     assert client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).status_code == 409
     [t] = sync(client, make_pod("exempt-pod"))
     assert t["enabled"]
+
+
+def test_the_admin_sees_every_terminal_and_decides_who_pays(client, hosting_on):
+    _, mgr, _, lic, cli, email = claimed_license(client)
+    client.put(f"/licenses/{lic['id']}/hosting", headers=mgr, json={"server": "Demo", "password": "x"})
+    pod = make_pod("admin-pod")
+    [t] = sync(client, pod)
+    _, admin = make_manager(role="TDM_DEV")
+    assert client.get("/admin/hosting", headers=cli).status_code == 403
+    out = client.get("/admin/hosting", headers=admin).json()
+    assert out["charged"] and out["price"]["price"] == 49.9
+    row = next(r for r in out["terminals"] if r["license_id"] == lic["id"])
+    assert row["client"]["email"] == email and row["billing"]["exempt"] and "password" not in row
+    assert next(p for p in out["pods"] if p["name"] == "admin-pod")["running"] == 1
+
+    # Charged from now on: without a paid subscription, it stops
+    r = client.put(f"/admin/hosting/{row['id']}/exempt", headers=admin, json={"exempt": False})
+    assert r.status_code == 200 and r.json()["state"] == "unpaid"
+    assert not sync(client, pod)[0]["enabled"]
+    # Exempt again: a new version, so the pod starts it
+    client.put(f"/admin/hosting/{row['id']}/exempt", headers=admin, json={"exempt": True})
+    [again] = sync(client, pod)
+    assert again["enabled"] and again["config_version"] == t["config_version"] + 1

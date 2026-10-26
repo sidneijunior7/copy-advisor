@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, CreditCard, Server, Store } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronRight, CreditCard, Store } from 'lucide-react';
 import api, { type ClientLicense, type MyLicenses } from '../../api';
 import BillingCard from '../../components/client/BillingCard';
 import HostingBillingCard from '../../components/client/HostingBilling';
-import HostingOffer from '../../components/client/HostingOffer';
+import { HostingOfferList } from '../../components/client/HostingOffer';
 import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { hostingCandidates } from '../../lib/clientLicense';
 import { openBillingPortal } from '../../lib/stripe';
 
 const licenseName = (l: ClientLicense) => l.portfolio.name ?? `Portfólio #${l.portfolio.id}`;
@@ -23,7 +24,6 @@ const licenseLink = (l: ClientLicense, label = 'Licença') => (
 // renewal; then the hosting of each account, a subscription of its own, and the accounts that could have it.
 // Below, the marketplace requests still waiting on a payment or on the manager
 export default function MySubscriptionsPage() {
-    const navigate = useNavigate();
     const [data, setData] = useState<MyLicenses | null>(null);
     const [failed, setFailed] = useState(false);
     const [reload, setReload] = useState(0); // Bumped to load again now, after a change
@@ -38,10 +38,6 @@ export default function MySubscriptionsPage() {
     const licenses = data?.licenses ?? [];
     const paid = licenses.filter(l => l.billing);
     const hosted = licenses.filter(l => l.hosting && !l.hosting.billing.exempt);
-    // The combo: a valid license with its account, copying from the client's own computer
-    const offer = data?.hosting_available && data.hosting_price
-        ? licenses.filter(l => !l.hosting && l.valid && l.mt5_login != null)
-        : [];
 
     return (
         <div className="space-y-6">
@@ -96,26 +92,7 @@ export default function MySubscriptionsPage() {
                 </div>
             )}
 
-            {offer.length > 0 && (
-                <HostingOffer
-                    price={data!.hosting_price!}
-                    actions={
-                        <ul className="divide-y divide-border rounded-lg border border-border bg-card text-sm">
-                            {offer.map(l => (
-                                <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                                    <span>
-                                        <span className="font-medium">Conta {l.mt5_login}</span>
-                                        <span className="text-muted-foreground"> · {licenseName(l)}</span>
-                                    </span>
-                                    <Button size="sm" onClick={() => navigate(`/client/licenses/${l.id}?hospedar=1`)}>
-                                        <Server /> Sim, hospedar esta conta
-                                    </Button>
-                                </li>
-                            ))}
-                        </ul>
-                    }
-                />
-            )}
+            {data?.hosting_price && <HostingOfferList price={data.hosting_price} licenses={hostingCandidates(data)} />}
 
             <MySubscriptions />
         </div>
