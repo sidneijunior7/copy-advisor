@@ -156,10 +156,23 @@ export type HostingInputs = {
     late_max_deviation_points?: number;
 };
 
-// pending: waiting for a pod; disabled and pod_offline come from the API, the rest from the pod's report
+// pending: waiting for a pod; disabled, unpaid and pod_offline come from the API, the rest from the pod's report
 export type HostingState =
     | 'pending' | 'starting' | 'running' | 'login_failed' | 'key_refused' | 'error' | 'restarting' | 'stopped'
-    | 'disabled' | 'pod_offline';
+    | 'disabled' | 'unpaid' | 'pod_offline';
+
+// How a hosted terminal is paid: exempt, or a Stripe subscription of its own, apart from the portfolio's
+export type HostingBilling = {
+    exempt: boolean;
+    paid: boolean; // Exempt, or paid until the period's end plus 2 days
+    status: string | null; // active, trialing, past_due, canceled...; null before the first payment
+    renewing: boolean; // Alive in Stripe
+    cancel_at_period_end: boolean;
+    period_end: string | null;
+};
+
+// The platform's hosting price, from Stripe; null when hosting is not charged
+export type HostingPrice = { price: number; currency: string; days: number };
 
 // A license whose Slave runs in one of our pods. Never the password nor the key
 export type HostedTerminal = {
@@ -173,6 +186,7 @@ export type HostedTerminal = {
     pod: string | null;
     created_at: string;
     updated_at: string;
+    billing: HostingBilling;
 };
 
 // available: false while the server has no HOSTING_SECRET. servers: the broker servers the pods can log into
@@ -212,7 +226,9 @@ export type ClientLicense = {
     key_prefix: string | null;
     settings: { [K in keyof ClientSettings]: ClientSettings[K] | null };
     limits: ClientLimits;
-    hosting: { server: string; enabled: boolean; state: HostingState; detail: string | null; status_at: string | null } | null;
+    hosting: {
+        server: string; enabled: boolean; state: HostingState; detail: string | null; status_at: string | null; billing: HostingBilling;
+    } | null;
     connection: { ea_version: string | null; connected_at: number | null; active: boolean; last_ack_age_s: number | null } | null;
     billing: Billing | null; // Paid in Stripe
 };
@@ -290,7 +306,7 @@ export type ClientDashboardData = {
     lead_highlights: PublicListing[];
 };
 
-export type MyLicenses = { hosting_available: boolean; servers: string[]; licenses: ClientLicense[] };
+export type MyLicenses = { hosting_available: boolean; servers: string[]; hosting_price: HostingPrice | null; licenses: ClientLicense[] };
 
 // One copy on the client's account, from the Slave's reports. result: close minus open price, signed by direction
 export type CopyRow = {

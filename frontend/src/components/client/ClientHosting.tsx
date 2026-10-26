@@ -3,14 +3,17 @@ import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { Check, KeyRound, Monitor, Pencil, Power, PowerOff, RefreshCw, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type ClientLicense } from '../../api';
+import api, { type ClientLicense, type HostedTerminal, type HostingPrice } from '../../api';
 import Card from '../Card';
 import InlineConfirm from '../InlineConfirm';
+import { HostingBillingBody } from './HostingBilling';
+import { hostingPriceLabel } from '../../lib/money';
 import OneTimeKey from '../OneTimeKey';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Field, Input } from '../ui/Field';
 import { HOSTING_STATES } from '../../lib/labels';
+import { openHostingCheckout } from '../../lib/stripe';
 import { apiError, formatAgo, formatDateTime } from '../../lib/utils';
 
 // After "Com posições abertas, "
@@ -22,11 +25,12 @@ interface ClientHostingProps {
     license: ClientLicense;
     available: boolean; // The server takes hosted terminals
     servers: string[]; // Broker servers our servers can log into
+    price: HostingPrice | null; // Charged in Stripe, apart from the portfolio; null: not charged
     onChanged: () => void;
 }
 
 // Where the copy runs: a terminal we host for the client, or the EA on the client's own computer
-export default function ClientHosting({ license, available, servers, onChanged }: ClientHostingProps) {
+export default function ClientHosting({ license, available, servers, price, onChanged }: ClientHostingProps) {
     const hosted = license.hosting;
     const [editing, setEditing] = useState(false);
     const [confirm, setConfirm] = useState<'pause' | 'remove' | 'key' | null>(null);
@@ -54,10 +58,15 @@ export default function ClientHosting({ license, available, servers, onChanged }
 
     const save = async (data: HostingForm) => {
         try {
-            await api.put(`/me/licenses/${license.id}/hosting`, {
+            const res = await api.put<HostedTerminal>(`/me/licenses/${license.id}/hosting`, {
                 server: data.server.trim(),
                 ...(data.password && { password: data.password }),
             });
+            if (!hosted && !res.data.billing.paid) { // Kept: the terminal starts once Stripe takes the payment
+                await openHostingCheckout(license.id);
+                onChanged();
+                return;
+            }
             toast.success(hosted ? 'Hospedagem atualizada' : 'Conta hospedada', {
                 description: 'O terminal inicia em instantes. Acompanhe o estado aqui.',
             });
@@ -129,7 +138,7 @@ export default function ClientHosting({ license, available, servers, onChanged }
                     <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancelar</Button>
                 )}
                 <Button size="sm" loading={isSubmitting}>
-                    {!isSubmitting && <Check />} {hosted ? 'Salvar' : 'Hospedar minha conta'}
+                    {!isSubmitting && <Check />} {hosted ? 'Salvar' : price ? 'Hospedar e ir para o pagamento' : 'Hospedar minha conta'}
                 </Button>
             </div>
         </form>
@@ -146,6 +155,11 @@ export default function ClientHosting({ license, available, servers, onChanged }
                         {hosted.status_at && <span className="text-xs text-muted-foreground">desde {formatDateTime(hosted.status_at)}</span>}
                     </div>
                     {hosted.detail && <p className="text-sm text-muted-foreground">{hosted.detail}</p>}
+                    {!hosted.billing.exempt && (
+                        <div className="border-t border-border pt-4">
+                            <HostingBillingBody licenseId={license.id} billing={hosted.billing} price={price} onChanged={onChanged} />
+                        </div>
+                    )}
 
                     {confirm === 'pause' ? (
                         <InlineConfirm confirmLabel="Pausar" icon={<PowerOff />} loading={busy}
@@ -159,6 +173,7 @@ export default function ClientHosting({ license, available, servers, onChanged }
                             onCancel={() => setConfirm(null)}>
                             Remover a hospedagem? O terminal é fechado. Com posições abertas, {UNMANAGED} Para usar o EA no
                             seu computador, gere uma chave depois.
+                            {hosted.billing.renewing && ' A assinatura da hospedagem é encerrada agora, sem reembolso do período em curso.'}
                         </InlineConfirm>
                     ) : editing ? hostingForm : (
                         <div className="flex flex-wrap gap-1">
@@ -217,7 +232,9 @@ export default function ClientHosting({ license, available, servers, onChanged }
             {available && (
                 <Card
                     title="Prefere não deixar o computador ligado?"
-                    description="Hospede a conta com a gente: o MetaTrader roda num servidor nosso. A licença ganha uma chave nova, e o EA do seu computador é desconectado."
+                    description={price
+                        ? `Hospede a conta com a gente por ${hostingPriceLabel(price)}, cobrado à parte da assinatura do portfólio. O MetaTrader roda num servidor nosso, ligado o tempo todo. Quando o pagamento passar, a licença ganha uma chave nova e o EA do seu computador é desconectado.`
+                        : 'Hospede a conta com a gente: o MetaTrader roda num servidor nosso. A licença ganha uma chave nova, e o EA do seu computador é desconectado.'}
                     icon={<Server />}
                 >
                     {hostingForm}

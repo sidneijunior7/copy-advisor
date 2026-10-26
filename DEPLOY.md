@@ -207,6 +207,12 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - em Minhas licenças → licença → Assinatura, o cliente troca de plano (a diferença proporcional é cobrada ou creditada na hora, e o limite muda quando a cobrança passa) e cancela ou retoma a renovação (cancelada, a licença vale até o fim do período pago);
   - quem renova uma licença com mais de 2 dias de validade só é cobrado quando ela vence (trial na Stripe);
   - anúncio sem planos continua com o link do gestor e a aprovação manual.
+- **Hospedagem paga pela Stripe** (`payments.py`, conta da plataforma, à parte da assinatura do portfólio):
+  - variável da API: `STRIPE_HOSTING_PRICE_ID`, o `price_...` recorrente do produto "Hospedagem em Nuvem". Sem ela, a hospedagem não é cobrada;
+  - o cliente informa o servidor e a senha em Minhas licenças → licença e vai para o Checkout. O terminal só liga quando o pagamento passa, e só então a licença ganha a chave nova: até lá, o EA do computador do cliente continua copiando;
+  - cancelada, roda até o fim do período pago. Se a cobrança falha, desliga 2 dias depois do fim do período; se a Stripe encerra a assinatura, desliga na hora. Servidor e senha ficam guardados para assinar de novo;
+  - remover a hospedagem encerra a assinatura dela na hora, sem reembolso;
+  - o que o gestor hospeda pela tela Clientes é isento, e os terminais anteriores à migração `0022` também.
 - **Deploy:** a migração `0011` cria as tabelas. Configure as variáveis do SMTP na API antes de anunciar o cadastro: sem elas, quem esquecer a senha depende do suporte.
 
 ### Como os seguidores copiaram

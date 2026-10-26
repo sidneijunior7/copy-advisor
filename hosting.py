@@ -12,6 +12,10 @@ it reports the state of its terminals and gets back every terminal assigned to i
 enabled ones. A new terminal goes to the first pod with free room that syncs, and stays there, disabled or not:
 the Slave's copy mapping lives in that pod's slot folder. A terminal left out of the list was removed, and the
 pod deletes its folder.
+
+A client hosting its own license pays for it in Stripe, a subscription apart from the portfolio's (payments.py): the
+terminal keeps the credentials but only runs while paid, and gets the license's new key when a pod first runs it, so
+the client's own Slave keeps copying until then. Terminals a manager hosts are exempt.
 """
 import datetime
 import json
@@ -30,6 +34,8 @@ logger = logging.getLogger(__name__)
 SYNC_SECONDS = 15
 POD_OFFLINE_SECONDS = 120  # A pod silent for longer is shown as offline
 MAX_CAPACITY = 200
+GRACE = datetime.timedelta(days=2)  # Stripe retries a failed renewal for days: the terminal does not stop at the first try
+ENDED = ("canceled", "unpaid", "incomplete_expired")  # Stripe stopped charging: the terminal stops at once
 # What a pod reports for a terminal (pod_agent.py)
 POD_STATUSES = ("starting", "running", "login_failed", "key_refused", "error", "restarting", "stopped")
 
@@ -122,10 +128,21 @@ def slave_inputs(raw: Optional[str]) -> Dict[str, str]:
     return out
 
 
+def paid(t: models.HostedTerminal, now: datetime.datetime) -> bool:
+    """Exempt, or paid in Stripe: until the paid period's end plus GRACE, or at once when Stripe ends it."""
+    if t.exempt:
+        return True
+    return t.stripe_period_end is not None and t.stripe_status not in ENDED and now < t.stripe_period_end + GRACE
+
+
+def runs(t: models.HostedTerminal, now: datetime.datetime) -> bool:
+    return t.enabled and paid(t, now)
+
+
 def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, now: datetime.datetime,
-           make_key: Callable[[models.License], str]) -> Tuple[models.HostedTerminal, bool]:
+           make_key: Callable[[models.License], str], exempt: bool = True) -> Tuple[models.HostedTerminal, bool]:
     """Hosts the license, or changes its hosting: (terminal, created). Creating needs the server and the password
-    and gives the license a new key (make_key). Inputs replace the license's settings, which reach the running Slave
+    and gives the license a new key (make_key); a terminal to be paid gets it from sync, when a pod first runs it. Inputs replace the license's settings, which reach the running Slave
     through the hub (CFG); a new server, password or on/off restarts the terminal. ValueError when creating
     without the server or the password."""
     settings = json.dumps(changes.inputs.model_dump(exclude_none=True), sort_keys=True) if changes.inputs else None
@@ -136,7 +153,7 @@ def upsert(db: Session, lic: models.License, changes: HostingUpdate, f: Fernet, 
         if settings is not None:
             lic.settings = settings
         t = models.HostedTerminal(license_id=lic.id, server=changes.server, password_enc=encrypt(f, changes.password),
-                                  license_key_enc=encrypt(f, make_key(lic)), inputs="{}",
+                                  license_key_enc=encrypt(f, make_key(lic)) if exempt else "", inputs="{}", exempt=exempt,
                                   enabled=changes.enabled is not False, config_version=1, status="pending",
                                   created_at=now, updated_at=now)
         db.add(t)
@@ -168,6 +185,10 @@ def state(t: models.HostedTerminal, now: datetime.datetime, connected: bool = Fa
     A Slave the hub has connected is running whatever the pod read: MT5 writes the Experts log late."""
     if not t.enabled:
         return "disabled", None
+    if not paid(t, now):
+        if t.stripe_period_end is None:
+            return "unpaid", "Aguardando o pagamento da hospedagem"
+        return "unpaid", "A hospedagem venceu. Assine de novo para o terminal voltar a copiar"
     if t.pod is None:
         return "pending", "Aguardando um pod com espaço livre"
     if not pod_online(t.pod, now):
@@ -182,7 +203,15 @@ def terminal_out(t: models.HostedTerminal, now: datetime.datetime, connected: bo
     st, detail = state(t, now, connected)
     return {"license_id": t.license_id, "server": t.server, "enabled": t.enabled,
             "inputs": json.loads(t.license.settings or "{}"), "state": st, "detail": detail, "status_at": t.status_at,
-            "pod": t.pod.name if t.pod else None, "created_at": t.created_at, "updated_at": t.updated_at}
+            "pod": t.pod.name if t.pod else None, "created_at": t.created_at, "updated_at": t.updated_at,
+            "billing": billing_out(t, now)}
+
+
+def billing_out(t: models.HostedTerminal, now: datetime.datetime) -> dict:
+    """How the hosting is paid: exempt, or its Stripe subscription."""
+    return {"exempt": bool(t.exempt), "paid": paid(t, now), "status": t.stripe_status,
+            "renewing": t.stripe_status in ("active", "trialing", "past_due"),
+            "cancel_at_period_end": bool(t.stripe_cancel_at_period_end), "period_end": t.stripe_period_end}
 
 
 def known_servers(db: Session, now: datetime.datetime) -> List[str]:
@@ -197,8 +226,11 @@ def known_servers(db: Session, now: datetime.datetime) -> List[str]:
     return sorted(servers)
 
 
-def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: datetime.datetime) -> dict:
-    """Records what the pod reports, gives it pending terminals while it has room, and returns all of its own."""
+def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: datetime.datetime,
+         make_key: Callable[[models.License], str]) -> dict:
+    """Records what the pod reports, gives it pending terminals while it has room, and returns all of its own. A
+    terminal not paid is handed over as disabled, and a paid one without a key yet gets the license's new key
+    (make_key)."""
     pod.capacity = min(report.capacity, MAX_CAPACITY)
     pod.info = json.dumps(report.info)[:10_000]
     pod.last_seen_at = now
@@ -212,12 +244,12 @@ def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: da
         if (t.status, t.status_detail) != (r.status, detail):
             t.status, t.status_detail, t.status_at = r.status, detail, now
 
-    free = pod.capacity - sum(1 for t in mine.values() if t.enabled)
+    free = pod.capacity - sum(1 for t in mine.values() if runs(t, now))
     if free > 0:
-        pending = (db.query(models.HostedTerminal.id)
-                   .filter(models.HostedTerminal.pod_id.is_(None), models.HostedTerminal.enabled.is_(True))
-                   .order_by(models.HostedTerminal.id).limit(free).all())
-        for (tid,) in pending:
+        pending = [t.id for t in (db.query(models.HostedTerminal)
+                                  .filter(models.HostedTerminal.pod_id.is_(None), models.HostedTerminal.enabled.is_(True))
+                                  .order_by(models.HostedTerminal.id)) if paid(t, now)][:free]
+        for tid in pending:
             # Two pods syncing at once: only one gets each terminal
             taken = (db.query(models.HostedTerminal)
                      .filter(models.HostedTerminal.id == tid, models.HostedTerminal.pod_id.is_(None))
@@ -230,8 +262,10 @@ def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: da
 
     terminals = []
     for t in sorted(mine.values(), key=lambda t: t.id):
-        entry = {"id": t.id, "enabled": t.enabled, "config_version": t.config_version}
-        if t.enabled:
+        entry = {"id": t.id, "enabled": runs(t, now), "config_version": t.config_version}
+        if entry["enabled"]:
+            if not t.license_key_enc:
+                t.license_key_enc = encrypt(f, make_key(t.license))
             try:
                 entry.update(server=t.server, login=t.license.client_mt5_login,
                              password=f.decrypt(t.password_enc.encode()).decode(),

@@ -13,6 +13,10 @@ export const formatMoney = (value: number, currency: string | null) => {
 // A period of validity in words: 30 days read as a month
 export const periodLabel = (days: number) => (days === 30 ? 'mês' : days === 365 ? 'ano' : `${days} dias`);
 
+// The platform's hosting price, per period
+export const hostingPriceLabel = (p: { price: number; currency: string; days: number }) =>
+    `${formatMoney(p.price, p.currency)} / ${periodLabel(p.days)}`;
+
 // What a listing costs, per period of validity; with plans, from the cheapest
 export const priceLabel = (l: { price: number | null; currency: string; default_days: number; plans?: unknown[] }) =>
     l.price == null ? 'Preço sob consulta' : l.price === 0 ? 'Gratuito'

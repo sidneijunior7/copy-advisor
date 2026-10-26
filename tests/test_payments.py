@@ -8,12 +8,17 @@ from types import SimpleNamespace
 
 import pytest
 import stripe
+from cryptography.fernet import Fernet
 
 from fastapi.testclient import TestClient
 
+import database
+import keys
+import models
 import payments
 import server
-from test_clients import client_headers, fresh_limits  # noqa: F401
+from test_clients import claimed_license, client_headers, fresh_limits  # noqa: F401
+from test_hosting import free_pods, license_hash, make_pod, sync
 from test_management import make_manager, make_portfolio
 from test_marketplace import LISTING
 
@@ -36,7 +41,8 @@ class FakeStripe:
             prices=ns(retrieve=self._price),
             checkout=ns(sessions=ns(create=self._create, retrieve=lambda i: ns(status=self.sessions[i]["status"]),
                                     expire=self._expire)),
-            subscriptions=ns(retrieve=lambda i: self._dict(self.subscriptions[i]), update=self._update),
+            subscriptions=ns(retrieve=lambda i: self._dict(self.subscriptions[i]), update=self._update,
+                             cancel=self._cancel),
             billing_portal=ns(sessions=ns(create=lambda p: ns(url=f"https://billing.stripe.test/{p['customer']}"))))
 
     @staticmethod
@@ -69,6 +75,11 @@ class FakeStripe:
         self.updates.append((sub_id, params))
         return self._dict(s)
 
+    def _cancel(self, sub_id):
+        self.subscriptions[sub_id]["status"] = "canceled"
+        self.cancelled.append(sub_id)
+        return self._dict(self.subscriptions[sub_id])
+
 
 
     def pay(self, sid, status="active", period_days=30):
@@ -91,7 +102,7 @@ class FakeStripe:
 @pytest.fixture
 def fake(monkeypatch):
     fake = FakeStripe()
-    fake.updates = []
+    fake.updates, fake.cancelled = [], []
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", SECRET)
     monkeypatch.setattr(payments, "_client", lambda: fake)
@@ -309,3 +320,106 @@ def test_without_stripe_the_listing_keeps_the_manual_flow(client, monkeypatch):
     r = client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr, json=LISTING)
     assert r.status_code == 200 and not r.json()["pay_online"] and r.json()["plans"] == []
     assert client.post("/api/stripe/webhook", content=b"{}").status_code == 503
+
+
+# --- Hosting ---
+
+@pytest.fixture
+def hosting_on(monkeypatch, fake):
+    monkeypatch.setenv("HOSTING_SECRET", Fernet.generate_key().decode())
+    fake.prices["price_hosting"] = monthly(4990, "Hospedagem")
+    monkeypatch.setenv("STRIPE_HOSTING_PRICE_ID", "price_hosting")
+    payments._terms_cache.clear()
+    free_pods()
+    return fake
+
+
+def hosting_of(client, cli, license_id):
+    return mine(client, cli, license_id)["hosting"]
+
+
+def terminal_version(license_id):
+    db = database.SessionLocal()
+    try:
+        return db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == license_id).one().config_version
+    finally:
+        db.close()
+
+
+def test_the_client_pays_for_hosting_and_the_terminal_runs_only_while_paid(client, hosting_on):
+    fake = hosting_on
+    _, _, _, lic, cli, email = claimed_license(client)
+    old_hash = license_hash(lic["id"])
+    offer = client.get("/me/licenses", headers=cli).json()["hosting_price"]
+    assert offer == {"price": 49.9, "currency": "BRL", "days": 30}
+
+    r = client.put(f"/me/licenses/{lic['id']}/hosting", headers=cli, json={"server": "Tickmill-Demo", "password": "p4ss"})
+    assert r.status_code == 200
+    h = hosting_of(client, cli, lic["id"])
+    assert h["state"] == "unpaid" and not h["billing"]["exempt"] and not h["billing"]["paid"]
+    assert license_hash(lic["id"]) == old_hash  # Not paid yet: the client's own EA keeps copying
+    pod = make_pod("billing-pod")
+    assert sync(client, pod) == []  # Nothing to run before the payment
+
+    first = client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
+    sid = client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
+    assert fake.sessions[first]["status"] == "expired"  # Never paid twice
+    params = fake.sessions[sid]["params"]
+    assert params["line_items"] == [{"price": "price_hosting", "quantity": 1}] and params["customer_email"] == email
+    event = fake.pay(sid)
+    assert send(client, event).status_code == 200
+    s = fake.subscriptions[event["data"]["object"]["subscription"]]
+
+    view = mine(client, cli, lic["id"])
+    assert view["billing"] is None  # Apart from the portfolio's subscription
+    assert view["hosting"]["billing"]["paid"] and view["hosting"]["billing"]["status"] == "active"
+    [t] = sync(client, pod)
+    assert t["enabled"] and t["password"] == "p4ss"
+    assert keys.key_hash(t["license_key"]) == license_hash(lic["id"]) != old_hash  # The key moves to the pod now
+    assert client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).status_code == 409
+
+    # Cancelled: runs until the paid period ends
+    r = client.post(f"/me/licenses/{lic['id']}/hosting/renewal", headers=cli, json={"renew": False})
+    assert r.status_code == 200 and r.json()["hosting"]["billing"]["cancel_at_period_end"]
+    assert sync(client, pod)[0]["enabled"]
+    s["status"], s["cancel_at_period_end"] = "canceled", True  # Stripe ends it with the period
+    send(client, {"type": "customer.subscription.deleted", "data": {"object": s}})
+    [t] = sync(client, pod)
+    assert not t["enabled"] and "password" not in t
+    assert hosting_of(client, cli, lic["id"])["state"] == "unpaid"
+
+    # Subscribing again: a new version, so the pod starts the stopped terminal
+    version = terminal_version(lic["id"])
+    sid = client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
+    event = fake.pay(sid)
+    send(client, event)
+    send(client, {"type": "customer.subscription.deleted", "data": {"object": s}})  # The old one, late: ignored
+    [t] = sync(client, pod)
+    assert t["enabled"] and t["config_version"] == version + 1
+
+    # Removing the hosting ends its subscription
+    assert client.delete(f"/me/licenses/{lic['id']}/hosting", headers=cli).status_code == 200
+    assert fake.cancelled == [event["data"]["object"]["subscription"]]
+    assert sync(client, pod) == []
+
+
+def test_a_failed_renewal_stops_the_terminal_after_the_grace():
+    now = datetime.datetime(2026, 10, 26)
+    t = models.HostedTerminal(exempt=False, stripe_status="past_due", stripe_period_end=now - datetime.timedelta(days=1))
+    assert payments.hosting.paid(t, now)
+    assert not payments.hosting.paid(t, now + payments.hosting.GRACE)
+    t.stripe_status = "unpaid"  # Stripe gave up: at once
+    assert not payments.hosting.paid(t, now)
+    assert payments.hosting.paid(models.HostedTerminal(exempt=True), now)
+
+
+def test_hosting_by_the_manager_is_exempt(client, hosting_on):
+    _, mgr, _, lic, cli, _ = claimed_license(client)
+    old_hash = license_hash(lic["id"])
+    assert client.put(f"/licenses/{lic['id']}/hosting", headers=mgr, json={"server": "Demo", "password": "x"}).status_code == 200
+    assert license_hash(lic["id"]) != old_hash
+    h = hosting_of(client, cli, lic["id"])
+    assert h["billing"]["exempt"] and h["billing"]["paid"] and h["state"] == "pending"
+    assert client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).status_code == 409
+    [t] = sync(client, make_pod("exempt-pod"))
+    assert t["enabled"]

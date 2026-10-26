@@ -980,16 +980,16 @@ def update_hosting(license_id: int, changes: hosting.HostingUpdate, current_user
         raise HTTPException(status_code=409, detail="Licenças por estratégia ainda não funcionam no hub")
     return save_hosting(lic, changes, f, current_user, db)
 
-def save_hosting(lic: models.License, changes: hosting.HostingUpdate, f, user: models.User, db: Session):
+def save_hosting(lic: models.License, changes: hosting.HostingUpdate, f, user: models.User, db: Session, exempt: bool = True):
     now = datetime.datetime.utcnow()
     try:
-        t, created = hosting.upsert(db, lic, changes, f, now, set_license_key)
+        t, created = hosting.upsert(db, lic, changes, f, now, set_license_key, exempt)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     db.refresh(t)
     logger.info(f"Hosting of license {lic.id} {'created' if created else 'updated'} by {user.role.lower()} {user.id}: "
-                f"server={t.server} enabled={t.enabled} version={t.config_version}")
+                f"server={t.server} enabled={t.enabled} exempt={t.exempt} version={t.config_version}")
     notify_hub()  # A new key cuts the previous one off at once; new settings reach the Slave as CFG
     return hosting.terminal_out(t, now)
 
@@ -1000,8 +1000,13 @@ def remove_hosting(license_id: int, current_user: models.User = Depends(get_curr
     return delete_hosting(owned_license(license_id, current_user, db), current_user, db)
 
 def delete_hosting(lic: models.License, user: models.User, db: Session):
+    """The hosting's Stripe subscription, if any, ends with it."""
     t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
     if t is None: raise HTTPException(status_code=404)
+    try:
+        payments.end_hosting(t)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
     db.delete(t)
     db.commit()
     logger.info(f"Hosting of license {lic.id} removed by {user.role.lower()} {user.id}")
@@ -1139,6 +1144,7 @@ def list_my_licenses(current_user: models.User = Depends(get_current_user), db: 
     available = hosting.cipher() is not None
     billing = stripe_subscriptions(ids, db)
     return {"hosting_available": available, "servers": hosting.known_servers(db, now) if available else [],
+            "hosting_price": payments.hosting_terms() if available else None,
             "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) | {"billing": billing_view(billing.get(l.id))}
                          for l in lics]}
 
@@ -1194,15 +1200,55 @@ def update_my_settings(license_id: int, data: clients.ClientSettings, current_us
 @app.put("/me/licenses/{license_id}/hosting")
 def update_my_hosting(license_id: int, changes: ClientHosting, current_user: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
-    """The client hosts its own license: the manager never sees the broker password."""
+    """The client hosts its own license: the manager never sees the broker password. With STRIPE_HOSTING_PRICE_ID
+    set, a new terminal only runs once its hosting is paid (/hosting/checkout)."""
     f = hosting_cipher()
     lic = own_license(license_id, current_user, db)
     account_required(lic)
-    return save_hosting(lic, hosting.HostingUpdate(**changes.model_dump()), f, current_user, db)
+    return save_hosting(lic, hosting.HostingUpdate(**changes.model_dump()), f, current_user, db,
+                        exempt=payments.hosting_price() is None)
 
 @app.delete("/me/licenses/{license_id}/hosting")
 def remove_my_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     return delete_hosting(own_license(license_id, current_user, db), current_user, db)
+
+class RenewalChange(BaseModel):
+    renew: bool  # False: ends with the paid period; True: undoes that
+
+def my_terminal(license_id: int, user: models.User, db: Session) -> models.HostedTerminal:
+    lic = own_license(license_id, user, db)
+    t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    if t is None: raise HTTPException(status_code=404, detail="Esta licença não está hospedada")
+    return t
+
+@app.post("/me/licenses/{license_id}/hosting/checkout")
+def open_hosting_checkout(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Stripe's payment page for hosting this license, a subscription apart from the portfolio's. Paid, the pod
+    starts the terminal at its next sync."""
+    t = my_terminal(license_id, current_user, db)
+    if t.exempt: raise HTTPException(status_code=409, detail="A hospedagem desta licença não é cobrada")
+    if t.stripe_status in payments.RENEWING: raise HTTPException(status_code=409, detail="A hospedagem desta licença já está paga")
+    try:
+        url = payments.hosting_checkout(t, current_user)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    return {"url": url}
+
+@app.post("/me/licenses/{license_id}/hosting/renewal")
+def set_my_hosting_renewal(license_id: int, data: RenewalChange, current_user: models.User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Cancels the hosting's renewal (the terminal runs until the paid period ends, then stops) or resumes it."""
+    t = my_terminal(license_id, current_user, db)
+    if not payments.enabled() or t.stripe_subscription_id is None or t.stripe_status not in payments.RENEWING:
+        raise HTTPException(status_code=409, detail="A hospedagem desta licença não está ativa na Stripe")
+    try:
+        payments.set_hosting_renewal(db, t, data.renew, datetime.datetime.utcnow())
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    logger.info(f"Hosting of license {license_id}: client {current_user.id} set renewal to {data.renew}")
+    return my_license_view(t.license, db)
 
 class AccountIn(BaseModel):
     mt5_login: int = Field(gt=0, le=10**12)
@@ -1234,7 +1280,8 @@ def new_my_key(license_id: int, current_user: models.User = Depends(get_current_
     """A key for the Slave on the client's own computer, shown once; the previous one stops working."""
     lic = own_license(license_id, current_user, db)
     account_required(lic)
-    if db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first():
+    hosted = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first()
+    if hosted is not None and hosted.license_key_enc:  # Not paid yet: the terminal has no key, the EA keeps copying
         raise HTTPException(status_code=409, detail="Esta licença roda no nosso servidor e a chave fica com ele. "
                                                     "Remova a hospedagem para usar o EA no seu computador.")
     key = set_license_key(lic)
@@ -1697,9 +1744,6 @@ def change_my_plan(subscription_id: int, data: PlanChange, current_user: models.
     notify_hub()
     return marketplace.subscription_out(sub, for_manager=False)
 
-class RenewalChange(BaseModel):
-    renew: bool  # False: ends with the paid period; True: undoes that
-
 @app.post("/me/subscriptions/{subscription_id}/renewal")
 def set_my_renewal(subscription_id: int, data: RenewalChange, current_user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
@@ -1916,8 +1960,17 @@ def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(ge
     """A hosting pod (pod_agent.py) reports its terminals and gets the ones it runs, credentials included."""
     f = hosting_cipher()
     pod = pod_from_request(request, db)
-    out = hosting.sync(db, pod, report, f, datetime.datetime.utcnow())
+    keyed = []
+
+    def make_key(lic: models.License) -> str:  # A paid terminal runs for the first time: the license's key moves to it
+        keyed.append(lic.id)
+        return set_license_key(lic)
+
+    out = hosting.sync(db, pod, report, f, datetime.datetime.utcnow(), make_key)
     db.commit()
+    if keyed:
+        logger.info(f"Pod {pod.name}: licenses {keyed} got a new key for their first hosted run")
+        notify_hub()  # The Slave the client ran on its own machine is cut off
     return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
 # Serve static files (Frontend)

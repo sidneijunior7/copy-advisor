@@ -13,6 +13,17 @@ export async function openCheckout(subscriptionId: number) {
     }
 }
 
+// The hosting of a license, a subscription apart from the portfolio's
+export async function openHostingCheckout(licenseId: number) {
+    try {
+        const res = await api.post<{ url: string }>(`/me/licenses/${licenseId}/hosting/checkout`);
+        window.location.assign(res.data.url);
+    } catch (e) {
+        console.error(e);
+        toast.error(apiError(e, 'Não foi possível abrir o pagamento da hospedagem.'));
+    }
+}
+
 export async function openBillingPortal() {
     try {
         const res = await api.post<{ url: string }>('/me/billing/portal');

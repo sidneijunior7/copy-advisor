@@ -261,6 +261,13 @@ class HostedTerminal(Base):
     status_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Hosting paid in Stripe, a subscription of its own (payments.py); an exempt terminal runs without one
+    exempt = Column(Boolean, nullable=False, default=False)
+    stripe_session_id = Column(String(255)) # The last Checkout opened for it
+    stripe_subscription_id = Column(String(64), index=True)
+    stripe_status = Column(String(32)) # active, trialing, past_due, canceled...
+    stripe_period_end = Column(DateTime) # The paid period's end, as Stripe last said
+    stripe_cancel_at_period_end = Column(Boolean, nullable=False, default=False)
 
     license = relationship("License")
     pod = relationship("HostedPod")

@@ -151,7 +151,7 @@ def license_view(lic: models.License, terminal: Optional[models.HostedTerminal],
     if terminal is not None:
         state, detail = hosting.state(terminal, now, session is not None)
         hosted = {"server": terminal.server, "enabled": terminal.enabled, "state": state, "detail": detail,
-                  "status_at": terminal.status_at}
+                  "status_at": terminal.status_at, "billing": hosting.billing_out(terminal, now)}
     return {
         "id": lic.id,
         "portfolio": {"id": lic.portfolio_id, "name": lic.portfolio.name if lic.portfolio else None},

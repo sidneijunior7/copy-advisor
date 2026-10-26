@@ -12,6 +12,7 @@ export const HOSTING_STATES: Record<HostingState, { label: string; variant: Badg
     restarting: { label: 'Reiniciando', variant: 'warning' },
     stopped: { label: 'Parado', variant: 'muted' },
     disabled: { label: 'Desligado', variant: 'muted' },
+    unpaid: { label: 'Hospedagem não paga', variant: 'warning' },
     pod_offline: { label: 'Pod fora do ar', variant: 'destructive' },
 };
 

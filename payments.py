@@ -8,17 +8,24 @@ renewal changes nothing, the license just runs out. In the Mirror the client cha
 charged or credited at once, prorated) and cancels or resumes the renewal; the card and the invoices are on Stripe's
 portal. Listings without plans keep the manager's checkout link and the approval by hand.
 
-Configuration: STRIPE_SECRET_KEY (sk_test_... or sk_live_...), STRIPE_WEBHOOK_SECRET (whsec_...) and PUBLIC_URL.
+Hosting the client's terminal (hosting.py) is a subscription of its own, to the platform's single hosting price: the
+money is the platform's, not the manager's, and either one is cancelled apart from the other. The webhook tells
+them apart by the metadata.
+
+Configuration: STRIPE_SECRET_KEY (sk_test_... or sk_live_...), STRIPE_WEBHOOK_SECRET (whsec_...), PUBLIC_URL and,
+to charge for hosting, STRIPE_HOSTING_PRICE_ID (a recurring price_...).
 """
 import datetime
 import json
 import logging
 import os
+import time
 from typing import List, Optional, Tuple
 
 import stripe
 from sqlalchemy.orm import Session
 
+import hosting
 import mailer
 import marketplace
 import models
@@ -30,6 +37,7 @@ PAID = ("active", "trialing")
 RENEWING = ("active", "trialing", "past_due")  # A live Stripe subscription: no renewal request by hand
 PERIOD_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
 MIN_TRIAL = datetime.timedelta(hours=49)  # Stripe takes a trial_end only 48 h ahead or more
+TERMS_SECONDS = 600  # How long the hosting price read from Stripe is reused
 
 
 class PaymentError(Exception):
@@ -239,6 +247,10 @@ def _plan_of(db: Session, sub: models.Subscription, s: dict) -> Optional[models.
 def sync(db: Session, s: dict, now: datetime.datetime) -> Tuple[Optional[models.Subscription], bool]:
     """Brings the request and its license in line with a Stripe subscription. Idempotent: Stripe sends an event more
     than once and in any order. Returns the request and whether this call approved it."""
+    terminal = _terminal_of(db, s)
+    if terminal is not None:
+        sync_hosting(db, terminal, s, now)
+        return None, False
     ours = (s.get("metadata") or {}).get("subscription_id")
     sub = db.get(models.Subscription, int(ours)) if ours and str(ours).isdigit() else None
     if sub is None:
@@ -298,3 +310,117 @@ def handle(db: Session, payload: bytes, signature: str, now: datetime.datetime) 
                      or obj.get("subscription"))
         return sync(db, _subscription(stripe_id), now) if stripe_id else (None, False)
     return None, False
+
+
+# --- Hosting ---
+
+def hosting_price() -> Optional[str]:
+    """The platform's hosting price: without it (or without Stripe), hosting is not charged."""
+    price = os.getenv("STRIPE_HOSTING_PRICE_ID", "").strip()
+    return price if price and enabled() else None
+
+
+_terms_cache: dict = {}
+
+
+def hosting_terms() -> Optional[dict]:
+    """The hosting price as the client sees it (price, currency, days), read from Stripe and reused for a while.
+    None when hosting is not charged or Stripe does not answer."""
+    price_id = hosting_price()
+    if price_id is None:
+        return None
+    cached = _terms_cache.get(price_id)
+    if cached is not None and time.monotonic() - cached[0] < TERMS_SECONDS:
+        return cached[1]
+    try:
+        terms = price_terms(price_id)
+    except PaymentError as e:
+        logger.error(f"STRIPE_HOSTING_PRICE_ID: {e}")
+        return None
+    terms.pop("nickname", None)
+    _terms_cache[price_id] = (time.monotonic(), terms)
+    return terms
+
+
+def _terminal_of(db: Session, s: dict) -> Optional[models.HostedTerminal]:
+    ours = (s.get("metadata") or {}).get("hosted_terminal_id")
+    if ours and str(ours).isdigit():
+        return db.get(models.HostedTerminal, int(ours))
+    return db.query(models.HostedTerminal).filter(models.HostedTerminal.stripe_subscription_id == s["id"]).first()
+
+
+def hosting_checkout(t: models.HostedTerminal, user: models.User) -> str:
+    """A Checkout for the terminal's hosting; the previous one, if still open, is closed so it is never paid twice."""
+    price_id = hosting_price()
+    if price_id is None:
+        raise PaymentError("A cobrança da hospedagem não está configurada no servidor", 409)
+    if t.stripe_session_id:
+        try:
+            session = _client().v1.checkout.sessions.retrieve(t.stripe_session_id)
+            if session.status == "open":
+                _client().v1.checkout.sessions.expire(t.stripe_session_id)
+        except stripe.StripeError as e:
+            logger.warning(f"Hosted terminal {t.id}: could not expire Checkout {t.stripe_session_id}: {e}")
+    data = {"hosted_terminal_id": str(t.id), "license_id": str(t.license_id)}
+    page = f"{mailer.public_url()}/client/licenses/{t.license_id}"
+    params = {
+        "mode": "subscription", "line_items": [{"price": price_id, "quantity": 1}],
+        "client_reference_id": f"hosting-{t.id}", "metadata": data, "subscription_data": {"metadata": data},
+        "locale": "pt-BR", "allow_promotion_codes": True,
+        "success_url": f"{page}?hospedagem=ok", "cancel_url": page,
+    }
+    if user.stripe_customer_id:
+        params["customer"] = user.stripe_customer_id
+    else:
+        params["customer_email"] = user.email
+    try:
+        session = _client().v1.checkout.sessions.create(params)
+    except stripe.StripeError as e:
+        logger.error(f"Hosted terminal {t.id}: Checkout failed: {e}")
+        raise PaymentError("Não foi possível abrir o pagamento. Tente de novo em instantes")
+    t.stripe_session_id = session.id
+    return session.url
+
+
+def set_hosting_renewal(db: Session, t: models.HostedTerminal, renew: bool, now: datetime.datetime):
+    """Cancelling ends the hosting with the paid period: the terminal runs until then."""
+    try:
+        s = _client().v1.subscriptions.update(t.stripe_subscription_id, {"cancel_at_period_end": not renew}).to_dict()
+    except stripe.StripeError as e:
+        raise _unavailable(f"update of {t.stripe_subscription_id}", e)
+    sync_hosting(db, t, s, now)
+
+
+def end_hosting(t: models.HostedTerminal):
+    """The hosting was removed: its subscription ends now, so nothing else is charged."""
+    if t.stripe_subscription_id is None or t.stripe_status not in RENEWING:
+        return
+    try:
+        _client().v1.subscriptions.cancel(t.stripe_subscription_id)
+    except stripe.StripeError as e:
+        raise _unavailable(f"cancel of {t.stripe_subscription_id}", e)
+    logger.info(f"Hosted terminal {t.id}: Stripe subscription {t.stripe_subscription_id} cancelled with the hosting")
+
+
+def sync_hosting(db: Session, t: models.HostedTerminal, s: dict, now: datetime.datetime):
+    """Brings the terminal in line with its Stripe subscription. Idempotent, like sync. A terminal that starts
+    running again after stopping for lack of payment gets a new configuration version: the pod restarts it."""
+    if t.stripe_subscription_id not in (None, s["id"]):
+        if s.get("status") not in RENEWING:
+            return  # An earlier subscription of this terminal, ended
+        if t.stripe_status in RENEWING:
+            logger.error(f"Hosted terminal {t.id}: paid twice in Stripe ({t.stripe_subscription_id} and {s['id']}): refund one")
+            return
+    was_paid = hosting.paid(t, now)
+    t.stripe_subscription_id, t.stripe_status = s["id"], s.get("status")
+    t.stripe_cancel_at_period_end = bool(s.get("cancel_at_period_end") or s.get("cancel_at"))
+    customer, user = s.get("customer"), t.license.client
+    if isinstance(customer, str) and user is not None and not user.stripe_customer_id:
+        user.stripe_customer_id = customer
+    until = paid_until(s) if s.get("status") in PAID else None
+    if until is not None and (t.stripe_period_end is None or t.stripe_period_end < until):
+        t.stripe_period_end = until
+        logger.info(f"Hosted terminal {t.id} paid in Stripe ({s['id']}) until {until}")
+    if hosting.paid(t, now) and not was_paid:
+        t.config_version += 1
+        t.updated_at = now

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Briefcase, ExternalLink, KeyRound, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type MyLicenses, type Subscription } from '../../api';
@@ -40,6 +40,18 @@ export default function LicenseDetail() {
     const refresh = () => setReload(n => n + 1);
     const [renewal, setRenewal] = useState<Subscription | null>(null);
     const [renewing, setRenewing] = useState(false);
+    const [params, setParams] = useSearchParams();
+
+    // Back from the hosting's Checkout: the webhook takes it within seconds, sooner than the next poll
+    useEffect(() => {
+        if (params.get('hospedagem') !== 'ok') return;
+        toast.success('Pagamento da hospedagem recebido', { description: 'O terminal liga em instantes. Acompanhe o estado aqui.' });
+        const timers = [3_000, 8_000].map(ms => window.setTimeout(refresh, ms));
+        setParams({}, { replace: true });
+        return () => timers.forEach(t => window.clearTimeout(t));
+        // Once, on arrival: clearing the address must not cancel the reloads
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         const load = () => api.get<MyLicenses>('/me/licenses')
@@ -185,6 +197,7 @@ export default function LicenseDetail() {
                         license={license}
                         available={data?.hosting_available ?? false}
                         servers={data?.servers ?? []}
+                        price={data?.hosting_price ?? null}
                         onChanged={refresh}
                     />
                 </div>
