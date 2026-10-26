@@ -7,7 +7,7 @@ import api, { type ClientLicense, type HostedTerminal, type HostingPrice } from 
 import Card from '../Card';
 import InlineConfirm from '../InlineConfirm';
 import { HostingBillingBody } from './HostingBilling';
-import { hostingPriceLabel } from '../../lib/money';
+import HostingOffer from './HostingOffer';
 import OneTimeKey from '../OneTimeKey';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -26,12 +26,18 @@ interface ClientHostingProps {
     available: boolean; // The server takes hosted terminals
     servers: string[]; // Broker servers our servers can log into
     price: HostingPrice | null; // Charged in Stripe, apart from the portfolio; null: not charged
+    offerOpen?: boolean; // Came from a "yes" elsewhere: the credentials form is open already
     onChanged: () => void;
 }
 
+// "Not now" on the hosting offer, per license: it stays folded into one line
+const laterKey = (licenseId: number) => `hosting-offer-later-${licenseId}`;
+
 // Where the copy runs: a terminal we host for the client, or the EA on the client's own computer
-export default function ClientHosting({ license, available, servers, price, onChanged }: ClientHostingProps) {
+export default function ClientHosting({ license, available, servers, price, offerOpen = false, onChanged }: ClientHostingProps) {
     const hosted = license.hosting;
+    const [offer, setOffer] = useState<'offer' | 'form' | 'later'>(() =>
+        offerOpen ? 'form' : localStorage.getItem(laterKey(license.id)) ? 'later' : 'offer');
     const [editing, setEditing] = useState(false);
     const [confirm, setConfirm] = useState<'pause' | 'remove' | 'key' | null>(null);
     const [busy, setBusy] = useState(false);
@@ -134,11 +140,13 @@ export default function ClientHosting({ license, available, servers, price, onCh
                 </Field>
             </div>
             <div className="flex flex-wrap justify-end gap-1">
-                {hosted && (
+                {hosted ? (
                     <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancelar</Button>
+                ) : price && (
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setOffer('offer')}>Voltar</Button>
                 )}
                 <Button size="sm" loading={isSubmitting}>
-                    {!isSubmitting && <Check />} {hosted ? 'Salvar' : price ? 'Hospedar e ir para o pagamento' : 'Hospedar minha conta'}
+                    {!isSubmitting && <Check />} {hosted ? 'Salvar' : price ? 'Continuar para o pagamento' : 'Hospedar minha conta'}
                 </Button>
             </div>
         </form>
@@ -201,6 +209,23 @@ export default function ClientHosting({ license, available, servers, price, onCh
 
     return (
         <div className="space-y-6">
+            {available && price && (
+                <HostingOffer
+                    price={price}
+                    stage={offer}
+                    onYes={() => { localStorage.removeItem(laterKey(license.id)); setOffer('form'); }}
+                    onLater={() => { localStorage.setItem(laterKey(license.id), '1'); setOffer('later'); }}
+                >
+                    <div className="space-y-4 rounded-lg border border-border bg-card p-4">
+                        <p className="text-sm text-muted-foreground">
+                            Informe o acesso da conta {license.mt5_login} e siga para o pagamento. O terminal liga assim que o
+                            pagamento passar; nesse momento a licença ganha uma chave nova e o EA do seu computador é desconectado.
+                        </p>
+                        {hostingForm}
+                    </div>
+                </HostingOffer>
+            )}
+
             <Card title="EA no seu computador" description="O MetaTrader com o EA precisa ficar aberto durante o pregão." icon={<Monitor />}>
                 <div className="space-y-4 text-sm">
                     <p>
@@ -229,12 +254,10 @@ export default function ClientHosting({ license, available, servers, price, onCh
                 </div>
             </Card>
 
-            {available && (
+            {available && !price && (
                 <Card
                     title="Prefere não deixar o computador ligado?"
-                    description={price
-                        ? `Hospede a conta com a gente por ${hostingPriceLabel(price)}, cobrado à parte da assinatura do portfólio. O MetaTrader roda num servidor nosso, ligado o tempo todo. Quando o pagamento passar, a licença ganha uma chave nova e o EA do seu computador é desconectado.`
-                        : 'Hospede a conta com a gente: o MetaTrader roda num servidor nosso. A licença ganha uma chave nova, e o EA do seu computador é desconectado.'}
+                    description="Hospede a conta com a gente: o MetaTrader roda num servidor nosso. A licença ganha uma chave nova, e o EA do seu computador é desconectado."
                     icon={<Server />}
                 >
                     {hostingForm}

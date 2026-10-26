@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, CreditCard, Server, Store } from 'lucide-react';
 import api, { type ClientLicense, type MyLicenses } from '../../api';
 import BillingCard from '../../components/client/BillingCard';
 import HostingBillingCard from '../../components/client/HostingBilling';
+import HostingOffer from '../../components/client/HostingOffer';
 import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
-import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Button } from '../../components/ui/Button';
-import { hostingPriceLabel } from '../../lib/money';
 import { openBillingPortal } from '../../lib/stripe';
 
 const licenseName = (l: ClientLicense) => l.portfolio.name ?? `Portfólio #${l.portfolio.id}`;
@@ -24,6 +23,7 @@ const licenseLink = (l: ClientLicense, label = 'Licença') => (
 // renewal; then the hosting of each account, a subscription of its own, and the accounts that could have it.
 // Below, the marketplace requests still waiting on a payment or on the manager
 export default function MySubscriptionsPage() {
+    const navigate = useNavigate();
     const [data, setData] = useState<MyLicenses | null>(null);
     const [failed, setFailed] = useState(false);
     const [reload, setReload] = useState(0); // Bumped to load again now, after a change
@@ -97,20 +97,24 @@ export default function MySubscriptionsPage() {
             )}
 
             {offer.length > 0 && (
-                <Card
-                    title="Complete o combo com a hospedagem"
-                    description={`Seu MetaTrader num servidor nosso, ligado o tempo todo, sem depender do seu computador. ${hostingPriceLabel(data!.hosting_price!)} por conta, à parte da assinatura do portfólio.`}
-                    icon={<Server />}
-                >
-                    <ul className="divide-y divide-border text-sm">
-                        {offer.map(l => (
-                            <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
-                                <span>{licenseName(l)} · conta {l.mt5_login}</span>
-                                {licenseLink(l, 'Hospedar esta conta')}
-                            </li>
-                        ))}
-                    </ul>
-                </Card>
+                <HostingOffer
+                    price={data!.hosting_price!}
+                    actions={
+                        <ul className="divide-y divide-border rounded-lg border border-border bg-card text-sm">
+                            {offer.map(l => (
+                                <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                                    <span>
+                                        <span className="font-medium">Conta {l.mt5_login}</span>
+                                        <span className="text-muted-foreground"> · {licenseName(l)}</span>
+                                    </span>
+                                    <Button size="sm" onClick={() => navigate(`/client/licenses/${l.id}?hospedar=1`)}>
+                                        <Server /> Sim, hospedar esta conta
+                                    </Button>
+                                </li>
+                            ))}
+                        </ul>
+                    }
+                />
             )}
 
             <MySubscriptions />

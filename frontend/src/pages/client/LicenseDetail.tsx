@@ -41,6 +41,7 @@ export default function LicenseDetail() {
     const [renewal, setRenewal] = useState<Subscription | null>(null);
     const [renewing, setRenewing] = useState(false);
     const [params, setParams] = useSearchParams();
+    const [offerOpen] = useState(() => params.get('hospedar') === '1'); // A "yes" to the hosting offer on Subscriptions
 
     // Back from the hosting's Checkout: the webhook takes it within seconds, sooner than the next poll
     useEffect(() => {
@@ -198,6 +199,7 @@ export default function LicenseDetail() {
                         available={data?.hosting_available ?? false}
                         servers={data?.servers ?? []}
                         price={data?.hosting_price ?? null}
+                        offerOpen={offerOpen}
                         onChanged={refresh}
                     />
                 </div>
