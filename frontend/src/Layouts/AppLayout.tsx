@@ -9,6 +9,14 @@ import { cn } from '../lib/utils';
 type NavItem = { path: string; label: string; icon: LucideIcon; end?: boolean };
 type NavSection = { title: string; items: NavItem[] };
 
+// The client's four places, also the tab bar at the bottom of a phone
+const CLIENT_TABS: NavItem[] = [
+    { path: '/client', label: 'Início', icon: LayoutDashboard, end: true },
+    { path: '/client/licenses', label: 'Minhas cópias', icon: KeyRound },
+    { path: '/client/subscriptions', label: 'Pagamentos', icon: CreditCard },
+    { path: '/marketplace', label: 'Marketplace', icon: Store },
+];
+
 const navByRole: Record<string, NavSection[]> = {
     MANAGER: [
         {
@@ -46,13 +54,13 @@ const navByRole: Record<string, NavSection[]> = {
     CLIENT: [
         {
             title: 'Conta',
+            items: CLIENT_TABS,
+        },
+        {
+            title: 'Mais',
             items: [
-                { path: '/client', label: 'Painel de controle', icon: LayoutDashboard, end: true },
-                { path: '/client/licenses', label: 'Minhas licenças', icon: KeyRound },
-                { path: '/client/subscriptions', label: 'Assinaturas', icon: CreditCard },
                 { path: '/client/hosting', label: 'Hospedagem', icon: Server },
-                { path: '/client/install', label: 'Instalação', icon: Download },
-                { path: '/marketplace', label: 'Marketplace', icon: Store },
+                { path: '/client/install', label: 'Instalar o EA', icon: Download },
             ],
         },
     ],
@@ -135,8 +143,27 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     );
 }
 
+// The client's tabs within reach of the thumb on a phone
+function TabBar() {
+    return (
+        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+            aria-label="Navegação principal">
+            {CLIENT_TABS.map(item => (
+                <NavLink key={item.path} to={item.path} end={item.end}
+                    className={({ isActive }) => cn('flex flex-col items-center gap-1 px-1 py-2 text-[11px] font-medium',
+                        isActive ? 'text-primary' : 'text-muted-foreground')}>
+                    <item.icon className="size-5" />
+                    <span className="truncate">{item.label}</span>
+                </NavLink>
+            ))}
+        </nav>
+    );
+}
+
 export default function AppLayout() {
     const location = useLocation();
+    const { user } = useAuth();
+    const tabs = user?.role === 'CLIENT';
     const [isMobileOpen, setIsMobileOpen] = useState(false);
 
     useEffect(() => {
@@ -189,7 +216,7 @@ export default function AppLayout() {
             </div>
 
             {/* Main Content */}
-            <main className="flex min-h-[calc(100vh-57px)] flex-col p-4 md:ml-64 md:min-h-screen md:p-6">
+            <main className={cn('flex min-h-[calc(100vh-57px)] flex-col p-4 md:ml-64 md:min-h-screen md:p-6', tabs && 'pb-24 md:pb-6')}>
                 <div className="flex-1 animate-fade-in" key={location.pathname}>
                     <Outlet />
                 </div>
@@ -197,6 +224,7 @@ export default function AppLayout() {
                     © {new Date().getFullYear()} Trademetric. Todos os direitos reservados.
                 </footer>
             </main>
+            {tabs && <TabBar />}
         </div>
     );
 }

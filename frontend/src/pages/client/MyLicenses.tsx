@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useSearchParams } from 'react-router-dom';
-import { ChevronRight, KeyRound, Monitor, Server, Ticket } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ChevronDown, ChevronRight, KeyRound, Monitor, Server, Store, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type ClientLicense, type MyLicenses as MyLicensesData } from '../../api';
-import Card from '../../components/Card';
 import CopyToggle from '../../components/client/CopyToggle';
 import EmptyState from '../../components/EmptyState';
 import { EmailReminder } from '../../components/client/MySubscriptions';
@@ -12,7 +11,7 @@ import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Field';
-import { copyState } from '../../lib/clientLicense';
+import { copyState, needsSetup } from '../../lib/clientLicense';
 import { apiError, formatDate } from '../../lib/utils';
 
 const POLL_MS = 15_000; // A hosted terminal changes state on its own
@@ -25,11 +24,13 @@ export default function MyLicenses() {
     const [reload, setReload] = useState(0); // Bumped to load again now, after adding a license
     const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<ClaimForm>();
     const [params, setParams] = useSearchParams();
+    const navigate = useNavigate();
+    const [arrived] = useState(() => params.get('pagamento') === 'ok'); // Just paid: on to the new license's activation
 
     // Back from Stripe's Checkout: the webhook frees the license within seconds, sooner than the next poll
     useEffect(() => {
         if (params.get('pagamento') !== 'ok') return;
-        toast.success('Pagamento recebido', { description: 'A licença aparece aqui em instantes. Depois, conecte sua conta MT5.' });
+        toast.success('Pagamento recebido!', { description: 'Agora falta ativar a cópia: leva 2 minutos.' });
         const timers = [3_000, 8_000].map(ms => window.setTimeout(() => setReload(n => n + 1), ms));
         setParams({}, { replace: true });
         return () => timers.forEach(t => window.clearTimeout(t));
@@ -39,12 +40,17 @@ export default function MyLicenses() {
 
     useEffect(() => {
         const load = () => api.get<MyLicensesData>('/me/licenses')
-            .then(res => { setData(res.data); setFailed(false); })
+            .then(res => {
+                setData(res.data);
+                setFailed(false);
+                const fresh = arrived && [...res.data.licenses].reverse().find(needsSetup);
+                if (fresh) navigate(`/client/licenses/${fresh.id}`, { replace: true });
+            })
             .catch(e => { console.error(e); setFailed(true); });
         load();
         const timer = window.setInterval(load, POLL_MS);
         return () => window.clearInterval(timer);
-    }, [reload]);
+    }, [reload, arrived, navigate]);
 
     const onClaim = async ({ code }: ClaimForm) => {
         try {
@@ -65,35 +71,38 @@ export default function MyLicenses() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Minhas licenças"
-                description="Os portfólios que você copia, a conta MT5 de cada um e como a cópia está agora."
+                title="Minhas cópias"
+                description="Os gestores que você copia, a conta de cada um e se a cópia está funcionando agora."
                 icon={<KeyRound />}
             />
 
             <EmailReminder />
 
-            <Card
-                title="Adicionar licença"
-                description="Quem vendeu a licença envia um código de acesso. Ele vale uma vez só."
-                icon={<Ticket />}
-            >
-                <form onSubmit={handleSubmit(onClaim)} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
-                    <div className="flex-1 space-y-2">
-                        <Input
-                            {...register('code', {
-                                required: 'Informe o código',
-                                minLength: { value: 4, message: 'Código incompleto' },
-                            })}
-                            placeholder="Ex.: ABCD-EFGH-JKLM"
-                            className="font-mono uppercase"
-                            autoComplete="off"
-                            aria-label="Código de acesso"
-                        />
-                        {errors.code && <p className="text-sm text-destructive">{errors.code.message}</p>}
-                    </div>
-                    <Button loading={isSubmitting}>{!isSubmitting && <Ticket />} Adicionar</Button>
-                </form>
-            </Card>
+            <details className="group panel">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-sm font-medium sm:px-5">
+                    <span className="flex items-center gap-2"><Ticket className="size-4 text-primary" /> Recebeu um código de acesso de um gestor?</span>
+                    <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="space-y-3 border-t border-border p-4 sm:px-5">
+                    <p className="text-sm text-muted-foreground">Quem vendeu a cópia fora do Marketplace envia um código. Ele vale uma vez só.</p>
+                    <form onSubmit={handleSubmit(onClaim)} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
+                        <div className="flex-1 space-y-2">
+                            <Input
+                                {...register('code', {
+                                    required: 'Informe o código',
+                                    minLength: { value: 4, message: 'Código incompleto' },
+                                })}
+                                placeholder="Ex.: ABCD-EFGH-JKLM"
+                                className="font-mono uppercase"
+                                autoComplete="off"
+                                aria-label="Código de acesso"
+                            />
+                            {errors.code && <p className="text-sm text-destructive">{errors.code.message}</p>}
+                        </div>
+                        <Button loading={isSubmitting}>{!isSubmitting && <Ticket />} Adicionar</Button>
+                    </form>
+                </div>
+            </details>
 
             {data === null ? (
                 <p className="text-sm text-muted-foreground">
@@ -103,8 +112,9 @@ export default function MyLicenses() {
                 <div className="panel">
                     <EmptyState
                         icon={<KeyRound />}
-                        title="Nenhuma licença ainda"
-                        description="Assine um portfólio no Marketplace, ou adicione a licença com o código de acesso que você recebeu de quem a vendeu."
+                        title="Você ainda não copia ninguém"
+                        description="Escolha um gestor no Marketplace: depois de assinar, a cópia aparece aqui para você ativar."
+                        action={<Link to="/marketplace"><Button><Store /> Ver gestores</Button></Link>}
                     />
                 </div>
             ) : (
@@ -142,7 +152,7 @@ export default function MyLicenses() {
                                         <dd className="font-mono font-semibold">{l.mt5_login ?? '—'}</dd>
                                     </div>
                                     <div>
-                                        <dt className="text-xs text-muted-foreground">Limite</dt>
+                                        <dt className="text-xs text-muted-foreground">Limite por ordem</dt>
                                         <dd className="font-mono">{l.max_lots.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lotes</dd>
                                     </div>
                                     <div>
@@ -155,7 +165,7 @@ export default function MyLicenses() {
                                         {l.hosting ? <><Server className="size-3.5" /> Hospedada com a gente</> : <><Monitor className="size-3.5" /> EA no seu computador</>}
                                     </span>
                                     <span className="inline-flex items-center gap-0.5 font-medium text-primary">
-                                        Abrir <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+                                        {needsSetup(l) ? 'Ativar agora' : 'Abrir'} <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
                                     </span>
                                 </div>
                             </Link>

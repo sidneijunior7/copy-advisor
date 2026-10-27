@@ -19,17 +19,19 @@ import {
     TrendingUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type ClientDashboardData, type ClientLicense } from '../../api';
+import api, { type ClientDashboardData, type ClientLicense, type MyLicenses } from '../../api';
 import Card from '../../components/Card';
 import LineChart from '../../components/charts/LineChart';
 import Sparkline from '../../components/charts/Sparkline';
 import CopyToggle from '../../components/client/CopyToggle';
-import { HostingOfferBanner } from '../../components/client/HostingOffer';
+import { HostingOfferList } from '../../components/client/HostingOffer';
+import NextSteps from '../../components/client/NextSteps';
 import KPICard from '../../components/KPICard';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Field';
+import { copyState, hostingCandidates } from '../../lib/clientLicense';
 import { formatMoney, priceLabel } from '../../lib/money';
 import { apiError, cn, formatDate } from '../../lib/utils';
 
@@ -44,6 +46,8 @@ export default function ClientDashboard() {
     const [claimCode, setClaimCode] = useState('');
     const [claiming, setClaiming] = useState(false);
     const [masterPausing, setMasterPausing] = useState(false);
+    // How each license copies right now (the hub, the hosting): the dashboard's own figures do not say
+    const [mine, setMine] = useState<MyLicenses | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -64,8 +68,15 @@ export default function ClientDashboard() {
                 });
         };
 
+        const loadLicenses = () => {
+            api.get<MyLicenses>('/me/licenses')
+                .then(res => { if (active) setMine(res.data); })
+                .catch(err => console.error(err));
+        };
+
         load();
-        const timer = window.setInterval(load, POLL_MS);
+        loadLicenses();
+        const timer = window.setInterval(() => { load(); loadLicenses(); }, POLL_MS);
         return () => {
             active = false;
             window.clearInterval(timer);
@@ -123,7 +134,7 @@ export default function ClientDashboard() {
         return (
             <div className="space-y-6">
                 <PageHeader
-                    title="Painel de Controle"
+                    title="Início"
                     description="Carregando métricas e desempenho da sua conta..."
                     icon={<Activity />}
                 />
@@ -139,7 +150,7 @@ export default function ClientDashboard() {
     if (failed && !data) {
         return (
             <div className="space-y-6">
-                <PageHeader title="Painel de Controle" description="Visão geral do assinante" icon={<Activity />} />
+                <PageHeader title="Início" description="Visão geral do assinante" icon={<Activity />} />
                 <div className="panel p-8 text-center">
                     <ShieldAlert className="mx-auto size-10 text-destructive mb-3" />
                     <h3 className="text-lg font-semibold">Não foi possível carregar o painel</h3>
@@ -160,24 +171,19 @@ export default function ClientDashboard() {
                 <div className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-6 sm:p-8 shadow-card">
                     <div className="max-w-2xl space-y-3">
                         <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                            <Sparkles className="size-3.5" /> Bem-vindo ao Trademetric Mirror
+                            <Sparkles className="size-3.5" /> Bem-vindo à Trademetric
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-                            Comece a copiar traders de alta performance na sua conta
+                            Escolha um gestor para copiar na sua conta
                         </h1>
                         <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                            Conecte portfólios validados para espelhar ordens diretamente no seu MetaTrader 5 com
-                            execução ultrarrápida e controle total de risco.
+                            Quando o gestor opera, a mesma ordem é feita no seu MetaTrader 5, no tamanho que você definir.
+                            Você acompanha tudo aqui e pausa quando quiser.
                         </p>
                         <div className="flex flex-wrap gap-3 pt-2">
-                            <Link to="/marketplace">
-                                <Button size="lg" className="shadow-lg shadow-primary/20">
-                                    <Store className="size-4" /> Explorar Marketplace
-                                </Button>
-                            </Link>
-                            <Link to="/client/install">
-                                <Button size="lg" variant="outline">
-                                    Guia de Instalação do EA
+                            <Link to="/marketplace" className="w-full sm:w-auto">
+                                <Button size="lg" className="w-full shadow-lg shadow-primary/20">
+                                    <Store className="size-4" /> Ver gestores
                                 </Button>
                             </Link>
                         </div>
@@ -186,8 +192,8 @@ export default function ClientDashboard() {
 
                 {/* Claim Access Code Section */}
                 <Card
-                    title="Já possui um código de acesso?"
-                    description="Se você adquiriu uma assinatura diretamente com um gestor, informe o código para ativar sua licença."
+                    title="Recebeu um código de acesso?"
+                    description="Se você assinou direto com um gestor, fora do Marketplace, informe o código que ele enviou."
                     icon={<Ticket />}
                 >
                     <form onSubmit={handleClaim} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
@@ -202,7 +208,7 @@ export default function ClientDashboard() {
                             />
                         </div>
                         <Button type="submit" loading={claiming} disabled={!claimCode.trim()}>
-                            {!claiming && <Ticket />} Adicionar Licença
+                            {!claiming && <Ticket />} Adicionar
                         </Button>
                     </form>
                 </Card>
@@ -213,7 +219,7 @@ export default function ClientDashboard() {
                         <div className="flex items-center justify-between">
                             <div>
                                 <h2 className="text-xl font-bold tracking-tight">Portfólios em Destaque</h2>
-                                <p className="text-xs text-muted-foreground">Estratégias públicas com track record auditado</p>
+                                <p className="text-xs text-muted-foreground">O resultado real dos últimos 90 dias</p>
                             </div>
                             <Link to="/marketplace" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
                                 Ver todos <ArrowRight className="size-4" />
@@ -300,7 +306,7 @@ export default function ClientDashboard() {
             {/* Header with Title & Master Controls */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Painel de Controle</h1>
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Início</h1>
                     <p className="text-sm text-muted-foreground">
                         Acompanhe seus lucros em tempo real e gerencie suas cópias com um clique.
                     </p>
@@ -331,8 +337,11 @@ export default function ClientDashboard() {
                 </div>
             </div>
 
+            {/* What still keeps a license from copying, first: the dashboard is where the client looks */}
+            {mine && <NextSteps licenses={mine.licenses} />}
+
             {/* Hosting upsell: while some license copies from the client's own computer */}
-            <HostingOfferBanner />
+            {mine?.hosting_price && <HostingOfferList price={mine.hosting_price} licenses={hostingCandidates(mine)} dismissible />}
 
             {/* Top KPI Cards Row */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -441,7 +450,7 @@ export default function ClientDashboard() {
                     <div className="flex items-center justify-between">
                         <div>
                             <h2 className="text-lg font-semibold tracking-tight">Estratégias Hoje</h2>
-                            <p className="text-xs text-muted-foreground">Robôs ativos em sua conta</p>
+                            <p className="text-xs text-muted-foreground">As estratégias dos gestores que você copia</p>
                         </div>
                         <Badge variant="primary" className="text-xs">{running_today.length}</Badge>
                     </div>
@@ -493,14 +502,14 @@ export default function ClientDashboard() {
             <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
-                        <h2 className="text-xl font-bold tracking-tight">Meus Traders & Portfólios</h2>
+                        <h2 className="text-xl font-bold tracking-tight">Quem você copia</h2>
                         <p className="text-xs text-muted-foreground">
                             Ligue ou desligue a cópia individualmente. A pausa suave permite que posições abertas fechem normalmente.
                         </p>
                     </div>
 
                     <Link to="/client/licenses" className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
-                        Gerenciar licenças completas <ChevronRight className="size-3.5" />
+                        Minhas cópias <ChevronRight className="size-3.5" />
                     </Link>
                 </div>
 
@@ -533,9 +542,15 @@ export default function ClientDashboard() {
                             </div>
 
                             <div className="flex items-center gap-2">
-                                <Badge variant={t.is_paused ? 'warning' : t.valid ? 'success' : 'destructive'} className="text-xs">
-                                    {t.is_paused ? 'Pausado' : t.valid ? 'Copiando' : 'Inativo'}
-                                </Badge>
+                                {(() => {
+                                    const lic = mine?.licenses.find(l => l.id === t.license_id);
+                                    const state = lic ? copyState(lic) : null;
+                                    return (
+                                        <Badge variant={state?.variant ?? (t.is_paused ? 'warning' : 'muted')} className="text-xs">
+                                            {state?.label ?? (t.is_paused ? 'Pausado' : '…')}
+                                        </Badge>
+                                    );
+                                })()}
                                 {t.mt5_login && (
                                     <span className="font-mono text-xs text-muted-foreground">
                                         Conta MT5: {t.mt5_login}

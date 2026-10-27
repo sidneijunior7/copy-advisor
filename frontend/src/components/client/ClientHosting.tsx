@@ -1,25 +1,21 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
-import { Check, KeyRound, Monitor, Pencil, Power, PowerOff, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { KeyRound, Monitor, Pencil, Power, PowerOff, RefreshCw, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type ClientLicense, type HostedTerminal, type HostingPrice } from '../../api';
+import api, { type ClientLicense, type HostingPrice } from '../../api';
 import Card from '../Card';
 import InlineConfirm from '../InlineConfirm';
 import { HostingBillingBody } from './HostingBilling';
+import HostingForm from './HostingForm';
 import HostingOffer from './HostingOffer';
 import OneTimeKey from '../OneTimeKey';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Field, Input } from '../ui/Field';
 import { HOSTING_STATES } from '../../lib/labels';
-import { openHostingCheckout } from '../../lib/stripe';
 import { apiError, formatAgo, formatDateTime } from '../../lib/utils';
 
 // After "Com posições abertas, "
 const UNMANAGED = 'elas ficam sem acompanhamento até a cópia voltar: o que o Master fizer não chega à sua conta.';
-
-type HostingForm = { server: string; password: string };
 
 interface ClientHostingProps {
     license: ClientLicense;
@@ -42,10 +38,6 @@ export default function ClientHosting({ license, available, servers, price, offe
     const [confirm, setConfirm] = useState<'pause' | 'remove' | 'key' | null>(null);
     const [busy, setBusy] = useState(false);
     const [key, setKey] = useState<string | null>(null);
-    const { register, handleSubmit, watch, reset, formState: { errors, isSubmitting } } = useForm<HostingForm>({
-        defaultValues: { server: hosted?.server ?? '', password: '' },
-    });
-    const server = watch('server').trim();
 
     const call = async (run: () => Promise<unknown>, success: string, failure: string) => {
         setBusy(true);
@@ -59,29 +51,6 @@ export default function ClientHosting({ license, available, servers, price, offe
             toast.error(apiError(e, failure));
         } finally {
             setBusy(false);
-        }
-    };
-
-    const save = async (data: HostingForm) => {
-        try {
-            const res = await api.put<HostedTerminal>(`/me/licenses/${license.id}/hosting`, {
-                server: data.server.trim(),
-                ...(data.password && { password: data.password }),
-            });
-            if (!hosted && !res.data.billing.paid) { // Kept: the terminal starts once Stripe takes the payment
-                await openHostingCheckout(license.id);
-                onChanged();
-                return;
-            }
-            toast.success(hosted ? 'Hospedagem atualizada' : 'Conta hospedada', {
-                description: 'O terminal inicia em instantes. Acompanhe o estado aqui.',
-            });
-            reset({ server: data.server.trim(), password: '' });
-            setEditing(false);
-            onChanged();
-        } catch (e) {
-            console.error(e);
-            toast.error(apiError(e, 'Não foi possível salvar a hospedagem.'));
         }
     };
 
@@ -100,56 +69,9 @@ export default function ClientHosting({ license, available, servers, price, offe
         }
     };
 
-    const hostingForm = (
-        <form onSubmit={handleSubmit(save)} className="space-y-4" noValidate>
-            <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
-                <Field
-                    label="Servidor da corretora"
-                    htmlFor={`server-${license.id}`}
-                    error={errors.server?.message}
-                    hint={server && servers.length > 0 && !servers.includes(server)
-                        ? 'Ainda não atendemos este servidor: a conta não vai conectar.'
-                        : 'Como aparece na tela de login do MetaTrader 5.'}
-                >
-                    <Input
-                        {...register('server', {
-                            required: 'Informe o servidor',
-                            pattern: { value: /^[\w .-]+$/, message: 'Letras, números, espaço, ponto e hífen' },
-                        })}
-                        id={`server-${license.id}`}
-                        list={`servers-${license.id}`}
-                        autoComplete="off"
-                        placeholder="Ex.: XPMT5-DEMO"
-                    />
-                    <datalist id={`servers-${license.id}`}>
-                        {servers.map(s => <option key={s} value={s} />)}
-                    </datalist>
-                </Field>
-                <Field
-                    label="Senha da conta MT5"
-                    htmlFor={`password-${license.id}`}
-                    error={errors.password?.message}
-                    hint={hosted ? 'Em branco, mantém a atual.' : 'A senha de negociação, não a de investidor. Fica cifrada e ninguém a vê.'}
-                >
-                    <Input
-                        {...register('password', { required: hosted ? false : 'Informe a senha' })}
-                        id={`password-${license.id}`}
-                        type="password"
-                        autoComplete="new-password"
-                    />
-                </Field>
-            </div>
-            <div className="flex flex-wrap justify-end gap-1">
-                {hosted ? (
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancelar</Button>
-                ) : price && (
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setOffer('offer')}>Voltar</Button>
-                )}
-                <Button size="sm" loading={isSubmitting}>
-                    {!isSubmitting && <Check />} {hosted ? 'Salvar' : price ? 'Continuar para o pagamento' : 'Hospedar minha conta'}
-                </Button>
-            </div>
-        </form>
+    const hostingForm = (onCancel: (() => void) | undefined, cancelLabel?: string) => (
+        <HostingForm license={license} servers={servers} price={price} onCancel={onCancel} cancelLabel={cancelLabel}
+            onSaved={() => { setEditing(false); onChanged(); }} />
     );
 
     if (hosted) {
@@ -183,7 +105,7 @@ export default function ClientHosting({ license, available, servers, price, offe
                             seu computador, gere uma chave depois.
                             {hosted.billing.renewing && ' A assinatura da hospedagem é encerrada agora, sem reembolso do período em curso.'}
                         </InlineConfirm>
-                    ) : editing ? hostingForm : (
+                    ) : editing ? hostingForm(() => setEditing(false)) : (
                         <div className="flex flex-wrap gap-1">
                             <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
                                 <Pencil /> Trocar senha ou servidor
@@ -212,7 +134,8 @@ export default function ClientHosting({ license, available, servers, price, offe
             {available && price && (
                 <HostingOffer
                     price={price}
-                    stage={offer}
+                    stage={license.has_key && !license.connection && offer === 'later' ? 'offer' : offer}
+                    stopped={license.has_key && !license.connection}
                     onYes={() => { localStorage.removeItem(laterKey(license.id)); setOffer('form'); }}
                     onLater={() => { localStorage.setItem(laterKey(license.id), '1'); setOffer('later'); }}
                 >
@@ -221,7 +144,7 @@ export default function ClientHosting({ license, available, servers, price, offe
                             Informe o acesso da conta {license.mt5_login} e siga para o pagamento. O terminal liga assim que o
                             pagamento passar; nesse momento a licença ganha uma chave nova e o EA do seu computador é desconectado.
                         </p>
-                        {hostingForm}
+                        {hostingForm(() => setOffer('offer'), 'Voltar')}
                     </div>
                 </HostingOffer>
             )}
@@ -260,7 +183,7 @@ export default function ClientHosting({ license, available, servers, price, offe
                     description="Hospede a conta com a gente: o MetaTrader roda num servidor nosso. A licença ganha uma chave nova, e o EA do seu computador é desconectado."
                     icon={<Server />}
                 >
-                    {hostingForm}
+                    {hostingForm(undefined)}
                 </Card>
             )}
         </div>

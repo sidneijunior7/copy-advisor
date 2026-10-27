@@ -54,6 +54,7 @@ function ThemedToaster() {
     <Toaster
       theme={theme}
       position="bottom-right"
+      mobileOffset={{ bottom: 80 }} // Above the client's tab bar
       toastOptions={{
         classNames: {
           toast: '!bg-popover !text-popover-foreground !border-border !shadow-card',

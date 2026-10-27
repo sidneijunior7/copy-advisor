@@ -6,7 +6,7 @@ import api, { type MyLicenses, type Subscription } from '../../api';
 import Card from '../../components/Card';
 import BillingCard from '../../components/client/BillingCard';
 import ClientHosting from '../../components/client/ClientHosting';
-import ConnectAccount from '../../components/client/ConnectAccount';
+import ActivationWizard from '../../components/client/ActivationWizard';
 import CopyToggle from '../../components/client/CopyToggle';
 import ClientPerformance from '../../components/client/ClientPerformance';
 import ClientSettingsForm from '../../components/client/ClientSettingsForm';
@@ -15,7 +15,7 @@ import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { copyState } from '../../lib/clientLicense';
+import { copyState, needsSetup } from '../../lib/clientLicense';
 import { SIZING_LABELS, SLTP_LABELS } from '../../lib/labels';
 import { openCheckout } from '../../lib/stripe';
 import { apiError, cn, formatDate } from '../../lib/utils';
@@ -42,6 +42,9 @@ export default function LicenseDetail() {
     const [renewing, setRenewing] = useState(false);
     const [params, setParams] = useSearchParams();
     const [offerOpen] = useState(() => params.get('hospedar') === '1'); // A "yes" to the hosting offer on Subscriptions
+    // The activation stays on screen from the first look at a license being set up until the client leaves it;
+    // back from the hosting's Checkout, it shows the terminal starting
+    const [wizard, setWizard] = useState<boolean | null>(() => (params.get('hospedagem') === 'ok' ? true : null));
 
     // Back from the hosting's Checkout: the webhook takes it within seconds, sooner than the next poll
     useEffect(() => {
@@ -64,12 +67,22 @@ export default function LicenseDetail() {
     }, [reload]);
 
     const license = data?.licenses.find(l => String(l.id) === id);
+    const setup = license ? needsSetup(license) : false;
+    useEffect(() => {
+        if (license && wizard === null) setWizard(setup);
+    }, [license, wizard, setup]);
+    // Faster while waiting on the EA or the terminal to connect
+    useEffect(() => {
+        if (!wizard) return;
+        const timer = window.setInterval(refresh, 5_000);
+        return () => window.clearInterval(timer);
+    }, [wizard]);
 
     if (!license) {
         return (
             <div className="space-y-6">
-                <Link to="/client" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-                    <ArrowLeft className="size-4" /> Minhas licenças
+                <Link to="/client/licenses" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+                    <ArrowLeft className="size-4" /> Minhas cópias
                 </Link>
                 {data === null ? (
                     <p className="text-sm text-muted-foreground">{failed ? 'Não foi possível carregar a licença.' : 'Carregando...'}</p>
@@ -104,8 +117,8 @@ export default function LicenseDetail() {
 
     return (
         <div className="space-y-6">
-            <Link to="/client" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="size-4" /> Minhas licenças
+            <Link to="/client/licenses" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="size-4" /> Minhas cópias
             </Link>
             <PageHeader
                 title={license.portfolio.name ?? `Portfólio #${license.portfolio.id}`}
@@ -124,9 +137,11 @@ export default function LicenseDetail() {
                 </div>
             </PageHeader>
 
-            {license.mt5_login == null && <ConnectAccount license={license} onDone={refresh} />}
+            {(setup || wizard) && data && (
+                <ActivationWizard license={license} data={data} onChanged={refresh} onDone={() => setWizard(false)} />
+            )}
 
-            {license.mt5_login != null && <>
+            {!setup && !wizard && <>
             <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border scrollbar-none">
                 {TABS.map(t => (
                     <button

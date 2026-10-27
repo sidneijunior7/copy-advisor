@@ -42,8 +42,8 @@ export default function MySubscriptionsPage() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Minhas assinaturas"
-                description="Troque de plano, cancele ou retome a renovação. Cartão e faturas ficam na página de pagamentos da Stripe."
+                title="Pagamentos"
+                description="O que você assina: o portfólio de cada gestor e a hospedagem de cada conta. Troque de plano, cancele ou retome quando quiser."
                 icon={<CreditCard />}
             >
                 {(paid.length > 0 || hosted.some(l => l.hosting!.billing.status)) && (

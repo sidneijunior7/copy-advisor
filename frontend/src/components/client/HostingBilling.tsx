@@ -45,7 +45,7 @@ export function HostingBillingBody({ licenseId, billing, price, onChanged }: {
             ? { variant: 'warning' as const, label: 'Cancelada', text: `O terminal roda até ${until ?? 'o fim do período pago'}.` }
             : billing.status
                 ? { variant: 'destructive' as const, label: 'Encerrada', text: 'A hospedagem terminou e o terminal foi desligado. Servidor e senha ficam guardados: assine de novo para voltar a copiar.' }
-                : { variant: 'warning' as const, label: 'Aguardando pagamento', text: 'O terminal liga assim que o pagamento passar. Até lá, o EA do seu computador continua copiando.' }
+                : { variant: 'warning' as const, label: 'Aguardando pagamento', text: 'O terminal liga assim que o pagamento passar.' }
         : billing.status === 'past_due'
             ? { variant: 'destructive' as const, label: 'Cobrança falhou', text: 'A última cobrança não passou. Atualize o cartão: o terminal desliga 2 dias depois do fim do período pago.' }
             : billing.cancel_at_period_end

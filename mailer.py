@@ -201,8 +201,15 @@ def send_decision(sub: models.Subscription):
     if sub.status == "approved":
         lic = sub.license
         until = lic.expires_at.strftime("%d/%m/%Y") if lic and lic.expires_at else "sem data de validade"
-        body = (f"Sua assinatura de {sub.listing.title}{account_of(sub)} foi aprovada, "
-                f"válida até {until}.\n\nVeja como começar a copiar em {public_url()}/client/licenses/{sub.license_id}\n")
+        link = f"{public_url()}/client/licenses/{sub.license_id}"
+        if sub.kind == "renewal":  # Set up already: it just keeps copying
+            body = f"Sua assinatura de {sub.listing.title}{account_of(sub)} foi renovada, válida até {until}.\n\nAcompanhe em {link}\n"
+        else:  # The steps a newcomer still has between paying and copying
+            body = (f"Sua assinatura de {sub.listing.title}{account_of(sub)} foi aprovada, válida até {until}.\n\n"
+                    f"Falta só ativar a cópia, e leva 2 minutos:\n"
+                    f"1. Informe o número da sua conta MetaTrader 5.\n"
+                    f"2. Escolha como copiar: na nossa nuvem, sem instalar nada, ou com o EA no seu computador.\n\n"
+                    f"Ative agora: {link}\n")
         subject = f"Assinatura aprovada: {sub.listing.title}"
     else:
         body = (f"Seu pedido de {sub.listing.title}{account_of(sub)} foi recusado.\n"

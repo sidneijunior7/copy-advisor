@@ -1597,7 +1597,11 @@ def list_marketplace(db: Session = Depends(get_db)):
 
 @app.get("/api/marketplace/{slug}")
 def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
-    return marketplace.public_listing(db, published_listing(slug, db), datetime.datetime.utcnow())
+    """The listing, and what hosting costs when it allows hosting: the client sees the whole price before paying."""
+    listing = published_listing(slug, db)
+    out = marketplace.public_listing(db, listing, datetime.datetime.utcnow())
+    out["hosting_price"] = payments.hosting_terms() if listing.hosting_allowed and hosting.cipher() is not None else None
+    return out
 
 def public_days(days: int) -> int:
     return min((d for d in (30, 90, 180, 365, 3650) if d >= days), default=3650)  # A few periods, so the cache holds

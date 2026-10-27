@@ -35,7 +35,7 @@ export default function Register() {
     if (token) return <Navigate to={next} replace />;
 
     return (
-        <AuthShell title="Crie sua conta" subtitle="Leva 10 segundos: só email e senha.">
+        <AuthShell audience="client" title="Crie sua conta" subtitle="Leva 10 segundos: só email e senha. Depois você escolhe quem copiar.">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
                 <Field label="Email" htmlFor="email" error={errors.email?.message}>
                     <Input

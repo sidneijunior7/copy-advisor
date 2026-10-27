@@ -43,7 +43,7 @@ export default function Login() {
     if (token) return <Navigate to={next} replace />;
 
     return (
-        <AuthShell title="Bem-vindo de volta" subtitle="Insira suas credenciais para acessar o painel.">
+        <AuthShell audience={params.get('next')?.startsWith('/marketplace') ? 'client' : 'manager'} title="Bem-vindo de volta" subtitle="Entre com seu email e senha.">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
                 <Field label="Email" htmlFor="email" error={errors.email?.message}>
                     <Input

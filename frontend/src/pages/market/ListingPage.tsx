@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ExternalLink, MailCheck, Store } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, ExternalLink, MailCheck, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type BacktestView, type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
 import AboutAuthor, { AuthorLinks } from '../../components/AboutAuthor';
@@ -15,7 +15,8 @@ import { Button } from '../../components/ui/Button';
 import { IconSelect, Select } from '../../components/ui/Field';
 import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
-import { formatMoney, priceLabel } from '../../lib/money';
+import { formatMoney, hostingPriceLabel, priceLabel } from '../../lib/money';
+import { riskOf } from '../../lib/risk';
 import { openCheckout } from '../../lib/stripe';
 import { apiError, cn } from '../../lib/utils';
 
@@ -67,7 +68,7 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
             <div className="space-y-3 text-sm">
                 <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                     Pedido enviado. {done.listing.checkout_url ? 'Pague na página do gestor, aberta numa nova aba' : 'O gestor envia como pagar'}:
-                    ele libera a licença, e você conecta sua conta MT5 em Minhas licenças.</p>
+                    ele libera a cópia, e você a ativa em Minhas cópias.</p>
                 {done.listing.checkout_url && (
                     <a href={done.listing.checkout_url} target="_blank" rel="noopener noreferrer" className="block">
                         <Button className="w-full"><ExternalLink /> Pagar</Button>
@@ -77,7 +78,7 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
                     <p className="flex items-start gap-2 text-muted-foreground"><MailCheck className="mt-0.5 size-4 shrink-0 text-warning" />
                         Confirme seu email pelo link na caixa de entrada: ele é pedido para conectar a conta.</p>
                 )}
-                <Link to="/client" className="block text-center font-medium text-primary underline-offset-4 hover:underline">Ir para Minhas licenças</Link>
+                <Link to="/client" className="block text-center font-medium text-primary underline-offset-4 hover:underline">Ir para Minhas cópias</Link>
             </div>
         );
     }
@@ -85,10 +86,10 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
         <div className="space-y-3">
             {listing.pay_online && <PlanPicker plans={listing.plans} value={planId} onChange={setPlanId} />}
             <Button size="lg" className="w-full" loading={sending} disabled={listing.pay_online && planId == null} onClick={subscribe}>
-                Assinar {listing.pay_online || listing.checkout_url ? 'e pagar' : 'agora'} {!sending && <ArrowRight />}
+                Copiar esta estratégia {!sending && <ArrowRight />}
             </Button>
             {listing.pay_online && (
-                <p className="text-xs text-muted-foreground">Pagamento no cartão pela Stripe. Renova todo mês; troque de plano ou cancele quando quiser em Minhas licenças.</p>
+                <p className="text-center text-xs text-muted-foreground">Pagamento seguro no cartão pela Stripe. Renova sozinho; troque de plano ou cancele quando quiser, em Pagamentos.</p>
             )}
         </div>
     );
@@ -99,8 +100,14 @@ const pct = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.t
 // The numbers that sell, above the fold: the same 90 days as the catalog card
 function Headline({ listing }: { listing: PublicListing }) {
     const { return_pct, max_drawdown_pct, trades, curve } = listing.stats;
+    const risk = riskOf(max_drawdown_pct);
     return (
         <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+            {risk && (
+                <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant={risk.variant}>Risco {risk.label.toLowerCase()}</Badge> {risk.hint}.
+                </p>
+            )}
             <dl className="grid grid-cols-3 gap-3">
                 <div>
                     <dt className="text-xs text-muted-foreground">Retorno 90 dias</dt>
@@ -191,7 +198,10 @@ export default function ListingPage() {
                         <p className="min-w-0 truncate text-sm text-muted-foreground">por <span className="font-medium text-foreground">{listing.manager.name}</span></p>
                         <div className="md:hidden"><AboutAuthor manager={listing.manager} /></div>
                     </div>
-                    {listing.summary && <p className="text-lg text-muted-foreground">{listing.summary}</p>}
+                    {listing.summary && <p className="text-base text-muted-foreground sm:text-lg">{listing.summary}</p>}
+                    {listing.manager.bio && (
+                        <p className="line-clamp-3 border-l-2 border-primary/40 pl-3 text-sm text-muted-foreground">{listing.manager.bio}</p>
+                    )}
                     <Headline listing={listing} />
                     {(listing.description || listing.strategies.length > 0 || listing.manager.bio) && (
                         <details className="group rounded-lg border border-border bg-card">
@@ -223,9 +233,20 @@ export default function ListingPage() {
                             <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Capital recomendado</dt>
                                 <dd>{formatMoney(listing.min_capital, listing.currency)}</dd></div>
                         )}
-                        <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Hospedagem</dt>
-                            <dd>{listing.hosting_allowed ? 'Disponível' : 'EA no seu computador'}</dd></div>
+                        {!listing.hosting_price && (
+                            <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Como copia</dt>
+                                <dd>{listing.hosting_allowed ? 'Nuvem ou seu computador' : 'EA no seu computador'}</dd></div>
+                        )}
                     </dl>
+                    {listing.hosting_price && (
+                        <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs">
+                            <Cloud className="mt-0.5 size-4 shrink-0 text-primary" />
+                            <span>
+                                <strong>Sem instalar nada:</strong> + {hostingPriceLabel(listing.hosting_price)} para rodar na nossa nuvem,
+                                com o computador desligado. Opcional: você escolhe depois de assinar.
+                            </span>
+                        </p>
+                    )}
                     <SubscribeBox listing={listing} />
                     <p className="text-xs text-muted-foreground">Resultados passados não garantem resultados futuros. Operar envolve risco de perda.</p>
                 </aside>

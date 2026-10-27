@@ -7,6 +7,9 @@ import EmptyState from '../../components/EmptyState';
 import SlideRow from '../../components/SlideRow';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { Faq, HowItWorks } from '../../components/market/HowItWorks';
+import { useAuth } from '../../context/AuthContext';
+import { riskOf } from '../../lib/risk';
 import { IconSelect, Select } from '../../components/ui/Field';
 import { formatMoney, priceLabel } from '../../lib/money';
 import { cn } from '../../lib/utils';
@@ -19,6 +22,11 @@ const NO_TRADES = 'Sem operações ainda';
 const LAST = [NO_ASSET, NO_TRADES];
 
 const SORTS = {
+    // Return for each point of the biggest fall: the top is not the one that risked the most
+    recommended: {
+        label: 'Recomendados',
+        key: (l: PublicListing) => (l.stats.return_pct == null ? Infinity : -(l.stats.return_pct / Math.max(l.stats.max_drawdown_pct ?? 0, 5))),
+    },
     return: { label: 'Maior retorno', key: (l: PublicListing) => -(l.stats.return_pct ?? -Infinity) },
     drawdown: { label: 'Menor queda', key: (l: PublicListing) => l.stats.max_drawdown_pct ?? Infinity },
     perLot: { label: 'Maior lucro por lote', key: (l: PublicListing) => -(l.stats.per_lot ?? -Infinity) },
@@ -29,7 +37,8 @@ type Sort = keyof typeof SORTS;
 
 const pct = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
 
-function ListingCard({ l }: { l: PublicListing }) {
+function ListingCard({ l, perLot = false }: { l: PublicListing; perLot?: boolean }) {
+    const risk = riskOf(l.stats.max_drawdown_pct);
     return (
         <Link to={`/marketplace/${l.slug}`} className="panel group flex flex-col p-5 transition-colors hover:border-primary/40">
             <div className="flex items-start justify-between gap-2">
@@ -49,25 +58,27 @@ function ListingCard({ l }: { l: PublicListing }) {
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div>
                         <dt className="text-xs text-muted-foreground">Retorno 90 dias</dt>
-                        <dd className={cn('font-semibold', (l.stats.return_pct ?? 0) > 0 && 'text-success', (l.stats.return_pct ?? 0) < 0 && 'text-destructive')}>
+                        <dd className={cn('text-lg font-semibold', (l.stats.return_pct ?? 0) > 0 && 'text-success', (l.stats.return_pct ?? 0) < 0 && 'text-destructive')}>
                             {pct(l.stats.return_pct)}
                         </dd>
                     </div>
-                    <div>
+                    <div title="O quanto a conta do gestor já caiu do topo nesse período">
                         <dt className="text-xs text-muted-foreground">Maior queda</dt>
-                        <dd className="font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
+                        <dd className="text-lg font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
                     </div>
-                    <div title="O resultado médio de cada lote fechado: quanto maior, mais folga para slippage e custos">
-                        <dt className="text-xs text-muted-foreground">Lucro por lote</dt>
-                        <dd className={cn((l.stats.per_lot ?? 0) > 0 && 'text-success', (l.stats.per_lot ?? 0) < 0 && 'text-destructive')}>
-                            {l.stats.per_lot == null ? '—' : formatMoney(l.stats.per_lot, l.stats.currency)}
-                        </dd>
-                    </div>
-                    <div>
-                        <dt className="text-xs text-muted-foreground">Operações</dt>
-                        <dd>{l.stats.trades}</dd>
-                    </div>
+                    {perLot && (
+                        <div title="O resultado médio de cada lote fechado: quanto maior, mais folga para slippage e custos" className="col-span-2">
+                            <dt className="text-xs text-muted-foreground">Lucro por lote</dt>
+                            <dd className={cn((l.stats.per_lot ?? 0) > 0 && 'text-success', (l.stats.per_lot ?? 0) < 0 && 'text-destructive')}>
+                                {l.stats.per_lot == null ? '—' : formatMoney(l.stats.per_lot, l.stats.currency)}
+                            </dd>
+                        </div>
+                    )}
                 </dl>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {risk && <Badge variant={risk.variant} title={risk.hint}>Risco {risk.label.toLowerCase()}</Badge>}
+                    <span>{l.stats.trades} operações</span>
+                </div>
                 <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} height={56} />
             </div>
             <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-3">
@@ -127,7 +138,8 @@ export default function Catalog() {
     const [listings, setListings] = useState<PublicListing[] | null>(null);
     const [failed, setFailed] = useState(false);
     const [market, setMarket] = useState('');
-    const [sort, setSort] = useState<Sort>('return');
+    const [sort, setSort] = useState<Sort>('recommended');
+    const { user } = useAuth();
 
     useEffect(() => {
         api.get<PublicListing[]>('/api/marketplace')
@@ -156,9 +168,12 @@ export default function Catalog() {
 
     return (
         <div className="space-y-6 sm:space-y-8">
-            <div className="space-y-2">
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Estratégias para copiar</h1>
-                <p className="max-w-2xl text-muted-foreground">O resultado real de cada gestor, copiado direto na sua conta MetaTrader 5.</p>
+            {!user && <HowItWorks />}
+            <div id="gestores" className="scroll-mt-24 space-y-2">
+                {user
+                    ? <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Gestores para copiar</h1>
+                    : <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Gestores para copiar</h2>}
+                <p className="max-w-2xl text-muted-foreground">O resultado real de cada gestor nos últimos 90 dias. Toque num deles para ver os detalhes.</p>
             </div>
 
             <div className="flex items-center justify-between gap-3 sm:hidden">
@@ -201,16 +216,18 @@ export default function Catalog() {
                 <div className="space-y-8">
                     {shelves.map(shelf => (
                         <Shelf key={shelf.title} title={shelf.title} count={shelf.items.length}>
-                            {shelf.items.map(l => <ListingCard key={l.slug} l={l} />)}
+                            {shelf.items.map(l => <ListingCard key={l.slug} l={l} perLot={sort === 'perLot'} />)}
                         </Shelf>
                     ))}
                 </div>
             ) : (
                 // A few portfolios: they slide on phones, a grid from md up
                 <SlideRow wide className="md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-                    {shown.map(l => <ListingCard key={l.slug} l={l} />)}
+                    {shown.map(l => <ListingCard key={l.slug} l={l} perLot={sort === 'perLot'} />)}
                 </SlideRow>
             )}
+
+            {!user && <Faq />}
         </div>
     );
 }
