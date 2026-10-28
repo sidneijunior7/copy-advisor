@@ -66,6 +66,7 @@ PLANO_TRANSPORTE.md
 ESTIMATIVA_HOSPEDAGEM.md
 ANALISE_RES21.md
 PLANO_ECOSSISTEMA.md
+PLANO_MVP.md
 AUDITORIA_PERFORMANCE.md
 
 # --- Spikes & Ferramentas Internas ---
@@ -73,3 +74,4 @@ tools/spike/ea/
 tools/spike/out/
 tools/spike/private/
 tools/perf/
+.claude/settings.local.json
