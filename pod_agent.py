@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 from typing import Dict, List, Optional
 
-VERSION = "1"
+VERSION = "2"
 API_URL = os.getenv("API_URL", "https://mirror.trademetric.com.br").rstrip("/")
 POD_KEY = os.getenv("POD_KEY", "")
 CAPACITY = int(os.getenv("CAPACITY", "10"))
@@ -41,6 +41,8 @@ WS_PORT = int(os.getenv("WS_PORT", "443"))
 WS_TLS = os.getenv("WS_TLS", "1") == "1"
 STAGGER_SECONDS = float(os.getenv("STAGGER_SECONDS", "20"))  # A starting terminal pegs a CPU
 LOGIN_TIMEOUT_S = float(os.getenv("LOGIN_TIMEOUT_S", "180"))
+STARTUP_GRACE_S = 60  # Wine creates terminal64.exe 2-8 s after the launch, more on a busy host
+STABLE_S = 600  # Running this long clears the failures, so the next crash waits the shortest backoff again
 POD_DIR = os.getenv("POD_DIR", "/opt/pod")
 BASE = "/root/.wine64/drive_c/MT5"  # The image's warmed MT5
 SLOTS_DIR = "/root/.wine64/drive_c/slots"
@@ -66,6 +68,8 @@ EXPERTS = [
      "O hub recusou a chave da licença"),
     (re.compile(r"Outro terminal conectou com esta licença"), "error", "Outro terminal assumiu esta licença"),
     (re.compile(r"conexão bloqueada pelo terminal"), "error", "O endereço do hub não está na lista do WebRequest do pod"),
+    (re.compile(r"Hub encerrou a conexão \(master\)"), "error",
+     "Esta conta roda um Master: o hub não copia para ela, para não repetir as operações do próprio Master"),
     (re.compile(r"Licença revogada ou expirada"), "running", "Licença revogada ou expirada: só gere as posições abertas"),
     (re.compile(r"Licença ativa: copiando"), "running", None),
 ]
@@ -122,10 +126,17 @@ class Slot:
     def running(self) -> bool:
         if self.proc is not None and self.proc.poll() is not None:
             self.proc = None  # Reaped, so it does not linger as a zombie
-        return self.pid() is not None
+        if self.pid() is not None:
+            return True
+        # Until terminal64.exe shows up, the launcher (start.exe, alive as long as the terminal) stands for it
+        return self.proc is not None and time.monotonic() - self.started_at < STARTUP_GRACE_S
 
     def stop(self):
         self.started_at = 0.0
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.kill()  # A launcher that never brought its terminal up, or one still starting it
+            self.proc.wait()
+        self.proc = None
         pid = self.pid()
         if pid is None:
             return
@@ -323,10 +334,12 @@ class Agent:
                     logger.warning(f"t{slot.id}: login refused; waiting for a new configuration")
                 elif slot.status == "starting" and slot.detail is None and now - slot.started_at > LOGIN_TIMEOUT_S:
                     slot.status, slot.detail = "error", NO_BROKER
+                if slot.failures and now - slot.started_at > STABLE_S:
+                    slot.failures = 0
                 continue
-            if slot.started_at:  # It was running and exited on its own
+            if slot.started_at:  # It was running and exited on its own, or never came up from its launcher
                 slot.read_logs()
-                slot.started_at = 0.0
+                slot.stop()
                 if slot.status == "login_failed":
                     slot.can_start = False
                     continue
