@@ -18,7 +18,7 @@ import smtplib
 import ssl
 import threading
 from email.message import EmailMessage
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -194,6 +194,19 @@ def send_sale(manager: models.User, sub: models.Subscription):
     send(manager.email, f"Nova assinatura paga: {sub.listing.title}",
          f"{client.name or client.email} ({client.email}) assinou {sub.listing.title}{account_of(sub)} "
          f"e pagou pela Stripe. A licença já foi liberada.\n\nVeja em {public_url()}/manager/subscriptions\n")
+
+
+def send_hosting_queue(admins: List[str], terminals: List[models.HostedTerminal]):
+    """Paid hosted terminals no pod took: the client paid and is waiting."""
+    lines = []
+    for t in terminals:
+        lic, client = t.license, t.license.client
+        who = f"{client.name or client.email} ({client.email})" if client else "sem cliente"
+        lines.append(f"- Conta MT5 {lic.client_mt5_login} em {t.server}, {who}, desde {t.updated_at:%d/%m %H:%M} UTC")
+    for to in admins:
+        send(to, f"Hospedagem paga na fila: {len(terminals)} terminal(is) sem pod",
+             "Estes terminais estão pagos, mas nenhum pod tem vaga para eles:\n\n" + "\n".join(lines)
+             + f"\n\nLibere uma vaga ou suba mais um pod. Veja em {public_url()}/dev/hosting\n")
 
 
 def send_decision(sub: models.Subscription):

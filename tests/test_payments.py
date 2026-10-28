@@ -350,15 +350,17 @@ def test_the_client_pays_for_hosting_and_the_terminal_runs_only_while_paid(clien
     fake = hosting_on
     _, _, _, lic, cli, email = claimed_license(client)
     old_hash = license_hash(lic["id"])
-    offer = client.get("/me/licenses", headers=cli).json()["hosting_price"]
-    assert offer == {"price": 49.9, "currency": "BRL", "days": 30}
+    offer = client.get("/me/licenses", headers=cli).json()
+    assert offer["hosting_price"] == {"price": 49.9, "currency": "BRL", "days": 30} and not offer["hosting_room"]
+    pod = make_pod("billing-pod")
+    assert sync(client, pod) == []
+    assert client.get("/me/licenses", headers=cli).json()["hosting_room"]
 
     r = client.put(f"/me/licenses/{lic['id']}/hosting", headers=cli, json={"server": "Tickmill-Demo", "password": "p4ss"})
     assert r.status_code == 200
     h = hosting_of(client, cli, lic["id"])
     assert h["state"] == "unpaid" and not h["billing"]["exempt"] and not h["billing"]["paid"]
     assert license_hash(lic["id"]) == old_hash  # Not paid yet: the client's own EA keeps copying
-    pod = make_pod("billing-pod")
     assert sync(client, pod) == []  # Nothing to run before the payment
 
     first = client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
@@ -446,3 +448,58 @@ def test_the_admin_sees_every_terminal_and_decides_who_pays(client, hosting_on):
     client.put(f"/admin/hosting/{row['id']}/exempt", headers=admin, json={"exempt": True})
     [again] = sync(client, pod)
     assert again["enabled"] and again["config_version"] == t["config_version"] + 1
+
+
+def test_no_room_in_the_pods_no_hosting_for_sale(client, hosting_on):
+    fake = hosting_on
+    _, _, _, lic, cli, _ = claimed_license(client)
+    body = {"server": "Tickmill-Demo", "password": "p4ss"}
+    assert client.put(f"/me/licenses/{lic['id']}/hosting", headers=cli, json=body).status_code == 409  # No pod online
+    pod = make_pod("full-pod")
+    sync(client, pod, capacity=1)
+    assert client.put(f"/me/licenses/{lic['id']}/hosting", headers=cli, json=body).status_code == 200
+
+    # A manager's terminal takes the only room before the client pays
+    _, mgr, _, other, _, _ = claimed_license(client)
+    assert client.put(f"/licenses/{other['id']}/hosting", headers=mgr, json={"server": "Demo", "password": "x"}).status_code == 200
+    assert len(sync(client, pod, capacity=1)) == 1
+    assert not client.get("/me/licenses", headers=cli).json()["hosting_room"]
+    opened = len(fake.sessions)
+    assert client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).status_code == 409
+    assert len(fake.sessions) == opened  # Refused before Stripe
+
+    sync(client, pod, capacity=2)  # Room again
+    assert client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).status_code == 200
+
+
+def test_the_admins_hear_of_a_paid_terminal_waiting_for_a_pod(client, hosting_on):
+    fake = hosting_on
+    _, _, _, lic, cli, email = claimed_license(client)
+    pod = make_pod("busy-pod")
+    sync(client, pod, capacity=1)
+    client.put(f"/me/licenses/{lic['id']}/hosting", headers=cli, json={"server": "Tickmill-Demo", "password": "p4ss"})
+    sid = client.post(f"/me/licenses/{lic['id']}/hosting/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
+    send(client, fake.pay(sid))
+    free_pods()  # The pod is gone before it took the terminal
+    h = hosting_of(client, cli, lic["id"])
+    assert h["state"] == "pending" and "preparando" in h["detail"]
+
+    db = database.SessionLocal()
+    try:
+        t = db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic["id"]).one()
+        now = datetime.datetime.utcnow()
+        assert payments.hosting.queue_alerts(db, now) == []  # Not long enough yet
+        later = now + payments.hosting.QUEUE_ALERT_AFTER + datetime.timedelta(seconds=1)
+        assert [x.id for x in payments.hosting.queue_alerts(db, later)] == [t.id]
+        db.commit()
+        assert payments.hosting.queue_alerts(db, later) == []  # Once
+    finally:
+        db.close()
+
+    [taken] = sync(client, make_pod("new-pod"))  # A pod takes it: the mark goes, for a later wait
+    assert taken["enabled"]
+    db = database.SessionLocal()
+    try:
+        assert db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic["id"]).one().queue_alerted_at is None
+    finally:
+        db.close()

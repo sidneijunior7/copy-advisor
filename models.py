@@ -268,6 +268,7 @@ class HostedTerminal(Base):
     stripe_status = Column(String(32)) # active, trialing, past_due, canceled...
     stripe_period_end = Column(DateTime) # The paid period's end, as Stripe last said
     stripe_cancel_at_period_end = Column(Boolean, nullable=False, default=False)
+    queue_alerted_at = Column(DateTime) # The admins were told it waits for a pod (hosting.queue_alerts)
 
     license = relationship("License")
     pod = relationship("HostedPod")

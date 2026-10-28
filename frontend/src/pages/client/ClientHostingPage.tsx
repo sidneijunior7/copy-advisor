@@ -58,9 +58,11 @@ export default function ClientHostingPage() {
                         <EmptyState
                             icon={<Server />}
                             title="Nenhuma conta hospedada"
-                            description={data.hosting_available
-                                ? 'Conecte a conta MT5 de uma licença válida para poder hospedá-la.'
-                                : 'A hospedagem ainda não está disponível.'}
+                            description={!data.hosting_available
+                                ? 'A hospedagem ainda não está disponível.'
+                                : !data.hosting_room
+                                    ? 'A nuvem está sem vagas no momento. Use o EA no seu computador por enquanto e volte mais tarde.'
+                                    : 'Conecte a conta MT5 de uma licença válida para poder hospedá-la.'}
                         />
                     </div>
                 )

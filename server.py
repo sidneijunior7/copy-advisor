@@ -309,11 +309,32 @@ async def lifespan(app: FastAPI):
     relay.start()
     if dash_bridge.INTERVAL > 0:
         threading.Thread(target=dash_bridge.run_forever, args=(stop,), name="dash-bridge", daemon=True).start()
+    threading.Thread(target=watch_hosting_queue, args=(stop,), name="hosting-queue", daemon=True).start()
     yield
     stop.set()
     relay.join(2)
 
 app = FastAPI(lifespan=lifespan)
+
+
+def watch_hosting_queue(stop: threading.Event):
+    """Emails the platform's admins about paid hosted terminals no pod took (hosting.queue_alerts)."""
+    while not stop.wait(hosting.WATCH_SECONDS):
+        if not mailer.enabled() or payments.hosting_price() is None:
+            continue
+        db = database.SessionLocal()
+        try:
+            stuck = hosting.queue_alerts(db, datetime.datetime.utcnow())
+            if stuck:
+                admins = [u.email for u in db.query(models.User).filter(models.User.role == "TDM_DEV")]
+                mailer.send_hosting_queue(admins, stuck)
+                logger.warning(f"Hosting queue: terminals {[t.id for t in stuck]} paid and waiting for a pod")
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Hosting queue watch failed: {type(e).__name__}: {str(e)[:200]}")
+        finally:
+            db.close()
 
 
 async def database_unavailable(request: Request, exc: Exception):
@@ -1143,8 +1164,9 @@ def list_my_licenses(current_user: models.User = Depends(get_current_user), db: 
     sessions = {s.get("license_id"): s for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if ids else {}
     available = hosting.cipher() is not None
     billing = stripe_subscriptions(ids, db)
+    room = available and hosting.room(db, now) > 0
     return {"hosting_available": available, "servers": hosting.known_servers(db, now) if available else [],
-            "hosting_price": payments.hosting_terms() if available else None,
+            "hosting_price": payments.hosting_terms() if available else None, "hosting_room": room,
             "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) | {"billing": billing_view(billing.get(l.id))}
                          for l in lics]}
 
@@ -1205,12 +1227,21 @@ def update_my_hosting(license_id: int, changes: ClientHosting, current_user: mod
     f = hosting_cipher()
     lic = own_license(license_id, current_user, db)
     account_required(lic)
+    charged = payments.hosting_price() is not None
+    if charged and db.query(models.HostedTerminal).filter(models.HostedTerminal.license_id == lic.id).first() is None:
+        no_room(db)
     return save_hosting(lic, hosting.HostingUpdate(**changes.model_dump()), f, current_user, db,
                         exempt=payments.hosting_price() is None)
 
 @app.delete("/me/licenses/{license_id}/hosting")
 def remove_my_hosting(license_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     return delete_hosting(own_license(license_id, current_user, db), current_user, db)
+
+def no_room(db: Session):
+    """Nobody pays for hosting the pods have no room for."""
+    if hosting.room(db, datetime.datetime.utcnow()) <= 0:
+        raise HTTPException(status_code=409, detail="A nuvem está sem vagas no momento. Use o EA no seu computador "
+                                                    "por enquanto e tente de novo mais tarde.")
 
 class RenewalChange(BaseModel):
     renew: bool  # False: ends with the paid period; True: undoes that
@@ -1228,6 +1259,8 @@ def open_hosting_checkout(license_id: int, current_user: models.User = Depends(g
     t = my_terminal(license_id, current_user, db)
     if t.exempt: raise HTTPException(status_code=409, detail="A hospedagem desta licença não é cobrada")
     if t.stripe_status in payments.RENEWING: raise HTTPException(status_code=409, detail="A hospedagem desta licença já está paga")
+    if t.pod_id is None:  # A terminal that ran before keeps its place in its pod
+        no_room(db)
     try:
         url = payments.hosting_checkout(t, current_user)
     except payments.PaymentError as e:
@@ -1600,7 +1633,9 @@ def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
     """The listing, and what hosting costs when it allows hosting: the client sees the whole price before paying."""
     listing = published_listing(slug, db)
     out = marketplace.public_listing(db, listing, datetime.datetime.utcnow())
-    out["hosting_price"] = payments.hosting_terms() if listing.hosting_allowed and hosting.cipher() is not None else None
+    hosts = listing.hosting_allowed and hosting.cipher() is not None
+    out["hosting_room"] = hosts and hosting.room(db, datetime.datetime.utcnow()) > 0  # Full: not offered for now
+    out["hosting_price"] = payments.hosting_terms() if out["hosting_room"] else None
     return out
 
 def public_days(days: int) -> int:

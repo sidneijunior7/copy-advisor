@@ -149,7 +149,7 @@ export default function ActivationWizard({ license, data, onChanged, onDone }: {
 }) {
     const [mode, setMode] = useState<Mode | null>(license.hosting ? 'cloud' : license.has_key ? 'computer' : null);
     const [busy, setBusy] = useState(false);
-    const cloud = data.hosting_available;
+    const cloud = data.hosting_available && (data.hosting_room || license.hosting != null);  // No room: the computer only
     const price = data.hosting_price;
     const hosted = license.hosting;
     const copying = license.connection != null || hosted?.state === 'running';

@@ -235,7 +235,7 @@ export default function ListingPage() {
                         )}
                         {!listing.hosting_price && (
                             <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Como copia</dt>
-                                <dd>{listing.hosting_allowed ? 'Nuvem ou seu computador' : 'EA no seu computador'}</dd></div>
+                                <dd>{listing.hosting_allowed && listing.hosting_room ? 'Nuvem ou seu computador' : 'EA no seu computador'}</dd></div>
                         )}
                     </dl>
                     {listing.hosting_price && (

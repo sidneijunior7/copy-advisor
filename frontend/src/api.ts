@@ -334,7 +334,11 @@ export type ClientDashboardData = {
     lead_highlights: PublicListing[];
 };
 
-export type MyLicenses = { hosting_available: boolean; servers: string[]; hosting_price: HostingPrice | null; licenses: ClientLicense[] };
+export type MyLicenses = {
+    hosting_available: boolean; servers: string[]; hosting_price: HostingPrice | null;
+    hosting_room: boolean; // The pods have room for one more: without it, hosting is not offered
+    licenses: ClientLicense[];
+};
 
 // One copy on the client's account, from the Slave's reports. result: close minus open price, signed by direction
 export type CopyRow = {
@@ -507,6 +511,7 @@ export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended
     manager: { name: string; bio: string | null; youtube_url: string | null; instagram_url: string | null };
     strategies: string[];
     hosting_price?: HostingPrice | null; // On the listing's own page, when it can be hosted and hosting is charged
+    hosting_room?: boolean; // On the listing's own page: the pods have room, so the cloud is offered
     stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & {
         per_lot: number | null; // The average result per lot closed, in the portfolio's currency
         assets: string[]; // What the copy traded, the most lots first (WIN, WDO, EURUSD...); empty without copies

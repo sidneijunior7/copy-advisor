@@ -15,7 +15,9 @@ pod deletes its folder.
 
 A client hosting its own license pays for it in Stripe, a subscription apart from the portfolio's (payments.py): the
 terminal keeps the credentials but only runs while paid, and gets the license's new key when a pod first runs it, so
-the client's own Slave keeps copying until then. Terminals a manager hosts are exempt.
+the client's own Slave keeps copying until then. Terminals a manager hosts are exempt. Clients are only offered
+hosting while the pods online have room for one more (room), and the platform's admins get an email when a paid
+terminal waits in the queue anyway (watch).
 """
 import datetime
 import json
@@ -36,6 +38,8 @@ POD_OFFLINE_SECONDS = 120  # A pod silent for longer is shown as offline
 MAX_CAPACITY = 200
 GRACE = datetime.timedelta(days=2)  # Stripe retries a failed renewal for days: the terminal does not stop at the first try
 ENDED = ("canceled", "unpaid", "incomplete_expired")  # Stripe stopped charging: the terminal stops at once
+QUEUE_ALERT_AFTER = datetime.timedelta(minutes=5)  # A paid terminal waiting this long for a pod: the admins get an email
+WATCH_SECONDS = 60
 # What a pod reports for a terminal (pod_agent.py)
 POD_STATUSES = ("starting", "running", "login_failed", "key_refused", "error", "restarting", "stopped")
 
@@ -190,7 +194,9 @@ def state(t: models.HostedTerminal, now: datetime.datetime, connected: bool = Fa
             return "unpaid", "Aguardando o pagamento da hospedagem"
         return "unpaid", "A hospedagem venceu. Assine de novo para o terminal voltar a copiar"
     if t.pod is None:
-        return "pending", "Aguardando um pod com espaço livre"
+        if t.exempt:
+            return "pending", "Aguardando um pod com espaço livre"
+        return "pending", "Estamos preparando o seu servidor. A equipe já foi avisada e ele entra no ar em breve"
     if not pod_online(t.pod, now):
         return "pod_offline", f"O pod {t.pod.name} não responde"
     if connected:
@@ -240,6 +246,41 @@ def pod_out(pod: models.HostedPod, terminals: List[models.HostedTerminal], now: 
             "servers": len(info.get("servers") or [])}
 
 
+def waiting(db: Session, now: datetime.datetime) -> List[models.HostedTerminal]:
+    """Terminals that should run but no pod took yet."""
+    return [t for t in (db.query(models.HostedTerminal)
+                        .filter(models.HostedTerminal.pod_id.is_(None), models.HostedTerminal.enabled.is_(True))
+                        .order_by(models.HostedTerminal.id)) if paid(t, now)]
+
+
+def room(db: Session, now: datetime.datetime) -> int:
+    """Terminals the pods online can still take, after the ones already waiting for them."""
+    pods = [p for p in db.query(models.HostedPod).filter(models.HostedPod.revoked_at.is_(None)) if pod_online(p, now)]
+    if not pods:
+        return 0
+    running = {}
+    for t in db.query(models.HostedTerminal).filter(models.HostedTerminal.pod_id.in_([p.id for p in pods])):
+        if runs(t, now):
+            running[t.pod_id] = running.get(t.pod_id, 0) + 1
+    free = sum(max(0, p.capacity - running.get(p.id, 0)) for p in pods)
+    return max(0, free - len(waiting(db, now)))
+
+
+def queue_alerts(db: Session, now: datetime.datetime) -> List[models.HostedTerminal]:
+    """Paid terminals waiting longer than QUEUE_ALERT_AFTER that nobody was told about yet, marked as told. The
+    conditional update keeps two API processes from both telling. A pod taking the terminal clears the mark."""
+    out = []
+    for t in waiting(db, now):
+        if t.exempt or t.queue_alerted_at is not None or (t.updated_at or now) > now - QUEUE_ALERT_AFTER:
+            continue
+        taken = (db.query(models.HostedTerminal)
+                 .filter(models.HostedTerminal.id == t.id, models.HostedTerminal.queue_alerted_at.is_(None))
+                 .update({models.HostedTerminal.queue_alerted_at: now}, synchronize_session=False))
+        if taken:
+            out.append(t)
+    return out
+
+
 def known_servers(db: Session, now: datetime.datetime) -> List[str]:
     """Broker servers the pods online have a servers.dat for: a terminal on any other cannot connect."""
     servers = set()
@@ -272,15 +313,13 @@ def sync(db: Session, pod: models.HostedPod, report: PodSync, f: Fernet, now: da
 
     free = pod.capacity - sum(1 for t in mine.values() if runs(t, now))
     if free > 0:
-        pending = [t.id for t in (db.query(models.HostedTerminal)
-                                  .filter(models.HostedTerminal.pod_id.is_(None), models.HostedTerminal.enabled.is_(True))
-                                  .order_by(models.HostedTerminal.id)) if paid(t, now)][:free]
-        for tid in pending:
+        for tid in [t.id for t in waiting(db, now)][:free]:
             # Two pods syncing at once: only one gets each terminal
             taken = (db.query(models.HostedTerminal)
                      .filter(models.HostedTerminal.id == tid, models.HostedTerminal.pod_id.is_(None))
                      .update({models.HostedTerminal.pod_id: pod.id, models.HostedTerminal.status: "starting",
-                              models.HostedTerminal.status_detail: None, models.HostedTerminal.status_at: now},
+                              models.HostedTerminal.status_detail: None, models.HostedTerminal.status_at: now,
+                              models.HostedTerminal.queue_alerted_at: None},
                              synchronize_session=False))
             if taken:
                 mine[tid] = db.get(models.HostedTerminal, tid)

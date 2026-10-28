@@ -211,7 +211,7 @@ export default function LicenseDetail() {
                     </div>
                     <ClientHosting
                         license={license}
-                        available={data?.hosting_available ?? false}
+                        available={(data?.hosting_available && data.hosting_room) ?? false}
                         servers={data?.servers ?? []}
                         price={data?.hosting_price ?? null}
                         offerOpen={offerOpen}

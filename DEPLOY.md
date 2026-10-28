@@ -212,7 +212,9 @@ O MetaTrader 5 do cliente roda num pod nosso, sem nada instalado do lado dele. O
   - o cliente informa o servidor e a senha em Minhas licenças → licença e vai para o Checkout. O terminal só liga quando o pagamento passa, e só então a licença ganha a chave nova: até lá, o EA do computador do cliente continua copiando;
   - cancelada, roda até o fim do período pago. Se a cobrança falha, desliga 2 dias depois do fim do período; se a Stripe encerra a assinatura, desliga na hora. Servidor e senha ficam guardados para assinar de novo;
   - remover a hospedagem encerra a assinatura dela na hora, sem reembolso;
-  - o que o gestor hospeda pela tela Clientes é isento, e os terminais anteriores à migração `0022` também.
+  - o que o gestor hospeda pela tela Clientes é isento, e os terminais anteriores à migração `0022` também;
+  - **vagas:** o cliente só vê a oferta, só cadastra a hospedagem e só abre o Checkout quando os pods no ar têm vaga (capacidade menos os terminais rodando e os que já esperam). Sem vaga, a nuvem some da oferta e do anúncio, e o cliente é orientado a usar o EA no computador;
+  - **aviso de fila** (migração `0023`): um terminal pago que espera um pod por mais de 5 minutos gera um email para todos os usuários `TDM_DEV`, uma vez por espera. Precisa do SMTP configurado. O cliente vê "Estamos preparando o seu servidor".
 - **Deploy:** a migração `0011` cria as tabelas. Configure as variáveis do SMTP na API antes de anunciar o cadastro: sem elas, quem esquecer a senha depende do suporte.
 
 ### Como os seguidores copiaram

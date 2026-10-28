@@ -79,7 +79,7 @@ def test_migrate_from_every_origin(pg_url, origin):
         column = "client_mt5_login" if table == "licenses" else "mt5_login"
         assert next(c for c in insp.get_columns(table) if c["name"] == column)["nullable"], (origin, table)
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0022_hosting_billing"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0023_hosting_queue_alert"
         if origin != "empty":
             assert c.execute(text("SELECT magic_number FROM strategies")).scalar() == 42
             # The plain-text master key was adopted as a hashed master key, exactly once, and revoked at the
@@ -121,14 +121,22 @@ def test_concurrent_migrations_are_serialized(pg_url):
     engine = create_engine(pg_url)
     reset(engine)
     env = dict(os.environ, DATABASE_URL=pg_url)
-    procs = [subprocess.Popen([sys.executable, "migrate.py"], cwd=ROOT, env=env,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-             for _ in range(2)]
-    outputs = [p.communicate(timeout=120)[0] for p in procs]
+    # Output to files, not pipes: one migrate.py blocked on a full pipe while holding the lock would hang the other
+    logs = [tempfile.TemporaryFile(mode="w+") for _ in range(2)]
+    procs = [subprocess.Popen([sys.executable, "migrate.py"], cwd=ROOT, env=env, stdout=log,
+                              stderr=subprocess.STDOUT, text=True)
+             for log in logs]
+    for p in procs:
+        p.wait(timeout=120)
+    outputs = []
+    for log in logs:
+        log.seek(0)
+        outputs.append(log.read())
+        log.close()
     # Without the lock both would CREATE TABLE at once and one of them would fail
     assert [p.returncode for p in procs] == [0, 0], outputs
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0022_hosting_billing"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0023_hosting_queue_alert"
         # Transaction-scoped lock: nothing stays held once migrate.py is done
         assert c.execute(text("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar() == 0
 

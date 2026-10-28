@@ -41,7 +41,7 @@ export const formatPrice = (value: number) =>
 // The licenses the hosting offer is for: valid, with their MT5 account, already copying from the client's own
 // computer. One still being set up chooses between the cloud and the computer in the activation instead
 export const hostingCandidates = (data: MyLicenses | null): ClientLicense[] =>
-    data?.hosting_available && data.hosting_price
+    data?.hosting_available && data.hosting_room && data.hosting_price
         ? data.licenses.filter(l => !l.hosting && l.valid && l.mt5_login != null && !needsSetup(l))
         : [];
 
