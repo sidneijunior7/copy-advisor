@@ -17,6 +17,11 @@ portfolio of its license; it never picks one. The lines after the HELLO are thos
 Errors
     hub -> client   ERR|<code>|<reason>, then close with an application code (4400, 4401...)
 
+An account is never a Master and a Slave at once: the Slave would copy the Master's own trades back into
+the account, and with the original magic kept (the Slave's default) the Master would publish those copies
+again, a loop held back only by the lot limit. A Slave is refused (ERR|master) while a Master runs on its
+account, and dropped when one connects.
+
 A license that is revoked or expires keeps its connection in manage-only mode: the Slave receives only
 the positions that were already open when the license stopped being valid, so its copies close with
 the Master's, and nothing opened after that. Positions left out arrive as SKIP, which keeps the Slave's
@@ -57,6 +62,7 @@ CLOSE_RATE = 4429
 CLOSE_BUSY = 4503
 
 PATHS = ("/v1/master", "/v1/slave")
+MASTER_ACCOUNT = "this account runs a Master: copying into it would copy the Master's own trades"
 MASTER_MESSAGES = ("V2|", "V2SYNC|", "V2HELLO|", "V2DEAL|", "V2ACC|")
 
 
@@ -255,7 +261,8 @@ class Edge:
             hello = hello if isinstance(hello, str) else ""
             outcome = self._hello_master(ws, ip, hello) if ws.request.path == "/v1/master" else self._hello_slave(ws, ip, hello)
             if not isinstance(outcome, Session):
-                self._fail(ip)
+                if outcome[0] != "master":  # A pod's terminals share its IP: one refused Slave must not block them
+                    self._fail(ip)
                 self._warn(f"refused:{ip}:{outcome[0]}", f"{ws.request.path} from {ip} refused: {outcome[0]} ({outcome[1]})")
                 await self._refuse(ws, *outcome)
                 return
@@ -334,6 +341,8 @@ class Edge:
             return ("auth", "unknown or revoked license key", CLOSE_AUTH)
         if lic.login != login:
             return ("login", f"this license is for account {lic.login}", CLOSE_AUTH)
+        if any(m.login == login for m in self.masters.values()):
+            return ("master", MASTER_ACCOUNT, CLOSE_AUTH)
 
         old = self.slave_by_license.get(lic.id)
         if old is not None:
@@ -378,6 +387,8 @@ class Edge:
         s.manager_id, s.key_id = manager.id, master_key.id
         s.outbox.put(f"WELCOME|{self.core.epoch}|{self.heartbeat_seconds:g}")
         self.masters[(master_key.id, login)] = s
+        for peer in [p for p in self.slave_by_license.values() if p.login == login]:
+            self.kick(peer, "master", MASTER_ACCOUNT, CLOSE_AUTH)
         self.core.master_key_used(master_key)
         logger.info(f"master {login} ({ip}) connected: manager {manager.id}, key {master_key.id}, ea {s.version}")
         return s

@@ -897,6 +897,7 @@ def create_license(license_data: LicenseCreate, current_user: models.User = Depe
     if existing:
         state = "ativa" if existing.is_active else "revogada: reative-a na lista"
         raise HTTPException(status_code=409, detail=f"A conta {license_data.client_mt5_login} já tem licença neste portfólio ({state})")
+    refuse_master_account(db, license_data.client_mt5_login)
 
     new_license = models.License(
         portfolio_id=license_data.portfolio_id,
@@ -1002,6 +1003,8 @@ def update_hosting(license_id: int, changes: hosting.HostingUpdate, current_user
     return save_hosting(lic, changes, f, current_user, db)
 
 def save_hosting(lic: models.License, changes: hosting.HostingUpdate, f, user: models.User, db: Session, exempt: bool = True):
+    if changes.enabled or db.query(models.HostedTerminal.id).filter(models.HostedTerminal.license_id == lic.id).first() is None:
+        refuse_master_account(db, lic.client_mt5_login)  # Turning off or removing one that slipped through stays possible
     now = datetime.datetime.utcnow()
     try:
         t, created = hosting.upsert(db, lic, changes, f, now, set_license_key, exempt)
@@ -1298,11 +1301,22 @@ def connect_account(license_id: int, data: AccountIn, current_user: models.User 
     if db.query(models.License).filter(models.License.portfolio_id == lic.portfolio_id,
                                        models.License.client_mt5_login == data.mt5_login).first():
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio")
+    refuse_master_account(db, data.mt5_login)
     lic.client_mt5_login = data.mt5_login
     db.commit()
     logger.info(f"License {lic.id}: client {current_user.id} connected MT5 account {data.mt5_login}")
     notify_hub()
     return my_license_view(lic, db)
+
+def refuse_master_account(db: Session, login: Optional[int]):
+    """A Slave on a Master's account would copy the Master's own trades back into it, and the Master would publish
+    those copies again (the hub drops such a Slave too: hub_ws.py)."""
+    if login is None:
+        return
+    if (db.query(models.MasterAccount.id).filter(models.MasterAccount.master_login == login).first() is not None
+            or db.query(models.Portfolio.id).filter(models.Portfolio.master_login == login).first() is not None):
+        raise HTTPException(status_code=409, detail=f"A conta {login} é a conta de um Master: copiar para ela repetiria "
+                                                    "as operações do próprio Master. Use outra conta MT5")
 
 def account_required(lic: models.License):
     if lic.client_mt5_login is None:
@@ -1688,6 +1702,7 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
         models.License.portfolio_id == listing.portfolio_id, models.License.client_mt5_login == data.mt5_login).first()
     if existing is not None and existing.client_user_id not in (None, current_user.id):
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio em outro cadastro")
+    refuse_master_account(db, data.mt5_login)
     if subscribe_limiter.blocked(f"subscribe:{current_user.id}"):
         raise HTTPException(status_code=429, detail="Pedidos demais hoje. Tente de novo amanhã ou fale com o gestor")
     subscribe_limiter.fail(f"subscribe:{current_user.id}")

@@ -15,6 +15,7 @@ import marketplace  # noqa: E402
 import models  # noqa: E402
 import server  # noqa: E402
 from test_clients import client_headers, fresh_limits  # noqa: E402,F401
+from test_hosting import master_runs_on  # noqa: E402
 from test_management import make_manager, make_portfolio  # noqa: E402
 
 
@@ -139,6 +140,19 @@ def test_buy_without_the_account_and_connect_it_on_the_license(client):
     assert r.status_code == 200 and r.json()["mt5_login"] == login + 1
     assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login + 2}).status_code == 409
     assert client.post(f"/me/licenses/{lic['id']}/key", headers=cli).status_code == 200
+
+
+def test_a_master_account_is_neither_bought_for_nor_connected(client):
+    manager_id, mgr, portfolio_id, listing = published(client, title=f"Conta do master {uuid.uuid4().hex[:6]}")
+    cli, _ = client_headers(client)
+    login = uuid.uuid4().int % 10**8
+    master_runs_on(manager_id, login)
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login})
+    assert r.status_code == 409 and "conta de um Master" in r.json()["detail"]
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={})
+    client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={})
+    [lic] = client.get("/me/licenses", headers=cli).json()["licenses"]
+    assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login}).status_code == 409
 
 
 def test_reject_cancel_and_someone_elses_account(client):

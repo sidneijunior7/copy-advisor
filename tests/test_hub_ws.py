@@ -322,6 +322,27 @@ async def test_master_publishes_over_ws_bound_to_its_login():
 
 
 @run_async
+async def test_a_slave_never_runs_on_a_master_account():
+    async with Env(fails_per_ip=2) as env:
+        slave = await env.slave()
+        await recv(slave), await recv(slave), await recv(slave)  # WELCOME, CFG, SNAP
+        master = await env.master(login=31337)  # The Slave's account
+        assert await recv(master) == "WELCOME|42|5"
+        msgs, code = await until_closed(slave)
+        assert msgs == [f"ERR|master|{hub_ws.MASTER_ACCOUNT}"] and code == 4401
+        for _ in range(3):  # Retried from a pod's IP: refused, never counted against the address
+            msgs, code = await until_closed(await env.slave())
+            assert msgs == [f"ERR|master|{hub_ws.MASTER_ACCOUNT}"] and code == 4401
+        assert env.edge.slave_by_license == {}
+
+        await master.close()
+        await asyncio.sleep(0.1)
+        slave = await env.slave()  # The Master gone, the Slave copies again
+        assert await recv(slave) == "WELCOME|42|5|7|1|2.5"
+        await slave.close()
+
+
+@run_async
 async def test_unknown_master_key_is_refused():
     async with Env() as env:
         msgs, code = await until_closed(await env.master(key="mst_nope"))

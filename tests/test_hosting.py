@@ -248,3 +248,41 @@ def test_only_the_owner_and_valid_inputs(client):
                 {"server": "Demo", "password": "x", "inputs": {"symbol_map": "A=B\nC"}}):
         assert client.put(f"/licenses/{lic['id']}/hosting", headers=headers, json=bad).status_code == 422, bad
     assert client.get("/hosting", headers=intruder).json()["terminals"] == []
+
+
+def master_runs_on(manager_id, login):
+    db = database.SessionLocal()
+    try:
+        db.add(models.MasterAccount(manager_id=manager_id, master_login=login, trade_mode="demo"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_master_account_is_never_a_slave(client):
+    free_pods()
+    manager_id, headers = make_manager()
+    portfolio_id, _ = make_portfolio(manager_id)
+    login = uuid.uuid4().int % 10**8
+    master_runs_on(manager_id, login)
+    r = client.post("/licenses", headers=headers, json={"client_mt5_login": login, "max_lots": 1, "portfolio_id": portfolio_id})
+    assert r.status_code == 409 and f"A conta {login} é a conta de um Master" in r.json()["detail"]
+
+    db = database.SessionLocal()  # The account a portfolio copies from counts too, before its Master ever connects
+    try:
+        db.get(models.Portfolio, portfolio_id).master_login = login + 1
+        db.commit()
+    finally:
+        db.close()
+    r = client.post("/licenses", headers=headers, json={"client_mt5_login": login + 1, "max_lots": 1, "portfolio_id": portfolio_id})
+    assert r.status_code == 409
+
+    # A license from before the Master showed up on its account: not hosted, though one already hosted can be stopped
+    lic, running = make_license(client, headers, portfolio_id), make_license(client, headers, portfolio_id)
+    assert client.put(f"/licenses/{running['id']}/hosting", headers=headers, json={"server": "Demo", "password": "a"}).status_code == 200
+    master_runs_on(manager_id, lic["client_mt5_login"])
+    master_runs_on(manager_id, running["client_mt5_login"])
+    assert client.put(f"/licenses/{lic['id']}/hosting", headers=headers, json={"server": "Demo", "password": "a"}).status_code == 409
+    assert client.put(f"/licenses/{running['id']}/hosting", headers=headers, json={"enabled": False}).status_code == 200
+    assert client.put(f"/licenses/{running['id']}/hosting", headers=headers, json={"enabled": True}).status_code == 409
+    assert client.delete(f"/licenses/{running['id']}/hosting", headers=headers).status_code == 200
