@@ -490,7 +490,7 @@ export default function ClientDashboard() {
                                         <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground border-t border-border/50 pt-2">
                                             <span>Hoje: <strong>{s.trades_today} op.</strong></span>
                                             <span className={cn('font-mono font-medium', s.profit_today > 0 && 'text-success', s.profit_today < 0 && 'text-destructive')}>
-                                                {s.profit_today !== 0 ? `${s.profit_today > 0 ? '+' : ''}${formatMoney(s.profit_today, currency)}` : '0,00'}
+                                                {s.profit_today !== 0 ? `${s.profit_today > 0 ? '+' : ''}${formatMoney(s.profit_today, s.currency)}` : '0,00'}
                                             </span>
                                         </div>
                                     </div>
@@ -565,19 +565,19 @@ export default function ClientDashboard() {
                                 <div>
                                     <span className="text-[10px] text-muted-foreground block">Hoje</span>
                                     <span className={cn('font-mono font-medium', t.profit_today > 0 && 'text-success', t.profit_today < 0 && 'text-destructive')}>
-                                        {t.profit_today > 0 ? '+' : ''}{formatMoney(t.profit_today, currency)}
+                                        {t.profit_today > 0 ? '+' : ''}{formatMoney(t.profit_today, t.currency)}
                                     </span>
                                 </div>
                                 <div>
                                     <span className="text-[10px] text-muted-foreground block">7 dias</span>
                                     <span className={cn('font-mono font-medium', t.profit_week > 0 && 'text-success', t.profit_week < 0 && 'text-destructive')}>
-                                        {t.profit_week > 0 ? '+' : ''}{formatMoney(t.profit_week, currency)}
+                                        {t.profit_week > 0 ? '+' : ''}{formatMoney(t.profit_week, t.currency)}
                                     </span>
                                 </div>
                                 <div>
                                     <span className="text-[10px] text-muted-foreground block">30 dias</span>
                                     <span className={cn('font-mono font-medium', t.profit_month > 0 && 'text-success', t.profit_month < 0 && 'text-destructive')}>
-                                        {t.profit_month > 0 ? '+' : ''}{formatMoney(t.profit_month, currency)}
+                                        {t.profit_month > 0 ? '+' : ''}{formatMoney(t.profit_month, t.currency)}
                                     </span>
                                 </div>
                             </div>

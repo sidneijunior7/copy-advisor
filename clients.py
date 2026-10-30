@@ -9,9 +9,11 @@ portfolio allows (portfolios.client_limits). The license's lot limit caps the co
 import datetime
 import json
 import secrets
+from collections import Counter
 from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import hosting
@@ -351,15 +353,22 @@ def client_dashboard(db: Session, user: models.User, now: datetime.datetime, day
         cum += p
         curve.append({"t": t.isoformat(), "v": round(cum, 2)})
 
-    # Detect currency
-    currency = "BRL"
-    snap = (db.query(models.AccountSnapshot)
-            .filter(models.AccountSnapshot.kind == "slave",
-                    models.AccountSnapshot.owner_id.in_([l.id for l in lics]),
-                    models.AccountSnapshot.currency.isnot(None))
-            .order_by(models.AccountSnapshot.hour.desc()).first())
-    if snap and snap.currency:
-        currency = snap.currency
+    # Each copy in its own account's currency, from the account's latest snapshot. The totals in the currency of
+    # the accounts that traded: the latest snapshot of any account painted a BRL result as USD when another
+    # license of the same client sat on a USD account without trades
+    latest = (db.query(models.AccountSnapshot.owner_id, func.max(models.AccountSnapshot.hour).label("hour"))
+              .filter(models.AccountSnapshot.kind == "slave",
+                      models.AccountSnapshot.owner_id.in_([l.id for l in lics]),
+                      models.AccountSnapshot.currency.isnot(None))
+              .group_by(models.AccountSnapshot.owner_id).subquery())
+    currencies = dict(db.query(models.AccountSnapshot.owner_id, models.AccountSnapshot.currency)
+                      .join(latest, (models.AccountSnapshot.owner_id == latest.c.owner_id)
+                            & (models.AccountSnapshot.hour == latest.c.hour))
+                      .filter(models.AccountSnapshot.kind == "slave",
+                              models.AccountSnapshot.currency.isnot(None)).all())
+    traded = Counter(currencies.get(lid, "BRL") for _, _, lid, _, _ in closed_trades)
+    currency = (traded.most_common(1)[0][0] if traded
+                else Counter(currencies.get(l.id, "BRL") for l in lics).most_common(1)[0][0])
 
     # Running today strategies
     running_today = []
@@ -392,6 +401,7 @@ def client_dashboard(db: Session, user: models.User, now: datetime.datetime, day
                 "trades_today": len(s_trades_today),
                 "profit_today": round(sum(s_trades_today), 2),
                 "open_positions": len(s_open),
+                "currency": currencies.get(l.id, "BRL"),
             })
 
     # Traders summary list
@@ -423,6 +433,7 @@ def client_dashboard(db: Session, user: models.User, now: datetime.datetime, day
             "profit_month": round(p_month, 2),
             "open_positions": open_count,
             "trades_count": trades_count,
+            "currency": currencies.get(l.id, "BRL"),
             "strategies": [s.name for s in l.portfolio.strategies] if l.portfolio else [],
         })
 

@@ -274,3 +274,33 @@ def test_client_pause_toggle_and_master(client):
     assert dash["traders"][0]["is_paused"] is True
     assert dash["all_paused"] is True
 
+
+
+def test_client_dashboard_currency_per_account(client):
+    """Each copy in its own account's currency; the totals in the currency of the accounts that traded, not of
+    whichever account reported last (a BRL result was shown as USD beside a USD account without trades)."""
+    manager_id, mgr, portfolio_id, brl = manager_license(client)
+    usd = client.post("/licenses", headers=mgr, json={"client_mt5_login": uuid.uuid4().int % 10**8, "max_lots": 1,
+                                                      "portfolio_id": portfolio_id}).json()
+    cli, _ = client_headers(client)
+    for lic in (brl, usd):
+        code = client.post(f"/licenses/{lic['id']}/claim-code", headers=mgr).json()["code"]
+        assert client.post("/me/licenses/claim", headers=cli, json={"code": code}).status_code == 200
+    now = datetime.datetime.utcnow()
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    db = database.SessionLocal()
+    try:
+        for uid, action, profit in (("31_1", "OPEN", 0.0), ("31_1", "CLOSE", 162.0)):
+            db.add(models.Execution(uid=uid, portfolio_id=portfolio_id, mt5_login=brl["client_mt5_login"], action=action,
+                                    volume=1, price=100, retcode=10009, profit=profit,
+                                    created_at=now - datetime.timedelta(hours=1)))
+        db.add(models.AccountSnapshot(kind="slave", owner_id=brl["id"], login=brl["client_mt5_login"],
+                                      hour=hour - datetime.timedelta(hours=2), balance=1000, equity=1000, currency="BRL"))
+        db.add(models.AccountSnapshot(kind="slave", owner_id=usd["id"], login=usd["client_mt5_login"],
+                                      hour=hour, balance=500, equity=500, currency="USD"))  # The latest, no trades
+        db.commit()
+    finally:
+        db.close()
+    dash = client.get("/me/dashboard", headers=cli).json()
+    assert dash["currency"] == "BRL" and dash["profit_week"] == 162.0
+    assert {t["license_id"]: t["currency"] for t in dash["traders"]} == {brl["id"]: "BRL", usd["id"]: "USD"}

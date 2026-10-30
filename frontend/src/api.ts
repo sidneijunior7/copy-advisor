@@ -300,6 +300,7 @@ export type DashboardTrader = {
     profit_week: number;
     profit_month: number;
     open_positions: number;
+    currency: string; // the copy's own account currency
     trades_count: number;
     strategies: string[];
 };
@@ -315,6 +316,7 @@ export type RunningStrategy = {
     trades_today: number;
     profit_today: number;
     open_positions: number;
+    currency: string; // the copy's own account currency
 };
 
 export type ClientDashboardData = {
