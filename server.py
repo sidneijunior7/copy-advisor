@@ -2075,8 +2075,16 @@ else:
 
     # SPA catch-all: serve index.html for any unknown path
     # This handles page refreshes on React Router routes (e.g. /manager/portfolios)
+    # A file of frontend/public (Vite copies it to the root of dist, e.g. the marketplace video) is served as itself,
+    # with Range for the video; only inside dist
+    dist_root = os.path.realpath(FRONTEND_DIST)
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        if full_path:
+            path = os.path.realpath(os.path.join(dist_root, full_path))
+            if path.startswith(dist_root + os.sep) and os.path.isfile(path):
+                return FileResponse(path)
         index = f"{FRONTEND_DIST}/index.html"
         if os.path.exists(index):
             return FileResponse(index)

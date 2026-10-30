@@ -203,3 +203,17 @@ def test_container_comes_up_before_the_migration_finishes(monkeypatch):
         while not server.schema.ready and time.monotonic() < deadline:
             time.sleep(0.05)
         assert c.get("/licenses", headers=AUTH).status_code == 401
+
+
+@pytest.mark.skipif(not os.path.isfile("frontend/dist/index.html"), reason="frontend not built")
+def test_public_files_are_served_as_themselves(client):
+    """A file of frontend/public at the root of dist (the marketplace video) is itself, with Range; any other path,
+    or one reaching outside dist, is the SPA."""
+    name = next((f for f in os.listdir("frontend/dist") if os.path.isfile(f"frontend/dist/{f}") and f != "index.html"), None)
+    if name is None:
+        pytest.skip("no public file in dist")
+    r = client.get(f"/{name}", headers={"Range": "bytes=0-9"})
+    assert r.status_code == 206 and len(r.content) == min(10, os.path.getsize(f"frontend/dist/{name}"))
+    for path in ("/marketplace", "/..%2Fserver.py", "/assets/../../server.py"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
