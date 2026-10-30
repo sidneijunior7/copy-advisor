@@ -1,47 +1,63 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronDown, Plug, Search, ShieldCheck, Wallet } from 'lucide-react';
+import { ArrowRight, ChevronDown, Pause, Play } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 
-const STEPS = [
-    { icon: Search, title: 'Escolha um gestor', text: 'Compare o resultado real, a maior queda e o que os seguidores conseguiram.' },
-    { icon: Wallet, title: 'Assine', text: 'No cartão, mês a mês. Sem fidelidade: cancele quando quiser.' },
-    { icon: Plug, title: 'Conecte sua conta', text: 'As operações do gestor chegam sozinhas no seu MetaTrader 5.' },
-];
-
-// For a visitor who has never copied anyone: what happens, in three steps, and what they need before paying
+// For a visitor who has never copied anyone, edge to edge under the header as in a streaming home: the video
+// behind, the pitch over its left side and fading into the page below. There is no dark cut of the video yet,
+// so the dark theme dims the light one
 export function HowItWorks() {
+    const video = useRef<HTMLVideoElement>(null);
+    const [playing, setPlaying] = useState(true);
+    // It loops for good, so anyone can stop it (WCAG 2.2.2)
+    const toggle = () => {
+        const v = video.current;
+        if (!v) return;
+        if (v.paused) void v.play();
+        else v.pause();
+    };
     return (
-        <section className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-5 sm:p-8">
-            <div className="max-w-2xl space-y-2">
-                <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
-                    As operações de gestores reais, copiadas automaticamente na sua conta
-                </h1>
-                <p className="text-sm text-muted-foreground sm:text-base">
-                    Você escolhe quem copiar. Quando o gestor compra ou vende, a mesma ordem é feita na sua conta da corretora,
-                    no tamanho que você definir.
-                </p>
+        <section className="relative left-1/2 -mt-6 w-screen -translate-x-1/2 overflow-hidden sm:-mt-8">
+            <div className="relative aspect-video w-full md:aspect-auto md:h-[72vh] md:max-h-[720px] md:min-h-[480px]">
+                <video
+                    ref={video}
+                    src="/video_1.mp4"
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                    aria-hidden="true"
+                    onPlay={() => setPlaying(true)}
+                    onPause={() => setPlaying(false)}
+                    className="absolute inset-0 size-full object-cover dark:brightness-[.45] dark:contrast-125 dark:saturate-[.85]"
+                />
+                {/* The left side clears for the text from md up; the bottom always melts into the page */}
+                <div className="absolute inset-0 hidden bg-gradient-to-r from-background via-background/85 to-transparent md:block md:w-2/3" />
+                <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-background to-transparent" />
+                <button
+                    type="button"
+                    onClick={toggle}
+                    aria-label={playing ? 'Pausar o vídeo' : 'Tocar o vídeo'}
+                    className="absolute bottom-3 right-3 z-10 flex size-9 items-center justify-center rounded-full border border-border bg-card/80 text-foreground backdrop-blur transition-colors hover:bg-card md:bottom-[18%] md:right-6"
+                >
+                    {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+                </button>
             </div>
-            <ol className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {STEPS.map(({ icon: Icon, title, text }, i) => (
-                    <li key={title} className="flex gap-3 rounded-xl border border-border bg-card/80 p-3 sm:flex-col sm:p-4">
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="size-4" /></span>
-                        <span>
-                            <span className="block text-sm font-semibold">{i + 1}. {title}</span>
-                            <span className="block text-xs text-muted-foreground">{text}</span>
-                        </span>
-                    </li>
-                ))}
-            </ol>
-            <p className="mt-4 flex items-start gap-2 text-xs text-muted-foreground">
-                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />
-                <span>
-                    Você precisa de uma <strong className="text-foreground">conta MetaTrader 5 numa corretora</strong>. O dinheiro fica nela, em seu nome:
-                    o gestor só envia as ordens e nunca movimenta saques ou depósitos.
-                </span>
-            </p>
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-                <a href="#gestores"><Button size="lg" className="w-full sm:w-auto">Ver gestores <ArrowRight /></Button></a>
-                <a href="#duvidas"><Button size="lg" variant="ghost" className="w-full sm:w-auto">Dúvidas frequentes</Button></a>
+            <div className="pointer-events-none relative mx-auto max-w-6xl px-4 md:absolute md:inset-0 md:flex md:items-center">
+                <div className="pointer-events-auto -mt-6 max-w-xl space-y-3 md:mt-0">
+                    <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
+                        As operações de gestores reais, copiadas automaticamente na sua conta
+                    </h1>
+                    <p className="text-sm text-muted-foreground sm:text-base">
+                        Você escolhe quem copiar. Quando o gestor compra ou vende, a mesma ordem é feita na sua conta da corretora,
+                        no tamanho que você definir.
+                    </p>
+                    <div className="flex gap-2 pt-2 [&>a]:flex-1 sm:[&>a]:flex-none [&_button]:px-3 [&_button]:text-sm sm:[&_button]:px-8 sm:[&_button]:text-base">
+                        <a href="#gestores"><Button size="lg" className="w-full sm:w-auto">Ver gestores <ArrowRight /></Button></a>
+                        <a href="#duvidas"><Button size="lg" variant="ghost" className="w-full sm:w-auto">Dúvidas frequentes</Button></a>
+                    </div>
+                </div>
             </div>
         </section>
     );

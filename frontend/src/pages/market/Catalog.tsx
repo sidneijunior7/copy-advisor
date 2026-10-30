@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ArrowUpDown, ChevronLeft, ChevronRight, Filter, Store } from 'lucide-react';
+import { ArrowRight, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, Filter, Store } from 'lucide-react';
 import api, { MARKETS, type PublicListing } from '../../api';
 import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Faq, HowItWorks } from '../../components/market/HowItWorks';
 import { useAuth } from '../../context/AuthContext';
 import { riskOf } from '../../lib/risk';
-import { IconSelect, Select } from '../../components/ui/Field';
+import { IconSelect } from '../../components/ui/Field';
 import { formatMoney, priceLabel } from '../../lib/money';
 import { cn } from '../../lib/utils';
 
@@ -88,6 +88,26 @@ function ListingCard({ l, perLot = false }: { l: PublicListing; perLot?: boolean
                 </span>
             </div>
         </Link>
+    );
+}
+
+// A filter as a quiet pill beside the title: the icon says what it does, the native picker opens over it,
+// and it takes the primary color while it narrows the list
+function PillSelect({ icon, label, active, children, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { icon: ReactNode; label: string; active?: boolean }) {
+    return (
+        <label
+            title={label}
+            className={cn(
+                'relative flex h-9 cursor-pointer items-center gap-2 rounded-full border border-border bg-card pl-3.5 pr-8 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground',
+                active && 'border-primary/50 bg-primary/5 text-primary [&>svg]:text-primary',
+            )}
+        >
+            {icon}
+            <select aria-label={label} className="cursor-pointer appearance-none bg-transparent pr-0.5 outline-none [field-sizing:content]" {...props}>
+                {children}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3" />
+        </label>
     );
 }
 
@@ -169,18 +189,11 @@ export default function Catalog() {
     return (
         <div className="space-y-6 sm:space-y-8">
             {!user && <HowItWorks />}
-            <div id="gestores" className="scroll-mt-24 space-y-2">
+            <div id="gestores" className="flex scroll-mt-24 items-center justify-between gap-3">
                 {user
                     ? <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Gestores para copiar</h1>
                     : <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Gestores para copiar</h2>}
-                <p className="max-w-2xl text-muted-foreground">O resultado real de cada gestor nos últimos 90 dias. Toque num deles para ver os detalhes.</p>
-            </div>
-
-            <div className="flex items-center justify-between gap-3 sm:hidden">
-                <p className="min-w-0 truncate text-sm text-muted-foreground">
-                    {market || 'Todos os mercados'} · {SORTS[sort].label}
-                </p>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2 sm:hidden">
                     <IconSelect icon={<Filter />} label="Mercado" active={!!market} value={market} onChange={e => setMarket(e.target.value)}>
                         <option value="">Todos os mercados</option>
                         {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -189,15 +202,15 @@ export default function Catalog() {
                         {(Object.keys(SORTS) as Sort[]).map(s => <option key={s} value={s}>{SORTS[s].label}</option>)}
                     </IconSelect>
                 </div>
-            </div>
-            <div className="hidden flex-wrap gap-2 sm:flex">
-                <Select value={market} onChange={e => setMarket(e.target.value)} className="h-9 w-52" aria-label="Mercado">
-                    <option value="">Todos os mercados</option>
-                    {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-                </Select>
-                <Select value={sort} onChange={e => setSort(e.target.value as Sort)} className="h-9 w-44" aria-label="Ordenar">
-                    {(Object.keys(SORTS) as Sort[]).map(s => <option key={s} value={s}>{SORTS[s].label}</option>)}
-                </Select>
+                <div className="hidden shrink-0 gap-2 sm:flex">
+                    <PillSelect icon={<Filter />} label="Mercado" active={!!market} value={market} onChange={e => setMarket(e.target.value)}>
+                        <option value="">Todos os mercados</option>
+                        {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </PillSelect>
+                    <PillSelect icon={<ArrowUpDown />} label="Ordenar" value={sort} onChange={e => setSort(e.target.value as Sort)}>
+                        {(Object.keys(SORTS) as Sort[]).map(s => <option key={s} value={s}>{SORTS[s].label}</option>)}
+                    </PillSelect>
+                </div>
             </div>
 
             {sort === 'perLot' && (

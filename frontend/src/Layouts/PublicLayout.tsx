@@ -7,7 +7,7 @@ import { Button } from '../components/ui/Button';
 export default function PublicLayout() {
     const { user } = useAuth();
     return (
-        <div className="flex min-h-screen flex-col bg-background text-foreground">
+        <div className="flex min-h-screen flex-col overflow-x-clip bg-background text-foreground">
             <header className="sticky top-0 z-30 border-b border-border bg-card/90 backdrop-blur">
                 <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4 sm:gap-4">
                     <Link to="/marketplace" className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
