@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { HOSTING_STATES } from '../../lib/labels';
 import { formatMoney, hostingPriceLabel } from '../../lib/money';
 import { apiError, cn, formatDate, formatDateTime } from '../../lib/utils';
+import SlideRow from '../../components/SlideRow';
 
 const POLL_MS = 15_000;
 
@@ -90,7 +91,7 @@ export default function AdminHosting() {
                 </p>
             )}
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <SlideRow className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
                 <KPICard label="Terminais" value={terminals.length.toLocaleString('pt-BR')} icon={<Server />} />
                 <KPICard label="Copiando agora" value={running.toLocaleString('pt-BR')} icon={<BadgeCheck />} />
                 <KPICard label="Pagantes" value={payingCount.toLocaleString('pt-BR')} icon={<CreditCard />} />
@@ -99,7 +100,7 @@ export default function AdminHosting() {
                     value={data?.price ? formatMoney(payingCount * data.price.price, data.price.currency) : '—'}
                     icon={<CreditCard />}
                 />
-            </div>
+            </SlideRow>
 
             <Card title="Pods" description="Os servidores que rodam os terminais." icon={<Server />} flush>
                 {data === null ? (

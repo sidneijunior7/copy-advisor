@@ -34,6 +34,7 @@ import { Input } from '../../components/ui/Field';
 import { copyState, hostingCandidates } from '../../lib/clientLicense';
 import { formatMoney, priceLabel } from '../../lib/money';
 import { apiError, cn, formatDate } from '../../lib/utils';
+import SlideRow from '../../components/SlideRow';
 
 const POLL_MS = 15_000;
 
@@ -138,11 +139,11 @@ export default function ClientDashboard() {
                     description="Carregando métricas e desempenho da sua conta..."
                     icon={<Activity />}
                 />
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <SlideRow className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
                     {[1, 2, 3, 4].map(i => (
                         <div key={i} className="panel h-28 animate-pulse p-4" />
                     ))}
-                </div>
+                </SlideRow>
             </div>
         );
     }
@@ -226,7 +227,7 @@ export default function ClientDashboard() {
                             </Link>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <SlideRow wide className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
                             {data.lead_highlights.map(l => (
                                 <Link
                                     key={l.slug}
@@ -266,7 +267,7 @@ export default function ClientDashboard() {
                                     </div>
                                 </Link>
                             ))}
-                        </div>
+                        </SlideRow>
                     </div>
                 )}
             </div>
@@ -304,34 +305,36 @@ export default function ClientDashboard() {
     return (
         <div className="space-y-6 sm:space-y-8 animate-fade-in">
             {/* Header with Title & Master Controls */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+            <div className="flex items-start justify-between gap-3 sm:items-center">
+                <div className="min-w-0">
                     <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Início</h1>
                     <p className="text-sm text-muted-foreground">
                         Acompanhe seus lucros em tempo real e gerencie suas cópias com um clique.
                     </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Master On/Off Toggle Button */}
+                <div className="flex shrink-0 items-center gap-2">
+                    {/* Master On/Off Toggle: an icon beside the title, the label in the tooltip */}
                     {traders.length > 0 && (
                         <Button
                             variant={all_paused ? 'default' : 'outline'}
+                            size="icon"
                             onClick={handleMasterToggle}
                             loading={masterPausing}
+                            title={all_paused ? 'Retomar todas as cópias' : 'Pausar todas as cópias'}
+                            aria-label={all_paused ? 'Retomar todas as cópias' : 'Pausar todas as cópias'}
                             className={cn(
-                                'h-9 text-xs font-semibold transition-all',
+                                'size-9 transition-all',
                                 all_paused
                                     ? 'bg-success hover:bg-success/90 text-success-foreground'
                                     : 'border-warning/50 text-warning hover:bg-warning/10',
                             )}
                         >
-                            {!masterPausing && (all_paused ? <Play className="size-3.5 fill-current" /> : <Pause className="size-3.5 fill-current" />)}
-                            {all_paused ? 'Retomar Todas as Cópias' : 'Pausar Tudo'}
+                            {!masterPausing && (all_paused ? <Play className="size-4 fill-current" /> : <Pause className="size-4 fill-current" />)}
                         </Button>
                     )}
 
-                    <Button variant="ghost" size="icon" onClick={refresh} title="Atualizar dados agora" className="size-9">
+                    <Button variant="ghost" size="icon" onClick={refresh} title="Atualizar dados agora" aria-label="Atualizar dados agora" className="size-9">
                         <RefreshCw className="size-4" />
                     </Button>
                 </div>
@@ -344,7 +347,7 @@ export default function ClientDashboard() {
             {mine?.hosting_price && <HostingOfferList price={mine.hosting_price} licenses={hostingCandidates(mine)} dismissible />}
 
             {/* Top KPI Cards Row */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <SlideRow className="md:grid-cols-2 md:gap-4 lg:grid-cols-4">
                 <KPICard
                     label="Lucro Hoje"
                     value={
@@ -393,7 +396,7 @@ export default function ClientDashboard() {
                     }
                     icon={<Radio className="size-4" />}
                 />
-            </div>
+            </SlideRow>
 
             {/* Middle Section: Cumulative Chart & Running Strategies */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -513,7 +516,7 @@ export default function ClientDashboard() {
                     </Link>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <SlideRow wide className="md:grid-cols-2 md:gap-4 xl:grid-cols-3">
                     {traders.map(t => (
                         <div
                             key={t.license_id}
@@ -592,7 +595,7 @@ export default function ClientDashboard() {
                             </div>
                         </div>
                     ))}
-                </div>
+                </SlideRow>
             </div>
         </div>
     );

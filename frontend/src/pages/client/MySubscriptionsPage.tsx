@@ -11,6 +11,7 @@ import PageHeader from '../../components/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { hostingCandidates } from '../../lib/clientLicense';
 import { openBillingPortal } from '../../lib/stripe';
+import SlideRow from '../../components/SlideRow';
 
 const licenseName = (l: ClientLicense) => l.portfolio.name ?? `Portfólio #${l.portfolio.id}`;
 
@@ -66,7 +67,7 @@ export default function MySubscriptionsPage() {
                     />
                 </div>
             ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <SlideRow wide className="md:grid-cols-1 md:gap-4 lg:grid-cols-2">
                     {paid.map(l => (
                         <BillingCard
                             key={l.id}
@@ -89,7 +90,7 @@ export default function MySubscriptionsPage() {
                             action={licenseLink(l)}
                         />
                     ))}
-                </div>
+                </SlideRow>
             )}
 
             {data?.hosting_price && <HostingOfferList price={data.hosting_price} licenses={hostingCandidates(data)} />}

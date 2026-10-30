@@ -13,6 +13,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Field';
 import { copyState, needsSetup } from '../../lib/clientLicense';
 import { apiError, formatDate } from '../../lib/utils';
+import SlideRow from '../../components/SlideRow';
 
 const POLL_MS = 15_000; // A hosted terminal changes state on its own
 
@@ -118,7 +119,7 @@ export default function MyLicenses() {
                     />
                 </div>
             ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <SlideRow wide className="md:grid-cols-1 md:gap-4 lg:grid-cols-2">
                     {licenses.map(l => {
                         const state = copyState(l);
                         return (
@@ -171,7 +172,7 @@ export default function MyLicenses() {
                             </Link>
                         );
                     })}
-                </div>
+                </SlideRow>
             )}
         </div>
     );

@@ -13,6 +13,7 @@ import { hostingCandidates } from '../../lib/clientLicense';
 import { HOSTING_STATES } from '../../lib/labels';
 import { openBillingPortal } from '../../lib/stripe';
 import { formatDateTime } from '../../lib/utils';
+import SlideRow from '../../components/SlideRow';
 
 const POLL_MS = 15_000;
 
@@ -67,7 +68,7 @@ export default function ClientHostingPage() {
                     </div>
                 )
             ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <SlideRow wide className="md:grid-cols-1 md:gap-4 lg:grid-cols-2">
                     {hosted.map(l => {
                         const h = l.hosting!;
                         const { label, variant } = HOSTING_STATES[h.state] ?? { label: h.state, variant: 'muted' as const };
@@ -98,7 +99,7 @@ export default function ClientHostingPage() {
                             </Card>
                         );
                     })}
-                </div>
+                </SlideRow>
             )}
 
             {data?.hosting_price && <HostingOfferList price={data.hosting_price} licenses={candidates} />}
