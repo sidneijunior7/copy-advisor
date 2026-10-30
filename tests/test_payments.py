@@ -87,7 +87,7 @@ class FakeStripe:
         params = self.sessions[sid]["params"]
         now = int(time.time())
         trial_end = params["subscription_data"].get("trial_end")
-        sub_id = f"sub_{len(self.subscriptions) + 1}"
+        sub_id = f"sub_{uuid.uuid4().hex[:14]}"  # Unique, as Stripe's: the test database outlives each FakeStripe
         self.subscriptions[sub_id] = {
             "id": sub_id, "customer": "cus_1", "status": "trialing" if trial_end else status, "trial_end": trial_end,
             "cancel_at_period_end": False, "metadata": params["subscription_data"]["metadata"],
