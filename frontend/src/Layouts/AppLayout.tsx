@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { Briefcase, CreditCard, Download, Inbox, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, Server, ShieldCheck, Store, Users, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, CreditCard, Download, GraduationCap, Inbox, KeyRound, Layers, LayoutDashboard, LogOut, Menu, Plug, Server, ShieldCheck, Store, Users, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { cn } from '../lib/utils';
@@ -42,6 +42,12 @@ const navByRole: Record<string, NavSection[]> = {
                 { path: '/manager/subscriptions', label: 'Assinaturas', icon: Inbox },
             ],
         },
+        {
+            title: 'Conteúdo',
+            items: [
+                { path: '/manager/education', label: 'Educacional', icon: GraduationCap },
+            ],
+        },
     ],
     TDM_DEV: [{
         title: 'Administração',
@@ -49,6 +55,7 @@ const navByRole: Record<string, NavSection[]> = {
             { path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true },
             { path: '/dev/marketplace', label: 'Marketplace', icon: Store },
             { path: '/dev/hosting', label: 'Hospedagem', icon: Server },
+            { path: '/dev/education', label: 'Educacional', icon: GraduationCap },
         ],
     }],
     CLIENT: [
@@ -59,6 +66,7 @@ const navByRole: Record<string, NavSection[]> = {
         {
             title: 'Mais',
             items: [
+                { path: '/client/education', label: 'Educacional', icon: GraduationCap },
                 { path: '/client/hosting', label: 'Hospedagem', icon: Server },
                 { path: '/client/install', label: 'Instalar o EA', icon: Download },
             ],

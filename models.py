@@ -202,6 +202,68 @@ class UserToken(Base):
     used_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+# --- Education (education.py): video tutorials and FAQ, Trademetric's own about the Mirror and each manager's about its product ---
+
+class EduModule(Base):
+    """A group of lessons in order, e.g. "Primeiros passos". Only its manager edits it; any TDM_DEV edits Trademetric's."""
+    __tablename__ = "edu_modules"
+
+    id = Column(Integer, primary_key=True)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True) # NULL: Trademetric's own, for every client
+    title = Column(String(120), nullable=False)
+    description = Column(String(500))
+    audience = Column(String(16), nullable=False, default="clients") # clients: only the manager's; everyone: every user
+    published = Column(Boolean, nullable=False, default=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    manager = relationship("User")
+    lessons = relationship("EduLesson", order_by="EduLesson.position", back_populates="module", cascade="all, delete-orphan")
+
+class EduLesson(Base):
+    """A lesson: a video by link (education.video) and the text under it, both optional, not both empty."""
+    __tablename__ = "edu_lessons"
+
+    id = Column(Integer, primary_key=True)
+    module_id = Column(Integer, ForeignKey("edu_modules.id"), nullable=False, index=True)
+    title = Column(String(120), nullable=False)
+    summary = Column(String(300))
+    video_url = Column(String(500)) # As the manager pasted it; the player address is worked out from it
+    body = Column(Text) # Plain text, shown as written
+    minutes = Column(Integer) # How long it takes, as the manager says
+    published = Column(Boolean, nullable=False, default=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    module = relationship("EduModule", back_populates="lessons")
+
+class EduFaq(Base):
+    __tablename__ = "edu_faqs"
+
+    id = Column(Integer, primary_key=True)
+    manager_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True) # NULL: Trademetric's own, for every client
+    question = Column(String(300), nullable=False)
+    answer = Column(Text, nullable=False) # Plain text, shown as written
+    audience = Column(String(16), nullable=False, default="clients")
+    published = Column(Boolean, nullable=False, default=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    manager = relationship("User")
+
+class EduProgress(Base):
+    """A lesson a user marked as done."""
+    __tablename__ = "edu_progress"
+    __table_args__ = (UniqueConstraint("user_id", "lesson_id", name="uq_edu_progress_identity"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    lesson_id = Column(Integer, ForeignKey("edu_lessons.id"), nullable=False, index=True)
+    completed_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 # --- Hosted terminals (hosting.py): the client's MT5 runs in one of our pods instead of on the client's machine ---
 
 class HostedPod(Base):

@@ -543,3 +543,50 @@ export type Subscription = {
 };
 
 export type AdminListing = Listing & { manager: string | null };
+
+// Educational area (education.py): Trademetric's own content (official) and each manager's. The video is a link to
+// YouTube, Vimeo or Panda Video; embed_url is the player
+export type EduAudience = 'clients' | 'everyone';
+
+export type EduVideo = { provider: 'youtube' | 'vimeo' | 'panda'; embed_url: string };
+
+export type EduLesson = {
+    id: number;
+    module_id: number;
+    title: string;
+    summary: string | null;
+    video: EduVideo | null;
+    body: string | null; // Plain text, shown as written
+    minutes: number | null;
+    completed?: boolean; // The client's view
+    video_url?: string | null; // The manager's view, from here on
+    published?: boolean;
+    done_by?: number; // How many users marked it done
+    updated_at?: string;
+};
+
+export type EduManagedModule = {
+    id: number;
+    title: string;
+    description: string | null;
+    audience: EduAudience;
+    published: boolean;
+    updated_at: string;
+    lessons: EduLesson[];
+};
+
+export type EduManagedFaq = { id: number; question: string; answer: string; audience: EduAudience; published: boolean; updated_at: string };
+
+export type EduManage = {
+    modules: EduManagedModule[];
+    faqs: EduManagedFaq[];
+    clients: number;
+    platform: boolean; // Trademetric's own content, edited by an admin: always for every client
+    official?: { title: string; lessons: string[] }[]; // For a manager: what Trademetric already teaches its clients
+};
+
+export type EduModule = { id: number; title: string; description: string | null; manager: string; official: boolean; lessons: EduLesson[] };
+
+export type EduFaq = { id: number; question: string; answer: string; manager: string; official: boolean };
+
+export type MyEducation = { modules: EduModule[]; faqs: EduFaq[] };

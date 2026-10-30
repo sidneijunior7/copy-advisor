@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 import clients
 import dash_bridge
 import database
+import education
 import followers
 import hosting
 import keys
@@ -2064,6 +2065,178 @@ def pod_sync(report: hosting.PodSync, request: Request, db: Session = Depends(ge
         logger.info(f"Pod {pod.name}: licenses {keyed} got a new key for their first hosted run")
         notify_hub()  # The Slave the client ran on its own machine is cut off
     return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+# --- Educational area (education.py) ---
+
+def edu_owner(user: models.User) -> Optional[int]:
+    """Whose content the user edits: a manager its own; a TDM_DEV Trademetric's (manager_id NULL)."""
+    if user.role == "MANAGER": return user.id
+    if user.role == "TDM_DEV": return None
+    raise HTTPException(status_code=403)
+
+def own_module(module_id: int, user: models.User, db: Session) -> models.EduModule:
+    owner = edu_owner(user)
+    module = db.get(models.EduModule, module_id)
+    if module is None or module.manager_id != owner: raise HTTPException(status_code=404)
+    return module
+
+def own_lesson(lesson_id: int, user: models.User, db: Session) -> models.EduLesson:
+    owner = edu_owner(user)
+    lesson = db.get(models.EduLesson, lesson_id)
+    if lesson is None or lesson.module.manager_id != owner: raise HTTPException(status_code=404)
+    return lesson
+
+def own_faq(faq_id: int, user: models.User, db: Session) -> models.EduFaq:
+    owner = edu_owner(user)
+    faq = db.get(models.EduFaq, faq_id)
+    if faq is None or faq.manager_id != owner: raise HTTPException(status_code=404)
+    return faq
+
+def lesson_has_content(data: education.LessonIn):
+    if not data.video_url and not (data.body or "").strip():
+        raise HTTPException(status_code=422, detail="A aula precisa de um vídeo ou de um texto")
+
+@app.get("/education/manage")
+def manage_education(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The modules, lessons (with how many clients finished each) and FAQ the user edits, drafts included."""
+    return education.manage_view(db, edu_owner(current_user))
+
+@app.post("/education/modules")
+def create_edu_module(data: education.ModuleIn, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    owner = edu_owner(current_user)
+    mine = models.EduModule.manager_id == owner
+    if db.query(models.EduModule).filter(mine).count() >= education.MAX_MODULES:
+        raise HTTPException(status_code=409, detail=f"Até {education.MAX_MODULES} módulos")
+    now = datetime.datetime.utcnow()
+    module = models.EduModule(manager_id=owner, created_at=now,
+                              position=education.next_position(db, models.EduModule.position, mine))
+    education.apply_module(module, data, now)
+    db.add(module)
+    db.commit()
+    return education.module_out(module, {})
+
+@app.put("/education/modules/order")
+def order_edu_modules(data: education.Order, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    modules = db.query(models.EduModule).filter(models.EduModule.manager_id == edu_owner(current_user)).all()
+    if not education.reorder(modules, data.ids):
+        raise HTTPException(status_code=422, detail="A ordem precisa ter cada módulo uma vez")
+    db.commit()
+    return {"ok": True}
+
+@app.put("/education/modules/{module_id}")
+def update_edu_module(module_id: int, data: education.ModuleIn, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    module = own_module(module_id, current_user, db)
+    education.apply_module(module, data, datetime.datetime.utcnow())
+    db.commit()
+    done_by = education.done_by(db, [l.id for l in module.lessons])
+    return education.module_out(module, done_by)
+
+@app.delete("/education/modules/{module_id}")
+def delete_edu_module(module_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """With its lessons and what the clients had finished of them."""
+    module = own_module(module_id, current_user, db)
+    lesson_ids = [l.id for l in module.lessons]
+    if lesson_ids:
+        db.query(models.EduProgress).filter(models.EduProgress.lesson_id.in_(lesson_ids)).delete(synchronize_session=False)
+    db.delete(module)
+    db.commit()
+    return {"ok": True}
+
+@app.post("/education/modules/{module_id}/lessons")
+def create_edu_lesson(module_id: int, data: education.LessonIn, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    module = own_module(module_id, current_user, db)
+    if len(module.lessons) >= education.MAX_LESSONS_PER_MODULE:
+        raise HTTPException(status_code=409, detail=f"Até {education.MAX_LESSONS_PER_MODULE} aulas por módulo")
+    lesson_has_content(data)
+    now = datetime.datetime.utcnow()
+    lesson = models.EduLesson(module_id=module.id, created_at=now,
+                              position=education.next_position(db, models.EduLesson.position, models.EduLesson.module_id == module.id))
+    education.apply_lesson(lesson, data, now)
+    db.add(lesson)
+    db.commit()
+    return education.lesson_out(lesson, done_by=0)
+
+@app.put("/education/modules/{module_id}/lessons/order")
+def order_edu_lessons(module_id: int, data: education.Order, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    module = own_module(module_id, current_user, db)
+    if not education.reorder(module.lessons, data.ids):
+        raise HTTPException(status_code=422, detail="A ordem precisa ter cada aula uma vez")
+    db.commit()
+    return {"ok": True}
+
+@app.put("/education/lessons/{lesson_id}")
+def update_edu_lesson(lesson_id: int, data: education.LessonIn, current_user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    lesson = own_lesson(lesson_id, current_user, db)
+    lesson_has_content(data)
+    education.apply_lesson(lesson, data, datetime.datetime.utcnow())
+    db.commit()
+    return education.lesson_out(lesson, done_by=education.done_by(db, [lesson.id]).get(lesson.id, 0))
+
+@app.delete("/education/lessons/{lesson_id}")
+def delete_edu_lesson(lesson_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lesson = own_lesson(lesson_id, current_user, db)
+    db.query(models.EduProgress).filter(models.EduProgress.lesson_id == lesson.id).delete(synchronize_session=False)
+    db.delete(lesson)
+    db.commit()
+    return {"ok": True}
+
+@app.post("/education/faqs")
+def create_edu_faq(data: education.FaqIn, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    owner = edu_owner(current_user)
+    mine = models.EduFaq.manager_id == owner
+    if db.query(models.EduFaq).filter(mine).count() >= education.MAX_FAQS:
+        raise HTTPException(status_code=409, detail=f"Até {education.MAX_FAQS} perguntas")
+    now = datetime.datetime.utcnow()
+    faq = models.EduFaq(manager_id=owner, created_at=now,
+                        position=education.next_position(db, models.EduFaq.position, mine))
+    education.apply_faq(faq, data, now)
+    db.add(faq)
+    db.commit()
+    return education.faq_out(faq, manage=True)
+
+@app.put("/education/faqs/order")
+def order_edu_faqs(data: education.Order, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    faqs = db.query(models.EduFaq).filter(models.EduFaq.manager_id == edu_owner(current_user)).all()
+    if not education.reorder(faqs, data.ids):
+        raise HTTPException(status_code=422, detail="A ordem precisa ter cada pergunta uma vez")
+    db.commit()
+    return {"ok": True}
+
+@app.put("/education/faqs/{faq_id}")
+def update_edu_faq(faq_id: int, data: education.FaqIn, current_user: models.User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    faq = own_faq(faq_id, current_user, db)
+    education.apply_faq(faq, data, datetime.datetime.utcnow())
+    db.commit()
+    return education.faq_out(faq, manage=True)
+
+@app.delete("/education/faqs/{faq_id}")
+def delete_edu_faq(faq_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.delete(own_faq(faq_id, current_user, db))
+    db.commit()
+    return {"ok": True}
+
+@app.get("/me/education")
+def my_education(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The published lessons and FAQ the client may see, with the lessons it finished."""
+    client_only(current_user)
+    return education.client_view(db, current_user)
+
+@app.put("/me/education/lessons/{lesson_id}/progress")
+def set_my_lesson_progress(lesson_id: int, data: education.ProgressIn, current_user: models.User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    client_only(current_user)
+    lesson = education.visible_lesson(db, current_user, lesson_id)
+    if lesson is None: raise HTTPException(status_code=404)
+    education.set_progress(db, current_user, lesson, data.completed, datetime.datetime.utcnow())
+    db.commit()
+    return {"lesson_id": lesson.id, "completed": data.completed}
 
 # Serve static files (Frontend)
 FRONTEND_DIST = "frontend/dist"

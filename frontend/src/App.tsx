@@ -26,6 +26,7 @@ import Install from './pages/manager/Install';
 import PortfolioPerformance from './pages/manager/PortfolioPerformance';
 import ManagerMarketplace from './pages/manager/ManagerMarketplace';
 import Subscriptions from './pages/manager/Subscriptions';
+import ManagerEducation from './pages/manager/Education';
 
 // Client Pages
 import ClientDashboard from './pages/client/ClientDashboard';
@@ -34,6 +35,7 @@ import LicenseDetail from './pages/client/LicenseDetail';
 import ClientInstall from './pages/client/ClientInstall';
 import MySubscriptionsPage from './pages/client/MySubscriptionsPage';
 import ClientHostingPage from './pages/client/ClientHostingPage';
+import ClientEducation from './pages/client/Education';
 
 function NavigateWrapper() {
   const { user } = useAuth();
@@ -89,6 +91,7 @@ function App() {
                 <Route path="/dev" element={<DevDashboard />} />
                 <Route path="/dev/marketplace" element={<AdminListings />} />
                 <Route path="/dev/hosting" element={<AdminHosting />} />
+                <Route path="/dev/education" element={<ManagerEducation />} />
               </Route>
             </Route>
 
@@ -104,6 +107,7 @@ function App() {
                 <Route path="install" element={<Install />} />
                 <Route path="marketplace" element={<ManagerMarketplace />} />
                 <Route path="subscriptions" element={<Subscriptions />} />
+                <Route path="education" element={<ManagerEducation />} />
               </Route>
             </Route>
 
@@ -116,6 +120,8 @@ function App() {
                 <Route path="subscriptions" element={<MySubscriptionsPage />} />
                 <Route path="hosting" element={<ClientHostingPage />} />
                 <Route path="install" element={<ClientInstall />} />
+                <Route path="education" element={<ClientEducation />} />
+                <Route path="education/:lessonId" element={<ClientEducation />} />
               </Route>
             </Route>
 

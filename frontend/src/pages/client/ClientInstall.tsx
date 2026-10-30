@@ -50,6 +50,9 @@ export default function ClientInstall() {
                             <li>Arraste o EA para um gráfico qualquer da conta. Na aba <strong>Comum</strong>, marque <strong>Permitir negociação algorítmica</strong>; em <strong>Entradas</strong>, cole a chave em <em>License key</em>.</li>
                             <li>O gráfico mostra <strong>Hub: conectado</strong>, e a cópia aparece como <strong>Copiando</strong> aqui no painel.</li>
                         </ol>
+                        <p className="text-sm text-muted-foreground">
+                            Prefere ver em vídeo? Os tutoriais do seu gestor estão em <Link to="/client/education" className={linkClass}>Educacional</Link>.
+                        </p>
                     </div>
                 </Card>
 
