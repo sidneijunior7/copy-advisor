@@ -189,6 +189,45 @@ class Subscription(Base):
     client = relationship("User")
     license = relationship("License")
 
+class PromoCode(Base):
+    """A launch campaign's code: whoever has it gets the listing's portfolio free for some days, once (promos.py)."""
+    __tablename__ = "promo_codes"
+    __table_args__ = (UniqueConstraint("listing_id", "code", name="uq_promo_codes_listing_code"),)
+
+    id = Column(Integer, primary_key=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
+    code = Column(String(24), nullable=False) # Letters and digits in upper case: what the client types, dashes and case aside
+    label = Column(String(80)) # The campaign's name, for the manager
+    free_days = Column(Integer, nullable=False) # Counted from when the client connects the MT5 account
+    max_uses = Column(Integer) # NULL: no limit
+    uses = Column(Integer, nullable=False, default=0)
+    valid_until = Column(DateTime) # UTC; NULL: until the manager turns it off
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    listing = relationship("Listing")
+
+class PromoRedemption(Base):
+    """The free days a client got with a code: one per client and portfolio, ever. They start when the MT5 account is
+    connected (started_at); until then the license has no account, so it copies nothing."""
+    __tablename__ = "promo_redemptions"
+    __table_args__ = (UniqueConstraint("portfolio_id", "user_id", name="uq_promo_redemptions_portfolio_user"),
+                      UniqueConstraint("license_id", name="uq_promo_redemptions_license"))
+
+    id = Column(Integer, primary_key=True)
+    promo_code_id = Column(Integer, ForeignKey("promo_codes.id"), nullable=False, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    license_id = Column(Integer, ForeignKey("licenses.id"), nullable=False)
+    free_days = Column(Integer, nullable=False) # As the code said when used: editing the code changes only the next ones
+    started_at = Column(DateTime) # UTC, when the account was connected; NULL: not yet
+    reminders = Column(Integer, nullable=False, default=0) # Emails sent about the end (promos.REMIND_BEFORE)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    promo = relationship("PromoCode")
+    license = relationship("License")
+    user = relationship("User")
+
 class UserToken(Base):
     """One-time links sent by email: verify the address, reset the password. Only the hash is stored."""
     __tablename__ = "user_tokens"

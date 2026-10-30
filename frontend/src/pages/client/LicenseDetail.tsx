@@ -13,14 +13,16 @@ import ClientSettingsForm from '../../components/client/ClientSettingsForm';
 import { ClientIssues, CopiesTable } from '../../components/client/CopiesTable';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
+import PlanPicker from '../../components/PlanPicker';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { copyState, needsSetup } from '../../lib/clientLicense';
+import { copyState, needsSetup, onFreeDays, validityLabel } from '../../lib/clientLicense';
 import { SIZING_LABELS, SLTP_LABELS } from '../../lib/labels';
 import { openCheckout } from '../../lib/stripe';
-import { apiError, cn, formatDate } from '../../lib/utils';
+import { apiError, cn, formatDate, parseUtc } from '../../lib/utils';
 
 const POLL_MS = 15_000;
+const MIN_TRIAL_MS = 49 * 3600_000; // Stripe waits for the end only this far ahead (payments.MIN_TRIAL)
 
 const TABS = [
     { id: 'overview', label: 'Visão geral' },
@@ -40,6 +42,7 @@ export default function LicenseDetail() {
     const refresh = () => setReload(n => n + 1);
     const [renewal, setRenewal] = useState<Subscription | null>(null);
     const [renewing, setRenewing] = useState(false);
+    const [planId, setPlanId] = useState<number | null>(null);
     const [params, setParams] = useSearchParams();
     const [offerOpen] = useState(() => params.get('hospedar') === '1'); // A "yes" to the hosting offer on Subscriptions
     // The activation stays on screen from the first look at a license being set up until the client leaves it;
@@ -96,11 +99,18 @@ export default function LicenseDetail() {
     }
 
     const state = copyState(license);
+    const free = onFreeDays(license);
+    // More than one plan: the client picks (a license from a launch code never had one)
+    const choosePlan = license.renew_plans.length > 1;
+    const plan = planId ?? license.billing?.plan?.id ?? license.renew_plans[0]?.id ?? null;
+    // Subscribing in Stripe with this much left charges only when the license ends
+    const chargesAtEnd = license.renew_plans.length > 0 && license.expires_at != null
+        && parseUtc(license.expires_at).getTime() - Date.now() > MIN_TRIAL_MS;
 
     const renew = async () => {
         setRenewing(true);
         try {
-            const res = await api.post<Subscription>(`/me/licenses/${license.id}/renew`);
+            const res = await api.post<Subscription>(`/me/licenses/${license.id}/renew`, choosePlan ? { plan_id: plan } : {});
             if (res.data.listing.pay_online) {
                 await openCheckout(res.data.id); // Charged only when the current validity ends
                 return;
@@ -174,7 +184,7 @@ export default function LicenseDetail() {
                                 </div>
                                 <div>
                                     <dt className="text-xs text-muted-foreground">Validade</dt>
-                                    <dd>{license.expires_at ? formatDate(license.expires_at) : 'Sem validade'}</dd>
+                                    <dd>{validityLabel(license)}</dd>
                                 </div>
                                 <div>
                                     <dt className="text-xs text-muted-foreground">Tamanho</dt>
@@ -189,20 +199,30 @@ export default function LicenseDetail() {
                                 </div>
                             </dl>
                             {!license.billing?.renewing && (
-                            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                            <div className="mt-4 space-y-3 border-t border-border pt-4">
                                 {renewal ? (
-                                    <>
+                                    <div className="flex flex-wrap items-center gap-2">
                                         <p className="text-sm text-muted-foreground">Renovação pedida.</p>
                                         {renewal.listing.checkout_url && (
                                             <a href={renewal.listing.checkout_url} target="_blank" rel="noopener noreferrer">
                                                 <Button size="sm"><ExternalLink /> Pagar</Button>
                                             </a>
                                         )}
-                                    </>
+                                    </div>
                                 ) : (
-                                    <Button size="sm" variant="outline" loading={renewing} onClick={renew}>
-                                        {!renewing && <RefreshCw />} Renovar
-                                    </Button>
+                                    <>
+                                        {choosePlan && <PlanPicker plans={license.renew_plans} value={plan} onChange={setPlanId} name={`renovar-${license.id}`} />}
+                                        {free && license.expires_at && (
+                                            <p className="text-sm text-muted-foreground">
+                                                {chargesAtEnd
+                                                    ? `Assinando agora, você não perde nenhum dia: a cobrança só começa quando o grátis acabar, em ${formatDate(license.expires_at)}.`
+                                                    : `Seu acesso grátis termina em ${formatDate(license.expires_at)}. Assine para continuar copiando.`}
+                                            </p>
+                                        )}
+                                        <Button size="sm" variant={free ? 'default' : 'outline'} loading={renewing} disabled={choosePlan && plan == null} onClick={renew}>
+                                            {!renewing && <RefreshCw />} {free ? 'Assinar' : 'Renovar'}
+                                        </Button>
+                                    </>
                                 )}
                             </div>
                             )}

@@ -23,7 +23,9 @@ export default function ConnectAccount({ license, onDone }: { license: ClientLic
     const connect = async ({ mt5_login }: AccountForm) => {
         try {
             await api.put<ClientLicense>(`/me/licenses/${license.id}/account`, { mt5_login: Number(mt5_login) });
-            toast.success(`Conta ${mt5_login} conectada`, { description: 'Agora escolha como copiar: hospedado ou no seu computador.' });
+            toast.success(`Conta ${mt5_login} conectada`, {
+                description: `${license.promo ? `Seus ${license.promo.free_days} dias grátis começaram. ` : ''}Agora escolha como copiar: hospedado ou no seu computador.`,
+            });
             onDone();
         } catch (e) {
             console.error(e);
@@ -42,7 +44,13 @@ export default function ConnectAccount({ license, onDone }: { license: ClientLic
         );
     }
     return (
-        <Card title="Conecte sua conta MT5" description="A conta da corretora que vai copiar este portfólio." icon={<Plug />}>
+        <Card
+            title="Conecte sua conta MT5"
+            description={license.promo && !license.promo.started_at
+                ? `A conta da corretora que vai copiar este portfólio. Seus ${license.promo.free_days} dias grátis começam ao conectar.`
+                : 'A conta da corretora que vai copiar este portfólio.'}
+            icon={<Plug />}
+        >
             <form onSubmit={handleSubmit(connect)} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
                 <Field label="Número da conta" htmlFor="connect-login" error={errors.mt5_login?.message} className="flex-1"
                     hint="Aparece no topo do MetaTrader 5, no Navegador em Contas, ou no email da corretora.">

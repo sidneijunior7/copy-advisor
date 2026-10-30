@@ -259,6 +259,10 @@ export type ClientLicense = {
     } | null;
     connection: { ea_version: string | null; connected_at: number | null; active: boolean; last_ack_age_s: number | null } | null;
     billing: Billing | null; // Paid in Stripe
+    // From a launch code: the free days start when the account is connected (started_at), and end at ends_at
+    promo: { free_days: number; started_at: string | null; ends_at: string | null } | null;
+    listing_slug: string | null; // The portfolio's page in the marketplace, while it is there
+    renew_plans: Plan[]; // What a renewal can be paid with in Stripe; empty when it is paid by hand
 };
 
 // A plan of a listing paid in Stripe: the lot limit it buys, at the price Stripe charges
@@ -514,6 +518,7 @@ export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended
     strategies: string[];
     hosting_price?: HostingPrice | null; // On the listing's own page, when it can be hosted and hosting is charged
     hosting_room?: boolean; // On the listing's own page: the pods have room, so the cloud is offered
+    has_promo?: boolean; // On the listing's own page: it takes a launch code (never which)
     stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & {
         per_lot: number | null; // The average result per lot closed, in the portfolio's currency
         assets: string[]; // What the copy traded, the most lots first (WIN, WDO, EURUSD...); empty without copies
@@ -527,7 +532,7 @@ export type Subscription = {
     id: number;
     listing: { id: number; slug: string; title: string; checkout_url: string | null; pay_online: boolean; price: number | null; currency: string; default_days: number };
     mt5_login: number | null;
-    kind: 'new' | 'renewal';
+    kind: 'new' | 'renewal' | 'promo'; // promo: free days from a launch code
     status: SubscriptionStatus;
     note: string | null;
     decision_note: string | null;
@@ -543,6 +548,22 @@ export type Subscription = {
 };
 
 export type AdminListing = Listing & { manager: string | null };
+
+// A listing's launch code (promos.py): whoever has it gets the portfolio free for free_days, once
+export type PromoCode = {
+    id: number;
+    code: string;
+    label: string | null;
+    free_days: number;
+    max_uses: number | null; // null: no limit
+    uses: number;
+    valid_until: string | null;
+    active: boolean;
+    usable: boolean; // Active, before valid_until and below max_uses
+    created_at: string;
+    started: number; // Clients who connected an account: their free days are running
+    subscribed: number; // Clients who renewed after
+};
 
 // Educational area (education.py): Trademetric's own content (official) and each manager's. The video is a link to
 // YouTube, Vimeo or Panda Video; embed_url is the player. Images are links too: thumbnail is the lesson's own or its

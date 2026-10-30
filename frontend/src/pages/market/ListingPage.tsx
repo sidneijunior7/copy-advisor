@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, ExternalLink, MailCheck, Store } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, ExternalLink, MailCheck, Store, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { type BacktestView, type Me, type PortfolioPerformance, type PublicFollowerStats, type PublicListing, type Subscription } from '../../api';
+import api, {
+    type BacktestView, type ClientLicense, type Me, type MyLicenses, type PortfolioPerformance, type PublicFollowerStats, type PublicListing,
+    type Subscription,
+} from '../../api';
 import AboutAuthor, { AuthorLinks } from '../../components/AboutAuthor';
 import BacktestSection from '../../components/BacktestSection';
 import Sparkline from '../../components/charts/Sparkline';
@@ -10,9 +13,10 @@ import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
 import PlanPicker from '../../components/PlanPicker';
+import ResendLinkButton from '../../components/ResendLinkButton';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { IconSelect, Select } from '../../components/ui/Field';
+import { IconSelect, Input, Select } from '../../components/ui/Field';
 import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
 import { formatMoney, hostingPriceLabel, priceLabel } from '../../lib/money';
@@ -20,17 +24,72 @@ import { riskOf } from '../../lib/risk';
 import { openCheckout } from '../../lib/stripe';
 import { apiError, cn } from '../../lib/utils';
 
+// A launch code: the portfolio free for some days, without a card. The license comes without the MT5 account, and
+// the days start when the client connects it, on the license's page
+function PromoBox({ slug, initial, me }: { slug: string; initial: string; me: Me | null }) {
+    const navigate = useNavigate();
+    const [code, setCode] = useState(initial);
+    const [sending, setSending] = useState(false);
+
+    const redeem = async (e: FormEvent) => {
+        e.preventDefault();
+        setSending(true);
+        try {
+            const res = await api.post<ClientLicense>(`/api/marketplace/${slug}/redeem`, { code });
+            toast.success('Código aplicado', {
+                description: `Conecte sua conta MT5: seus ${res.data.promo?.free_days ?? ''} dias grátis começam quando ela estiver conectada.`,
+            });
+            navigate(`/client/licenses/${res.data.id}`);
+        } catch (err) {
+            toast.error(apiError(err, 'Não foi possível usar o código.'));
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <form onSubmit={redeem} className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3" noValidate>
+            <label htmlFor="promo-code" className="flex items-center gap-2 text-sm font-medium"><Ticket className="size-4 text-primary" /> Código de lançamento</label>
+            {me?.email_enabled && !me.email_verified ? (
+                <div className="space-y-2 text-sm">
+                    <p className="flex items-start gap-2 text-muted-foreground"><MailCheck className="mt-0.5 size-4 shrink-0 text-warning" />
+                        Confirme seu email para usar o código: o link está na sua caixa de entrada.</p>
+                    <ResendLinkButton />
+                </div>
+            ) : (
+                <div className="flex gap-2">
+                    <Input id="promo-code" value={code} onChange={e => setCode(e.target.value)} placeholder="Digite o código"
+                        className="font-mono uppercase" autoComplete="off" />
+                    <Button loading={sending} disabled={!code.trim()}>Usar</Button>
+                </div>
+            )}
+            <p className="text-xs text-muted-foreground">Grátis por tempo limitado, sem cartão. Os dias começam quando você conecta sua conta MT5.</p>
+        </form>
+    );
+}
+
 function SubscribeBox({ listing }: { listing: PublicListing }) {
     const { user } = useAuth();
+    const [params] = useSearchParams();
+    const urlCode = params.get('codigo')?.trim() ?? ''; // From a campaign's link
     const [me, setMe] = useState<Me | null>(null);
+    const [mine, setMine] = useState<ClientLicense | null>(null); // A license of this portfolio the client has already
+    const [another, setAnother] = useState(false); // ...and still buys one more, for another account
+    const [codeOpen, setCodeOpen] = useState(false);
     const [done, setDone] = useState<Subscription | null>(null);
     const [sending, setSending] = useState(false);
     const [planId, setPlanId] = useState<number | null>(listing.plans[0]?.id ?? null);
-    const next = encodeURIComponent(`/marketplace/${listing.slug}`);
+    const next = encodeURIComponent(`/marketplace/${listing.slug}${urlCode ? `?codigo=${encodeURIComponent(urlCode)}` : ''}`);
 
     useEffect(() => {
-        if (user) api.get<Me>('/me').then(res => setMe(res.data)).catch(e => console.error(e));
-    }, [user]);
+        if (!user) return;
+        api.get<Me>('/me').then(res => setMe(res.data)).catch(e => console.error(e));
+        if (user.role === 'CLIENT') {
+            api.get<MyLicenses>('/me/licenses')
+                .then(res => setMine(res.data.licenses.find(l => l.listing_slug === listing.slug) ?? null))
+                .catch(e => console.error(e));
+        }
+    }, [user, listing.slug]);
 
     // The MT5 account comes after paying, on the license: buying never waits on looking it up
     const subscribe = async () => {
@@ -55,6 +114,12 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
     if (!user) {
         return (
             <div className="space-y-2">
+                {urlCode && (
+                    <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+                        <Ticket className="mt-0.5 size-4 shrink-0 text-primary" />
+                        <span>Você tem o código <strong className="font-mono">{urlCode.toUpperCase()}</strong>: crie sua conta para copiar grátis, sem cartão.</span>
+                    </p>
+                )}
                 <Link to={`/cadastro?next=${next}`} className="block"><Button size="lg" className="w-full">Copiar esta estratégia <ArrowRight /></Button></Link>
                 <Link to={`/login?next=${next}`} className="block"><Button variant="ghost" className="w-full">Já tenho conta</Button></Link>
             </div>
@@ -82,8 +147,20 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
             </div>
         );
     }
+    if (mine && !another) {
+        return (
+            <div className="space-y-2">
+                <p className="flex items-start gap-2 text-sm"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+                    Você já tem este portfólio{mine.mt5_login != null ? ` na conta ${mine.mt5_login}` : ''}.</p>
+                <Link to={`/client/licenses/${mine.id}`} className="block"><Button size="lg" className="w-full">Ver minha cópia <ArrowRight /></Button></Link>
+                <Button variant="ghost" className="w-full" onClick={() => setAnother(true)}>Assinar para outra conta MT5</Button>
+            </div>
+        );
+    }
+    const promo = !mine && (urlCode !== '' || listing.has_promo === true);
     return (
         <div className="space-y-3">
+            {promo && urlCode && <PromoBox slug={listing.slug} initial={urlCode} me={me} />}
             {listing.pay_online && <PlanPicker plans={listing.plans} value={planId} onChange={setPlanId} />}
             <Button size="lg" className="w-full" loading={sending} disabled={listing.pay_online && planId == null} onClick={subscribe}>
                 Copiar esta estratégia {!sending && <ArrowRight />}
@@ -91,6 +168,9 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
             {listing.pay_online && (
                 <p className="text-center text-xs text-muted-foreground">Pagamento seguro no cartão pela Stripe. Renova sozinho; troque de plano ou cancele quando quiser, em Pagamentos.</p>
             )}
+            {promo && !urlCode && (codeOpen
+                ? <PromoBox slug={listing.slug} initial="" me={me} />
+                : <Button variant="ghost" className="w-full" onClick={() => setCodeOpen(true)}><Ticket /> Tenho um código de lançamento</Button>)}
         </div>
     );
 }

@@ -57,10 +57,11 @@ export default function MySubscriptions() {
                                 <p className="font-medium">
                                     <Link to={`/marketplace/${s.listing.slug}`} className="hover:underline">{s.listing.title}</Link>
                                     {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
+                                    {s.kind === 'promo' && <span className="ml-1 text-xs text-muted-foreground">(código de lançamento)</span>}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                     {s.mt5_login != null && <>Conta {s.mt5_login} · </>}pedido em {formatDate(s.created_at)} ·{' '}
-                                    {s.plan ? `${s.plan.name}, ${formatMoney(s.plan.price, s.plan.currency)} / ${periodLabel(s.plan.days)}` : priceLabel(s.listing)}
+                                    {s.kind === 'promo' ? 'grátis' : s.plan ? `${s.plan.name}, ${formatMoney(s.plan.price, s.plan.currency)} / ${periodLabel(s.plan.days)}` : priceLabel(s.listing)}
                                 </p>
                                 {s.decision_note && <p className="text-xs text-muted-foreground">Gestor: {s.decision_note}</p>}
                             </div>

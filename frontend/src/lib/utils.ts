@@ -57,3 +57,11 @@ export const apiError = (err: unknown, fallback: string): string => {
     const detail = isAxiosError(err) ? err.response?.data?.detail : undefined;
     return typeof detail === 'string' ? detail : fallback;
 };
+
+// <input type="date"> works in local days: a date chosen there lasts through its whole day
+export const toDayInput = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+export const endOfDay = (day: string) => {
+    const [y, m, d] = day.split('-').map(Number);
+    return new Date(y, m - 1, d, 23, 59, 59).toISOString();
+};

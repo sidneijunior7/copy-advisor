@@ -11,8 +11,8 @@ import PageHeader from '../../components/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Field';
-import { copyState, needsSetup } from '../../lib/clientLicense';
-import { apiError, formatDate } from '../../lib/utils';
+import { copyState, needsSetup, validityLabel } from '../../lib/clientLicense';
+import { apiError } from '../../lib/utils';
 import SlideRow from '../../components/SlideRow';
 
 const POLL_MS = 15_000; // A hosted terminal changes state on its own
@@ -158,7 +158,7 @@ export default function MyLicenses() {
                                     </div>
                                     <div>
                                         <dt className="text-xs text-muted-foreground">Validade</dt>
-                                        <dd>{l.expires_at ? formatDate(l.expires_at) : 'Sem validade'}</dd>
+                                        <dd>{validityLabel(l)}</dd>
                                     </div>
                                 </dl>
                                 <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">

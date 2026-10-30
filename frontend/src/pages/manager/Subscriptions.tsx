@@ -103,6 +103,7 @@ export default function Subscriptions() {
                                             <TableCell label="Portfólio">
                                                 {s.listing.title}
                                                 {s.kind === 'renewal' && <span className="ml-1 text-xs text-muted-foreground">(renovação)</span>}
+                                                {s.kind === 'promo' && <span className="ml-1 text-xs text-muted-foreground">(código de lançamento)</span>}
                                                 {s.paid_online && <span className="ml-1 text-xs text-muted-foreground">(pago pela Stripe)</span>}
                                                 {s.note && <p className="text-xs text-muted-foreground">"{s.note}"</p>}
                                             </TableCell>

@@ -16,7 +16,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, IconSelect, Input, Select } from '../../components/ui/Field';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
-import { apiError, cn, formatDate, formatDateTime, isPast, licenseIsValid, parseUtc } from '../../lib/utils';
+import { apiError, cn, endOfDay, formatDate, formatDateTime, isPast, licenseIsValid, parseUtc, toDayInput } from '../../lib/utils';
 
 type LicenseForm = { portfolio_id: string; client_mt5_login: string; max_lots: string; expires_on: string };
 type LicenseChanges = { max_lots?: number; is_active?: boolean; expires_at?: string | null };
@@ -34,13 +34,7 @@ const MANAGE_ONLY = 'não abre posições novas e continua gerindo as abertas at
 
 const editButton = 'size-7 text-muted-foreground hover:text-foreground [&_svg]:size-3.5';
 
-// <input type="date"> works in local days: a license stays valid through the whole day chosen
-const toDayInput = (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const endOfDay = (day: string) => {
-    const [y, m, d] = day.split('-').map(Number);
-    return new Date(y, m - 1, d, 23, 59, 59).toISOString();
-};
+// A license stays valid through the whole day chosen (endOfDay)
 const todayInput = () => toDayInput(new Date());
 
 const HOSTING_POLL_MS = 15_000; // Hosted terminals change state on their own (starting, running, login refused)

@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import func
-from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError as PoolTimeoutError
+from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError, TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 import uvicorn
 import os
@@ -39,6 +39,7 @@ import backtest
 import observability
 import payments
 import performance
+import promos
 
 observability.setup("api")
 logger = logging.getLogger(__name__)
@@ -311,6 +312,7 @@ async def lifespan(app: FastAPI):
     if dash_bridge.INTERVAL > 0:
         threading.Thread(target=dash_bridge.run_forever, args=(stop,), name="dash-bridge", daemon=True).start()
     threading.Thread(target=watch_hosting_queue, args=(stop,), name="hosting-queue", daemon=True).start()
+    threading.Thread(target=watch_promo_endings, args=(stop,), name="promo-endings", daemon=True).start()
     yield
     stop.set()
     relay.join(2)
@@ -336,6 +338,35 @@ def watch_hosting_queue(stop: threading.Event):
             logger.error(f"Hosting queue watch failed: {type(e).__name__}: {str(e)[:200]}")
         finally:
             db.close()
+
+
+def watch_promo_endings(stop: threading.Event):
+    """Emails the clients whose free days from a launch code end soon (promos.reminders_due)."""
+    while not stop.wait(promos.WATCH_SECONDS):
+        if mailer.enabled():
+            send_promo_reminders(datetime.datetime.utcnow())
+
+
+def send_promo_reminders(now: datetime.datetime):
+    db = database.SessionLocal()
+    try:
+        emails = []
+        for r, left in promos.reminders_due(db, now):
+            listing = r.promo.listing
+            # Subscribing in Stripe with this much left charges only at the end (payments.MIN_TRIAL)
+            at_end = marketplace.pay_online(listing) and left > payments.MIN_TRIAL
+            emails.append((r.user.email, r.user.name, listing.title, r.license_id, r.license.expires_at, left, at_end))
+        db.commit()  # Marked before sending: a failed commit sends nothing, and the next round tries again
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Promo reminders failed: {type(e).__name__}: {str(e)[:200]}")
+        return
+    finally:
+        db.close()
+    for email in emails:
+        mailer.send_promo_ending(*email)
+    if emails:
+        logger.info(f"Promo reminders: {len(emails)} client(s) told their free days end soon")
 
 
 async def database_unavailable(request: Request, exc: Exception):
@@ -1102,7 +1133,21 @@ def my_license_view(lic: models.License, db: Session) -> dict:
     session = next((s for s in (fetch_hub_sessions() or [])
                     if s.get("kind") == "slave" and s.get("license_id") == lic.id), None)
     return clients.license_view(lic, terminal, session, datetime.datetime.utcnow()) | {
-        "billing": billing_view(stripe_subscriptions([lic.id], db).get(lic.id))}
+        "billing": billing_view(stripe_subscriptions([lic.id], db).get(lic.id))} | license_extras([lic], db)[lic.id]
+
+def license_extras(lics, db: Session) -> Dict[int, dict]:
+    """Per license: the free days of a launch code, and its portfolio's listing with the plans a renewal can take."""
+    free = promos.of_licenses(db, [l.id for l in lics])
+    portfolios = {l.portfolio_id for l in lics if l.portfolio_id is not None}
+    listings = {l.portfolio_id: l for l in db.query(models.Listing).filter(
+        models.Listing.portfolio_id.in_(portfolios), models.Listing.status == "published")} if portfolios else {}
+    out = {}
+    for l in lics:
+        listing = listings.get(l.portfolio_id)
+        plans = marketplace.active_plans(listing) if listing is not None and marketplace.pay_online(listing) else []
+        out[l.id] = {"promo": free.get(l.id), "listing_slug": listing.slug if listing else None,
+                     "renew_plans": [marketplace.plan_out(p, public=True) for p in plans]}
+    return out
 
 def stripe_subscriptions(license_ids, db: Session) -> Dict[int, models.Subscription]:
     """The Stripe subscription behind each license, the latest when it had several."""
@@ -1168,11 +1213,12 @@ def list_my_licenses(current_user: models.User = Depends(get_current_user), db: 
     sessions = {s.get("license_id"): s for s in (fetch_hub_sessions() or []) if s.get("kind") == "slave"} if ids else {}
     available = hosting.cipher() is not None
     billing = stripe_subscriptions(ids, db)
+    extras = license_extras(lics, db)
     room = available and hosting.room(db, now) > 0
     return {"hosting_available": available, "servers": hosting.known_servers(db, now) if available else [],
             "hosting_price": payments.hosting_terms() if available else None, "hosting_room": room,
-            "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now) | {"billing": billing_view(billing.get(l.id))}
-                         for l in lics]}
+            "licenses": [clients.license_view(l, terminals.get(l.id), sessions.get(l.id), now)
+                         | {"billing": billing_view(billing.get(l.id))} | extras[l.id] for l in lics]}
 
 @app.post("/me/licenses/claim")
 def claim_license(data: ClaimRequest, request: Request, current_user: models.User = Depends(get_current_user),
@@ -1304,8 +1350,10 @@ def connect_account(license_id: int, data: AccountIn, current_user: models.User 
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio")
     refuse_master_account(db, data.mt5_login)
     lic.client_mt5_login = data.mt5_login
+    started = promos.start(db, lic, datetime.datetime.utcnow())  # A launch code's free days count from now
     db.commit()
-    logger.info(f"License {lic.id}: client {current_user.id} connected MT5 account {data.mt5_login}")
+    logger.info(f"License {lic.id}: client {current_user.id} connected MT5 account {data.mt5_login}"
+                + (f", free until {lic.expires_at}" if started else ""))
     notify_hub()
     return my_license_view(lic, db)
 
@@ -1651,6 +1699,7 @@ def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
     hosts = listing.hosting_allowed and hosting.cipher() is not None
     out["hosting_room"] = hosts and hosting.room(db, datetime.datetime.utcnow()) > 0  # Full: not offered for now
     out["hosting_price"] = payments.hosting_terms() if out["hosting_room"] else None
+    out["has_promo"] = promos.has_usable(db, listing, datetime.datetime.utcnow())
     return out
 
 def public_days(days: int) -> int:
@@ -1718,6 +1767,31 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
         mailer.send_new_subscription(listing.portfolio.owner, sub)
     return marketplace.subscription_out(sub, for_manager=False)
 
+@app.post("/api/marketplace/{slug}/redeem")
+def redeem_promo(slug: str, data: promos.RedeemIn, request: Request, current_user: models.User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """A launch code: the portfolio free for its days, once per client. The license comes without an account, and
+    the days start when the client connects one (connect_account)."""
+    client_only(current_user)
+    check_not_limited("promo", request)
+    listing = published_listing(slug, db)
+    if mailer.enabled() and current_user.email_verified_at is None:  # A throwaway address must not use a campaign up
+        raise HTTPException(status_code=403, detail="Confirme seu email para usar o código: o link está na sua caixa de entrada")
+    try:
+        lic = promos.redeem(db, listing, current_user, data.code, datetime.datetime.utcnow())
+        db.commit()
+    except promos.PromoError as e:
+        db.rollback()
+        if e.status == 404:
+            failure_limiter.fail(f"promo:{client_ip(request)}")
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except IntegrityError:  # The same client twice at once: the other one got it
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Você já usou um código deste portfólio")
+    db.refresh(lic)
+    logger.info(f"License {lic.id}: client {current_user.id} used a launch code of listing {listing.id}")
+    return my_license_view(lic, db)
+
 class RenewIn(BaseModel):
     plan_id: Optional[int] = None  # Default: the plan the license had, if it is still sold
 
@@ -1735,6 +1809,9 @@ def renew_my_license(license_id: int, data: Optional[RenewIn] = None, current_us
     if paid is not None and paid.stripe_status in payments.RENEWING:
         raise HTTPException(status_code=409, detail="Esta licença já renova sozinha pelo cartão")
     plan_id = data.plan_id if data and data.plan_id else (paid.plan_id if paid else None)
+    plans = marketplace.active_plans(listing)
+    if plan_id is None and len(plans) == 1:  # A license from a launch code had no plan: the only one there is
+        plan_id = plans[0].id
     return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login, plan_id=plan_id), current_user, db)
 
 @app.post("/me/subscriptions/{subscription_id}/checkout")
@@ -1963,6 +2040,67 @@ def unpublish_listing(portfolio_id: int, current_user: models.User = Depends(get
         db.commit()
         marketplace.clear_cache()
     return marketplace.listing_out(listing)
+
+# --- Launch codes (promos.py) ---
+
+def owned_listing(portfolio_id: int, user: models.User, db: Session) -> models.Listing:
+    portfolio = owned_portfolio(portfolio_id, user, db)
+    listing = db.query(models.Listing).filter(models.Listing.portfolio_id == portfolio.id).first()
+    if listing is None: raise HTTPException(status_code=404, detail="Crie o anúncio do portfólio antes")
+    return listing
+
+def owned_promo(portfolio_id: int, promo_id: int, user: models.User, db: Session) -> models.PromoCode:
+    listing = owned_listing(portfolio_id, user, db)
+    promo = db.get(models.PromoCode, promo_id)
+    if promo is None or promo.listing_id != listing.id: raise HTTPException(status_code=404)
+    return promo
+
+@app.get("/portfolios/{portfolio_id}/listing/promos")
+def list_promos(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The listing's launch codes, with how many clients used, connected and subscribed with each."""
+    return promos.codes_view(db, owned_listing(portfolio_id, current_user, db), datetime.datetime.utcnow())
+
+@app.post("/portfolios/{portfolio_id}/listing/promos")
+def create_promo(portfolio_id: int, data: promos.PromoIn, current_user: models.User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """A new code, typed by the manager or generated. A draft listing may have them: they work once it is published."""
+    listing = owned_listing(portfolio_id, current_user, db)
+    now = datetime.datetime.utcnow()
+    try:
+        promo = promos.create(db, listing, data, now)
+        db.commit()
+    except promos.PromoError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Este código já existe neste portfólio")
+    logger.info(f"Listing {listing.id}: launch code {promo.id} created by manager {current_user.id} ({promo.free_days} days)")
+    return promos.promo_out(promo, now)
+
+@app.put("/portfolios/{portfolio_id}/listing/promos/{promo_id}")
+def update_promo(portfolio_id: int, promo_id: int, data: promos.PromoUpdate,
+                 current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Everything but the code itself. The days change only for those who use it from now on."""
+    promo = owned_promo(portfolio_id, promo_id, current_user, db)
+    try:
+        promos.apply(promo, data)
+    except promos.PromoError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    db.commit()
+    now = datetime.datetime.utcnow()
+    return next(p for p in promos.codes_view(db, promo.listing, now) if p["id"] == promo.id)
+
+@app.delete("/portfolios/{portfolio_id}/listing/promos/{promo_id}")
+def delete_promo(portfolio_id: int, promo_id: int, current_user: models.User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """Only a code nobody used: the free days given keep pointing at theirs, so a used one is turned off instead."""
+    promo = owned_promo(portfolio_id, promo_id, current_user, db)
+    if promo.uses:
+        raise HTTPException(status_code=409, detail="Este código já foi usado: desative em vez de excluir")
+    db.delete(promo)
+    db.commit()
+    return {"ok": True}
 
 class Suspension(BaseModel):
     reason: str = Field(min_length=3, max_length=255, pattern=hosting.ONE_LINE)

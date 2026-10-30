@@ -209,6 +209,21 @@ def send_hosting_queue(admins: List[str], terminals: List[models.HostedTerminal]
              + f"\n\nLibere uma vaga ou suba mais um pod. Veja em {public_url()}/dev/hosting\n")
 
 
+def send_promo_ending(to: str, name: Optional[str], title: str, license_id: int, ends_at: datetime.datetime,
+                      left: datetime.timedelta, charge_at_end: bool):
+    """The free days of a launch code end soon. charge_at_end: subscribing now in Stripe charges only when they end."""
+    days = max(1, round(left.total_seconds() / 86400))
+    when = f"em {days} {'dia' if days == 1 else 'dias'}"
+    send(to, f"Seu acesso grátis a {title} termina {when}",
+         f"Olá{', ' + name if name else ''}.\n\n"
+         f"Seu acesso grátis a {title} termina {when}, em {ends_at:%d/%m/%Y}.\n\n"
+         + ("Assine antes disso e você não perde nenhum dia: a cobrança só começa quando o grátis acabar.\n"
+            if charge_at_end else "Para continuar copiando depois disso, assine o portfólio.\n")
+         + f"\nAssine em {public_url()}/client/licenses/{license_id}\n\n"
+         "Se não assinar, a cópia para de abrir operações novas nessa data, e as que estiverem abertas "
+         "seguem o gestor até fechar.\n")
+
+
 def send_decision(sub: models.Subscription):
     client = sub.client
     if sub.status == "approved":

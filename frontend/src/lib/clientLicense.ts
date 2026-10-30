@@ -1,6 +1,7 @@
 import type { ClientLicense, MyLicenses } from '../api';
 import type { BadgeProps } from '../components/ui/Badge';
 import { HOSTING_STATES } from './labels';
+import { formatDate, parseUtc } from './utils';
 
 export type CopyState = { label: string; variant: BadgeProps['variant']; detail: string | null };
 
@@ -13,7 +14,13 @@ export const copyState = (l: ClientLicense): CopyState => {
         return { label: 'Pausado', variant: 'warning', detail: 'Cópia pausada por você. Não abre posições novas; as abertas seguem o Master até fechar.' };
     }
     if (l.mt5_login == null) {
-        return { label: 'Conecte sua conta', variant: 'warning', detail: 'Informe a conta MT5 que vai copiar para começar.' };
+        return {
+            label: 'Conecte sua conta',
+            variant: 'warning',
+            detail: l.promo
+                ? `Seus ${l.promo.free_days} dias grátis começam quando você informar a conta MT5 que vai copiar.`
+                : 'Informe a conta MT5 que vai copiar para começar.',
+        };
     }
     if (!l.valid) {
         return { label: 'Vencida', variant: 'warning', detail: 'Renove para voltar a copiar. As posições abertas seguem o Master até fechar.' };
@@ -46,10 +53,21 @@ export const hostingCandidates = (data: MyLicenses | null): ClientLicense[] =>
         : [];
 
 // Paid but not set up yet: no account, no way of copying chosen, or a hosting never paid. The license page shows
-// the activation
+// the activation. Without an account, even past its date: connecting it is the way on (and starts a launch code's
+// free days)
 export const needsSetup = (l: ClientLicense) =>
-    l.is_active && l.valid && (l.mt5_login == null || (!l.hosting && !l.has_key && !l.connection)
-        || (l.hosting != null && !l.hosting.billing.paid && l.hosting.billing.status == null));
+    l.is_active && (l.mt5_login == null || (l.valid && ((!l.hosting && !l.has_key && !l.connection)
+        || (l.hosting != null && !l.hosting.billing.paid && l.hosting.billing.status == null))));
+
+// Still on a launch code's free days: they started, and the license was not renewed past them
+export const onFreeDays = (l: ClientLicense) =>
+    l.promo?.ends_at != null && l.expires_at != null && parseUtc(l.expires_at).getTime() <= parseUtc(l.promo.ends_at).getTime() + 60_000;
+
+export const validityLabel = (l: ClientLicense) => {
+    if (l.promo && !l.promo.started_at) return `${l.promo.free_days} dias grátis, a partir da conexão da conta`;
+    if (!l.expires_at) return 'Sem validade';
+    return onFreeDays(l) ? `Grátis até ${formatDate(l.expires_at)}` : formatDate(l.expires_at);
+};
 
 export type NextStep = { title: string; detail: string; action: string; tone: 'warning' | 'destructive' };
 

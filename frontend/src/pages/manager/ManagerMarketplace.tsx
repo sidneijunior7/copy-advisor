@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
-import { Check, EyeOff, ExternalLink, Instagram, Pencil, Plus, Send, Store, UserRound, Youtube } from 'lucide-react';
+import { Check, EyeOff, ExternalLink, Instagram, Pencil, Plus, Send, Store, Ticket, UserRound, Youtube } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Listing, type Me, type MyListing } from '../../api';
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
 import ListingForm from '../../components/ListingForm';
 import PageHeader from '../../components/PageHeader';
+import PromoCodes from '../../components/PromoCodes';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Textarea } from '../../components/ui/Field';
@@ -86,6 +87,7 @@ export default function ManagerMarketplace() {
     const [me, setMe] = useState<Me | null>(null);
     const [items, setItems] = useState<MyListing[] | null>(null);
     const [editing, setEditing] = useState<number | null>(null);
+    const [codesOf, setCodesOf] = useState<number | null>(null); // The portfolio whose launch codes are open
     const [busy, setBusy] = useState<number | null>(null);
 
     useEffect(() => {
@@ -155,6 +157,13 @@ export default function ManagerMarketplace() {
                                                 {l ? <><Pencil /> Editar</> : <><Plus /> Criar anúncio</>}
                                             </Button>
                                         )}
+                                        {l && (
+                                            <Button size="sm" variant={codesOf === item.portfolio.id ? 'secondary' : 'ghost'}
+                                                onClick={() => setCodesOf(codesOf === item.portfolio.id ? null : item.portfolio.id)}
+                                                aria-expanded={codesOf === item.portfolio.id}>
+                                                <Ticket /> Códigos
+                                            </Button>
+                                        )}
                                         {l?.status === 'draft' && (
                                             <Button size="sm" loading={busy === item.portfolio.id} onClick={() => toggle(item, true)}>
                                                 {busy !== item.portfolio.id && <Send />} Publicar
@@ -178,6 +187,9 @@ export default function ManagerMarketplace() {
                                         onSaved={saved => { replace(item.portfolio.id, saved); setEditing(null); }}
                                         onCancel={() => setEditing(null)}
                                     />
+                                )}
+                                {l && codesOf === item.portfolio.id && (
+                                    <PromoCodes portfolioId={item.portfolio.id} slug={l.slug} published={l.status === 'published'} />
                                 )}
                             </Card>
                         );
