@@ -18,7 +18,9 @@ creator then runs one EA, the Master, for both products.
 - The same answer brings the live tracking of the Dash portfolio's strategies, which is frozen as the portfolio's
   homologation (freeze_incubation): the Dash sends it in the order it recorded it, from the portfolio's cursor on. The
   first time it is their whole live tracking, also from before the Dash portfolio was put together (composed_at, which
-  the listing shows), but only what was recorded as it closed: history sent afterwards was not followed live. Later, a
+  the listing shows). A trade the manager's EA sent counts only if recorded as it closed: history it sent afterwards
+  was not followed live. One verified by OnTick counts whenever recorded: it comes from the broker's statement of the
+  account, and connecting OnTick brings the account's past in one go. Later, a
   strategy put into the Dash portfolio brings only what is recorded after that, and one taken out keeps what it had.
 """
 import datetime
@@ -51,8 +53,9 @@ MAX_STEPS = 20  # per link per round: a long history goes out over several round
 HISTORY_MAX_DAYS = 90
 TOKEN_PATTERN = re.compile(r"^tc_[0-9a-f]{48}$")  # The Dash's portfolio API tokens (ApiTokenManager.tsx)
 OUT = (1, 2, 3)  # DEAL_ENTRY out, in/out (reversal) and out by: the Dash EA sends one item for each
-# A live tracking trade recorded this long after it closed is left out of the homologation: the EA records a trade as
-# it closes and OnTick within its sync, so a late one is history sent afterwards, not followed live.
+# A live tracking trade from the manager's EA recorded this long after it closed is left out of the homologation: the
+# EA records a trade as it closes, so a late one is history sent afterwards, not followed live. OnTick's are exempt:
+# they come from the broker, and connecting OnTick records the account's past all at once.
 LATE_LIMIT = datetime.timedelta(days=3)
 
 Send = Callable[[str, list], Tuple[int, str]]
@@ -127,7 +130,8 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
     - A trade with its MT5 account must be from the account the portfolio copies from, when it names one. A trade
       without it (recorded before the Dash kept the account) only from the Dash portfolio's own token or OnTick, not
       from another Dash portfolio of the same strategies, which may be a demo.
-    - A trade recorded more than LATE_LIMIT after it closed is left out: it was not followed live.
+    - A trade from the manager's EA recorded more than LATE_LIMIT after it closed is left out: it was not followed
+      live. One verified by OnTick is taken whenever recorded: the broker's statement says it happened.
     - The cursor moves past every trade the Dash sent, taken or not, so none comes back. With no trade at all on the
       first import it starts now: what the Dash records afterwards comes, a strategy's older trades never."""
     trades = [t for t in live.get("trades") or [] if isinstance(t, dict)]
@@ -152,7 +156,7 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
                 continue
         elif t.get("same_portfolio") is not True and t.get("verified") is not True:
             continue
-        if recorded is not None and recorded - traded > LATE_LIMIT:
+        if recorded is not None and recorded - traded > LATE_LIMIT and t.get("verified") is not True:
             continue
         lots = t.get("lots")
         db.add(models.IncubationTrade(
