@@ -9,7 +9,8 @@ Educational area: modules of lessons (a video by link and the text under it) and
 A client marks the lessons it finished, and the owner sees how many did each one.
 
 The video is never uploaded here: the owner pastes the link of a YouTube, Vimeo or Panda Video video (unlisted
-works), and the player's address is worked out from it, so the page only ever frames those three players.
+works), and the player's address is worked out from it, so the page only ever frames those three players. Images are
+links too: a module's banner and a lesson's thumbnail (a YouTube video brings its own) for the client's page.
 """
 import datetime
 import re
@@ -37,7 +38,16 @@ _VIMEO = [
     re.compile(r"^https://(?:www\.)?vimeo\.com/(\d{1,12})(?:/([0-9a-f]{6,20}))?/?(?:[?#][^\s]*)?$"),
     re.compile(r"^https://player\.vimeo\.com/video/(\d{1,12})(?:\?(?:[^#\s]*&)?h=([0-9a-f]{6,20}))?(?:[&#][^\s]*)?$"),
 ]
+_IMAGE = re.compile(r"^https://[^\s/?#]+\.[^\s/?#]+/\S*$")
 _PANDA = re.compile(r"^https://(player-vz-[a-z0-9-]{1,40}\.tv\.pandavideo\.com(?:\.br)?)/embed/\?v=([0-9a-f-]{36})(?:&[^\s]*)?$")
+
+
+def _youtube_id(url: str) -> Optional[str]:
+    for pattern in _YOUTUBE:
+        m = pattern.match(url)
+        if m:
+            return m.group(1)
+    return None
 
 
 def video(url: Optional[str]) -> Optional[dict]:
@@ -45,10 +55,9 @@ def video(url: Optional[str]) -> Optional[dict]:
     if not url:
         return None
     url = url.strip()
-    for pattern in _YOUTUBE:
-        m = pattern.match(url)
-        if m:
-            return {"provider": "youtube", "embed_url": f"https://www.youtube-nocookie.com/embed/{m.group(1)}?rel=0"}
+    youtube = _youtube_id(url)
+    if youtube:
+        return {"provider": "youtube", "embed_url": f"https://www.youtube-nocookie.com/embed/{youtube}?rel=0"}
     for pattern in _VIMEO:
         m = pattern.match(url)
         if m:
@@ -60,20 +69,39 @@ def video(url: Optional[str]) -> Optional[dict]:
     return None
 
 
+def thumbnail(lesson: models.EduLesson) -> Optional[str]:
+    """The lesson's own image, or else its YouTube video's (Vimeo and Panda Video hand theirs out only by API)."""
+    if lesson.thumbnail_url:
+        return lesson.thumbnail_url
+    youtube = _youtube_id((lesson.video_url or "").strip())
+    return f"https://i.ytimg.com/vi/{youtube}/hqdefault.jpg" if youtube else None
+
+
+def _image_url(v: Optional[str]) -> Optional[str]:
+    v = (v or "").strip() or None
+    if v is not None and not _IMAGE.match(v):
+        raise ValueError("Use o link https de uma imagem")
+    return v
+
+
 Audience = Literal["clients", "everyone"]
 
 
 class ModuleIn(BaseModel):
     title: str = Field(min_length=2, max_length=120, pattern=hosting.ONE_LINE)
     description: Optional[str] = Field(default=None, max_length=500)
+    cover_url: Optional[str] = Field(default=None, max_length=500)
     audience: Audience = "clients"
     published: bool = False
+
+    _cover = field_validator("cover_url")(_image_url)
 
 
 class LessonIn(BaseModel):
     title: str = Field(min_length=2, max_length=120, pattern=hosting.ONE_LINE)
     summary: Optional[str] = Field(default=None, max_length=300, pattern=hosting.ONE_LINE)
     video_url: Optional[str] = Field(default=None, max_length=500)
+    thumbnail_url: Optional[str] = Field(default=None, max_length=500)
     body: Optional[str] = Field(default=None, max_length=20000)
     minutes: Optional[int] = Field(default=None, ge=1, le=600)
     published: bool = False
@@ -85,6 +113,8 @@ class LessonIn(BaseModel):
         if v is not None and video(v) is None:
             raise ValueError("Use o link de um vídeo do YouTube, do Vimeo ou do Panda Video")
         return v
+
+    _thumbnail = field_validator("thumbnail_url")(_image_url)
 
 
 class FaqIn(BaseModel):
@@ -109,6 +139,7 @@ def _text(value: Optional[str]) -> Optional[str]:
 def apply_module(module: models.EduModule, data: ModuleIn, now: datetime.datetime):
     module.title = data.title.strip()
     module.description = _text(data.description)
+    module.cover_url = data.cover_url
     module.audience = data.audience if module.manager_id is not None else "everyone"  # Trademetric's is for every client
     module.published = data.published
     module.updated_at = now
@@ -118,6 +149,7 @@ def apply_lesson(lesson: models.EduLesson, data: LessonIn, now: datetime.datetim
     lesson.title = data.title.strip()
     lesson.summary = _text(data.summary)
     lesson.video_url = data.video_url
+    lesson.thumbnail_url = data.thumbnail_url
     lesson.body = _text(data.body)
     lesson.minutes = data.minutes
     lesson.published = data.published
@@ -154,17 +186,18 @@ def owner_name(manager: Optional[models.User]) -> str:
 
 def lesson_out(lesson: models.EduLesson, completed: Optional[bool] = None, done_by: Optional[int] = None) -> dict:
     out = {"id": lesson.id, "module_id": lesson.module_id, "title": lesson.title, "summary": lesson.summary,
-           "video": video(lesson.video_url), "body": lesson.body, "minutes": lesson.minutes}
+           "video": video(lesson.video_url), "thumbnail": thumbnail(lesson), "body": lesson.body, "minutes": lesson.minutes}
     if completed is not None:
         out["completed"] = completed
     if done_by is not None:  # The owner's view
-        out |= {"video_url": lesson.video_url, "published": bool(lesson.published), "done_by": done_by,
+        out |= {"video_url": lesson.video_url, "thumbnail_url": lesson.thumbnail_url, "published": bool(lesson.published), "done_by": done_by,
                 "updated_at": lesson.updated_at}
     return out
 
 
 def module_out(module: models.EduModule, done: Dict[int, int]) -> dict:
-    return {"id": module.id, "title": module.title, "description": module.description, "audience": module.audience,
+    return {"id": module.id, "title": module.title, "description": module.description, "cover_url": module.cover_url,
+            "audience": module.audience,
             "published": bool(module.published), "updated_at": module.updated_at,
             "lessons": [lesson_out(l, done_by=done.get(l.id, 0)) for l in module.lessons]}
 
@@ -271,8 +304,8 @@ def client_view(db: Session, user: models.User) -> dict:
     for m in modules:
         lessons = [lesson_out(l, completed=l.id in done) for l in m.lessons if l.published]
         if lessons:
-            out_modules.append({"id": m.id, "title": m.title, "description": m.description, "manager": owner_name(m.manager),
-                                "official": m.manager_id is None, "lessons": lessons})
+            out_modules.append({"id": m.id, "title": m.title, "description": m.description, "cover": m.cover_url,
+                                "manager": owner_name(m.manager), "official": m.manager_id is None, "lessons": lessons})
     managers = manager_ids(db, user)
     faqs = (db.query(models.EduFaq)
             .filter(models.EduFaq.published.is_(True), _visible(models.EduFaq, db, managers))

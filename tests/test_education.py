@@ -40,6 +40,30 @@ def test_video_links_become_only_known_players():
         assert education.video(bad) is None, bad
 
 
+def test_images_by_link_and_youtube_thumbnails(client):
+    _, mgr, _, _, cli, _ = claimed_license(client)
+    cover = "https://b-vz-7b6cf9e4-8bf.tv.pandavideo.com.br/0d1c1a2b/cover.jpg"
+    module = client.post("/education/modules", headers=mgr, json={"title": "Com capa", "cover_url": f" {cover} ",
+                                                                  "published": True}).json()
+    assert module["cover_url"] == cover
+    for bad in ("http://img.io/a.jpg", "javascript:alert(1)", "https://img/a.jpg"):
+        assert client.post("/education/modules", headers=mgr, json={"title": "Ruim", "cover_url": bad}).status_code == 422, bad
+    lessons = "/education/modules/{}/lessons".format(module["id"])
+    youtube = client.post(lessons, headers=mgr, json={"title": "Do YouTube", "video_url": VIDEO, "published": True}).json()
+    assert youtube["thumbnail"] == "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" and youtube["thumbnail_url"] is None
+    own = client.post(lessons, headers=mgr, json={"title": "Do Panda", "video_url": PANDA, "thumbnail_url": cover,
+                                                  "published": True}).json()
+    assert own["thumbnail"] == cover == own["thumbnail_url"]
+    bare = client.post(lessons, headers=mgr, json={"title": "Só Panda", "video_url": PANDA, "published": True}).json()
+    assert bare["thumbnail"] is None  # Panda Video's thumbnail comes only from its API: the page draws a poster
+    assert client.post(lessons, headers=mgr, json={"title": "Ruim", "body": "x", "thumbnail_url": "ftp://a.io/x"}).status_code == 422
+
+    [mine] = [m for m in client.get("/me/education", headers=cli).json()["modules"] if m["id"] == module["id"]]
+    assert mine["cover"] == cover
+    assert [l["thumbnail"] for l in mine["lessons"]] == [youtube["thumbnail"], cover, None]
+    assert all("thumbnail_url" not in l for l in mine["lessons"])
+
+
 def course(client, mgr, audience="clients", published=True):
     r = client.post("/education/modules", headers=mgr, json={"title": "Primeiros passos", "audience": audience,
                                                              "published": published})

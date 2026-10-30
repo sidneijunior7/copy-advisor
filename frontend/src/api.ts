@@ -545,7 +545,8 @@ export type Subscription = {
 export type AdminListing = Listing & { manager: string | null };
 
 // Educational area (education.py): Trademetric's own content (official) and each manager's. The video is a link to
-// YouTube, Vimeo or Panda Video; embed_url is the player
+// YouTube, Vimeo or Panda Video; embed_url is the player. Images are links too: thumbnail is the lesson's own or its
+// YouTube video's, else none (the page draws a poster)
 export type EduAudience = 'clients' | 'everyone';
 
 export type EduVideo = { provider: 'youtube' | 'vimeo' | 'panda'; embed_url: string };
@@ -556,10 +557,12 @@ export type EduLesson = {
     title: string;
     summary: string | null;
     video: EduVideo | null;
+    thumbnail: string | null;
     body: string | null; // Plain text, shown as written
     minutes: number | null;
     completed?: boolean; // The client's view
     video_url?: string | null; // The manager's view, from here on
+    thumbnail_url?: string | null;
     published?: boolean;
     done_by?: number; // How many users marked it done
     updated_at?: string;
@@ -569,6 +572,7 @@ export type EduManagedModule = {
     id: number;
     title: string;
     description: string | null;
+    cover_url: string | null;
     audience: EduAudience;
     published: boolean;
     updated_at: string;
@@ -585,7 +589,15 @@ export type EduManage = {
     official?: { title: string; lessons: string[] }[]; // For a manager: what Trademetric already teaches its clients
 };
 
-export type EduModule = { id: number; title: string; description: string | null; manager: string; official: boolean; lessons: EduLesson[] };
+export type EduModule = {
+    id: number;
+    title: string;
+    description: string | null;
+    cover: string | null; // A wide banner
+    manager: string;
+    official: boolean;
+    lessons: EduLesson[];
+};
 
 export type EduFaq = { id: number; question: string; answer: string; manager: string; official: boolean };
 

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
-import { ArrowDown, ArrowUp, BadgeCheck, Check, Eye, EyeOff, FileText, GraduationCap, HelpCircle, Info, Pencil, PlayCircle, Plus, Trash2, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, BadgeCheck, Check, Eye, EyeOff, FileText, GraduationCap, HelpCircle, ImageIcon, Info, Pencil, PlayCircle, Plus, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type EduAudience, type EduLesson, type EduManage, type EduManagedFaq, type EduManagedModule } from '../../api';
 import EmptyState from '../../components/EmptyState';
@@ -10,7 +10,7 @@ import VideoPlayer from '../../components/education/VideoPlayer';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Select, Textarea } from '../../components/ui/Field';
-import { AUDIENCES, VIDEO_URL, minutesLabel } from '../../lib/education';
+import { AUDIENCES, IMAGE_URL, VIDEO_URL, minutesLabel } from '../../lib/education';
 import { apiError, cn } from '../../lib/utils';
 
 type Tab = 'lessons' | 'faq';
@@ -56,15 +56,23 @@ function AudienceField({ id, registration }: { id: string; registration: UseForm
 
 // --- Modules ---
 
-type ModuleFormData = { title: string; description: string; audience: EduAudience; published: boolean };
+const imageRule = { validate: (v: string) => !v.trim() || IMAGE_URL.test(v.trim()) || 'Use o link https de uma imagem', maxLength: { value: 500, message: 'Até 500 caracteres' } };
+
+type ModuleFormData = { title: string; description: string; cover_url: string; audience: EduAudience; published: boolean };
 
 function ModuleForm({ module, onSaved, onCancel }: { module: EduManagedModule | null; onSaved: (m: EduManagedModule) => void; onCancel: () => void }) {
     const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ModuleFormData>({
-        defaultValues: { title: module?.title ?? '', description: module?.description ?? '', audience: module?.audience ?? 'clients', published: module?.published ?? false },
+        defaultValues: {
+            title: module?.title ?? '', description: module?.description ?? '', cover_url: module?.cover_url ?? '',
+            audience: module?.audience ?? 'clients', published: module?.published ?? false,
+        },
     });
     const id = module?.id ?? 'new';
     const save = async (data: ModuleFormData) => {
-        const body = { title: data.title.trim(), description: data.description.trim() || null, audience: data.audience, published: data.published };
+        const body = {
+            title: data.title.trim(), description: data.description.trim() || null, cover_url: data.cover_url.trim() || null,
+            audience: data.audience, published: data.published,
+        };
         try {
             const res = module ? await api.put<EduManagedModule>(`/education/modules/${module.id}`, body) : await api.post<EduManagedModule>('/education/modules', body);
             onSaved(res.data);
@@ -85,6 +93,10 @@ function ModuleForm({ module, onSaved, onCancel }: { module: EduManagedModule | 
             <Field label="Descrição (opcional)" htmlFor={`module-description-${id}`} error={errors.description?.message}>
                 <Textarea {...register('description', { maxLength: { value: 500, message: 'Até 500 caracteres' } })} id={`module-description-${id}`} rows={2} />
             </Field>
+            <Field label="Imagem de capa (opcional)" htmlFor={`module-cover-${id}`} error={errors.cover_url?.message}
+                hint="Link https de uma imagem larga (16:9, ex.: 1920×1080), o banner do módulo para o aluno. Sem ela, vale a miniatura da primeira aula.">
+                <Input {...register('cover_url', imageRule)} id={`module-cover-${id}`} type="url" icon={<ImageIcon />} placeholder="https://..." />
+            </Field>
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" {...register('published')} /> Publicado</label>
                 <div className="flex gap-1">
@@ -98,12 +110,13 @@ function ModuleForm({ module, onSaved, onCancel }: { module: EduManagedModule | 
 
 // --- Lessons ---
 
-type LessonFormData = { title: string; summary: string; video_url: string; body: string; minutes: string; published: boolean };
+type LessonFormData = { title: string; summary: string; video_url: string; thumbnail_url: string; body: string; minutes: string; published: boolean };
 
 function LessonForm({ moduleId, lesson, onSaved, onCancel }: { moduleId: number; lesson: EduLesson | null; onSaved: (l: EduLesson) => void; onCancel: () => void }) {
     const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LessonFormData>({
         defaultValues: {
-            title: lesson?.title ?? '', summary: lesson?.summary ?? '', video_url: lesson?.video_url ?? '', body: lesson?.body ?? '',
+            title: lesson?.title ?? '', summary: lesson?.summary ?? '', video_url: lesson?.video_url ?? '',
+            thumbnail_url: lesson?.thumbnail_url ?? '', body: lesson?.body ?? '',
             minutes: lesson?.minutes ? String(lesson.minutes) : '', published: lesson?.published ?? true,
         },
     });
@@ -111,7 +124,7 @@ function LessonForm({ moduleId, lesson, onSaved, onCancel }: { moduleId: number;
     const save = async (data: LessonFormData) => {
         const body = {
             title: data.title.trim(), summary: data.summary.trim() || null, video_url: data.video_url.trim() || null,
-            body: data.body.trim() || null, minutes: data.minutes ? parseInt(data.minutes) : null, published: data.published,
+            thumbnail_url: data.thumbnail_url.trim() || null, body: data.body.trim() || null, minutes: data.minutes ? parseInt(data.minutes) : null, published: data.published,
         };
         try {
             const res = lesson ? await api.put<EduLesson>(`/education/lessons/${lesson.id}`, body) : await api.post<EduLesson>(`/education/modules/${moduleId}/lessons`, body);
@@ -140,6 +153,10 @@ function LessonForm({ moduleId, lesson, onSaved, onCancel }: { moduleId: number;
                 hint="Do YouTube (pode ser não listado), do Vimeo ou do Panda Video. Em branco, a aula é só texto.">
                 <Input {...register('video_url', { validate: v => !v.trim() || VIDEO_URL.test(v.trim()) || 'Use um link https do YouTube, do Vimeo ou do Panda Video' })}
                     id={`lesson-video-${id}`} type="url" icon={<PlayCircle />} placeholder="https://www.youtube.com/watch?v=..." />
+            </Field>
+            <Field label="Miniatura (opcional)" htmlFor={`lesson-thumbnail-${id}`} error={errors.thumbnail_url?.message}
+                hint="Link https de uma imagem 16:9, como a capa do vídeo no Panda Video. Vídeos do YouTube já trazem a deles.">
+                <Input {...register('thumbnail_url', imageRule)} id={`lesson-thumbnail-${id}`} type="url" icon={<ImageIcon />} placeholder="https://..." />
             </Field>
             <Field label="Texto da aula" htmlFor={`lesson-body-${id}`} error={errors.body?.message}
                 hint="O passo a passo, links e observações. Aparece como escrito, com as quebras de linha.">

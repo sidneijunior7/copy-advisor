@@ -212,6 +212,7 @@ class EduModule(Base):
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True) # NULL: Trademetric's own, for every client
     title = Column(String(120), nullable=False)
     description = Column(String(500))
+    cover_url = Column(String(500)) # An https image, wide: the module's banner on the client's page
     audience = Column(String(16), nullable=False, default="clients") # clients: only the manager's; everyone: every user
     published = Column(Boolean, nullable=False, default=False)
     position = Column(Integer, nullable=False, default=0)
@@ -230,6 +231,7 @@ class EduLesson(Base):
     title = Column(String(120), nullable=False)
     summary = Column(String(300))
     video_url = Column(String(500)) # As the manager pasted it; the player address is worked out from it
+    thumbnail_url = Column(String(500)) # An https image, 16:9; without it, a YouTube video's own thumbnail
     body = Column(Text) # Plain text, shown as written
     minutes = Column(Integer) # How long it takes, as the manager says
     published = Column(Boolean, nullable=False, default=False)
