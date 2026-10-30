@@ -8,6 +8,7 @@ import api, { type License, type MasterAccount, type Portfolio, type Strategy } 
 import Card from '../../components/Card';
 import EmptyState from '../../components/EmptyState';
 import DashLinkPanel from '../../components/DashLinkPanel';
+import DeletePortfolio from '../../components/DeletePortfolio';
 import PageHeader from '../../components/PageHeader';
 import PortfolioLimits from '../../components/PortfolioLimits';
 import PortfolioOrigin from '../../components/PortfolioOrigin';
@@ -253,6 +254,7 @@ export default function Portfolios() {
                                     onSaved={origin => setPortfolios(current => current.map(x => (x.id === p.id ? { ...x, ...origin } : x)))}
                                 />
                                 <DashLinkPanel portfolioId={p.id} portfolioName={p.name} />
+                                <DeletePortfolio portfolioId={p.id} name={p.name} onDeleted={refresh} />
                             </Card>
                         );
                     })}

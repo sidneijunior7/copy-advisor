@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 import clients
 import dash_bridge
 import database
+import deletion
 import education
 import followers
 import hosting
@@ -769,6 +770,27 @@ def list_portfolios(current_user: models.User = Depends(get_current_user), db: S
             "master_login": p.master_login,
         })
     return result
+
+@app.get("/portfolios/{portfolio_id}/deletion")
+def portfolio_deletion(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Whether the portfolio can be deleted now (blockers, empty when it can) and what deleting it takes away."""
+    portfolio = owned_portfolio(portfolio_id, current_user, db)
+    return {"blockers": deletion.blockers(db, portfolio, datetime.datetime.utcnow()),
+            "removes": deletion.summary(db, portfolio)}
+
+@app.delete("/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The portfolio and all of it, only when no client is left with it (deletion.py)."""
+    portfolio = owned_portfolio(portfolio_id, current_user, db)
+    blocked = deletion.blockers(db, portfolio, datetime.datetime.utcnow())
+    if blocked:
+        raise HTTPException(status_code=409, detail="Ainda não dá para excluir: " + " ".join(blocked))
+    logger.info(f"Portfolio {portfolio.id} ({portfolio.name}) deleted by manager {current_user.id}: {deletion.summary(db, portfolio)}")
+    deletion.delete(db, portfolio)
+    db.commit()
+    marketplace.clear_cache()
+    notify_hub()
+    return {"ok": True}
 
 @app.get("/me/manager")
 def get_manager_details(current_user: models.User = Depends(get_current_user)):

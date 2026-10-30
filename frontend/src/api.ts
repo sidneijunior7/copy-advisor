@@ -516,6 +516,12 @@ export type Listing = {
     updated_at: string | null;
 };
 
+// Whether a portfolio can be deleted (blockers: why not, empty when it can) and what deleting it takes away
+export type PortfolioDeletion = {
+    blockers: string[];
+    removes: { licenses: number; track_record: number; homologation: number; listing: boolean; requests: number; codes: number; dash: boolean };
+};
+
 export type MyListing = { portfolio: { id: number; name: string; strategies: number }; listing: Listing | null };
 
 // What anyone sees in the marketplace: the last 90 days in stats, the manager's public profile
