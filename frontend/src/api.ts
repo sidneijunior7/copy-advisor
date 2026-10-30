@@ -402,7 +402,10 @@ export type PortfolioPerformance = PerformanceStats & {
     // Trades from before the Master first connected: no client got them, so they are not in the numbers above
     before_mirror: { trades: number; net: number; until: string | null };
     // The Dash live tracking in the track record: the trades that closed before the clients got the first one
-    homologation: { trades: number; net: number; verified: number; to: string | null; copy_start: string | null };
+    homologation: {
+        trades: number; net: number; verified: number; to: string | null; copy_start: string | null;
+        composed_at: string | null; before_composed: number; // Closed before the Dash portfolio was put together
+    };
 };
 
 export type CopiesPerformance = PerformanceStats & { equity: { t: string; balance: number | null; equity: number | null }[] };
@@ -470,8 +473,11 @@ export type BacktestView =
               truncated: boolean;
           };
           // The Dash portfolio's own live tracking frozen by the Mirror, over the same capital; verified: trades that
-          // came from OnTick; official: the ones before the first copy, the homologation in the track record
-          incubation: (Omit<Extract<BacktestView, { available: true }>['backtest'], 'strategies'> & { verified: number; official: number }) | null;
+          // came from OnTick; official: the ones before the first copy, the homologation in the track record;
+          // before_composed: the ones before the Dash portfolio was put together (composed_at), its strategies' own
+          incubation: (Omit<Extract<BacktestView, { available: true }>['backtest'], 'strategies'> & {
+              verified: number; official: number; composed_at: string | null; before_composed: number;
+          }) | null;
           cone: { trades: number; simulations: number; bands: ConeBand[]; verdict: 'inside' | 'below' | 'above' } | null;
           cone_missing: 'capital' | 'accounts' | 'balance' | 'currency' | 'no-trades' | 'few-trades' | null;
       };

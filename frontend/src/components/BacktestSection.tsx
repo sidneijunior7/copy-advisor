@@ -79,6 +79,9 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                         {' '}{inc.official === inc.trades
                             ? 'Fazem parte do histórico: vieram antes da primeira cópia.'
                             : `As ${inc.official} de antes da primeira cópia fazem parte do histórico; depois dela, vale o que os clientes receberam.`}
+                        {inc.before_composed > 0 && inc.composed_at && (
+                            ` O portfólio foi montado no Dash em ${formatDate(parseUtc(inc.composed_at))}: ${inc.before_composed === inc.trades ? 'todas' : `${inc.before_composed} delas`} são de antes, o acompanhamento ao vivo das estratégias que o compõem.`
+                        )}
                     </p>
                     <SlideRow className="md:grid-cols-3 xl:grid-cols-6">
                         <Tile label="Retorno" value={pct(inc.return_pct)}

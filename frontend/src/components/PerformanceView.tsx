@@ -60,6 +60,8 @@ export default function PerformanceView({ stats, emptyTitle, emptyDescription }:
                 : homologation.verified > 0
                     ? `, ${homologation.verified} verificadas pela OnTick e as outras informadas pelo EA do gestor.`
                     : ', informado pelo EA do gestor.'}
+            {homologation.before_composed > 0 && homologation.composed_at
+                && ` ${homologation.before_composed === homologation.trades ? 'Todas são' : `${homologation.before_composed} são`} de antes de o portfólio ser montado no Dash (${formatDate(parseUtc(homologation.composed_at))}): o acompanhamento ao vivo das estratégias que o compõem.`}
             {' '}Não têm custo de cópia: use o lucro por lote para descontar corretagem e slippage.
         </p>
     );

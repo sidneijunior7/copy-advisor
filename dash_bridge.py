@@ -15,9 +15,11 @@ creator then runs one EA, the Master, for both products.
   ERROR_RETRY_SECONDS, so fixing the plan on the Dash is enough. Other failures are tried again the next round.
 - With the shared key, the link also keeps a copy of the Dash portfolio's declared backtest (GET
   /api/mirror/backtest), refreshed every BACKTEST_REFRESH_SECONDS, for the listing page (backtest.py).
-- The same answer brings the Dash portfolio's live tracking, which is frozen as the portfolio's homologation
-  (freeze_incubation): the Dash sends it in the order it recorded it, from the portfolio's cursor on, so a strategy put
-  into the Dash portfolio later brings only what is recorded after that, and one taken out keeps what it had.
+- The same answer brings the live tracking of the Dash portfolio's strategies, which is frozen as the portfolio's
+  homologation (freeze_incubation): the Dash sends it in the order it recorded it, from the portfolio's cursor on. The
+  first time it is their whole live tracking, also from before the Dash portfolio was put together (composed_at, which
+  the listing shows), but only what was recorded as it closed: history sent afterwards was not followed live. Later, a
+  strategy put into the Dash portfolio brings only what is recorded after that, and one taken out keeps what it had.
 """
 import datetime
 import json
@@ -49,8 +51,8 @@ MAX_STEPS = 20  # per link per round: a long history goes out over several round
 HISTORY_MAX_DAYS = 90
 TOKEN_PATTERN = re.compile(r"^tc_[0-9a-f]{48}$")  # The Dash's portfolio API tokens (ApiTokenManager.tsx)
 OUT = (1, 2, 3)  # DEAL_ENTRY out, in/out (reversal) and out by: the Dash EA sends one item for each
-# After the first import, a live tracking trade recorded this long after it closed is left out of the homologation: the
-# EA records a trade as it closes and OnTick within its sync, so a late one is history sent afterwards.
+# A live tracking trade recorded this long after it closed is left out of the homologation: the EA records a trade as
+# it closes and OnTick within its sync, so a late one is history sent afterwards, not followed live.
 LATE_LIMIT = datetime.timedelta(days=3)
 
 Send = Callable[[str, list], Tuple[int, str]]
@@ -93,8 +95,11 @@ def compact_backtest(body: str) -> dict:
     trades = [t for t in data.get("trades") or [] if isinstance(t, dict) and isinstance(t.get("pnl"), (int, float))]
     capital = data.get("capital") if isinstance(data.get("capital"), dict) else {}
     capital_value = capital.get("value") if isinstance(capital.get("value"), (int, float)) else 0
+    portfolio = data.get("portfolio") if isinstance(data.get("portfolio"), dict) else {}
     return {
-        "name": str((data.get("portfolio") or {}).get("name") or "")[:100],
+        "name": str(portfolio.get("name") or "")[:100],
+        # When the Dash portfolio was put together: its homologation from before is its strategies' live tracking
+        "composed_at": str(portfolio["created_at"])[:40] if portfolio.get("created_at") else None,
         "initial_balance": float(data.get("initial_balance") or 0),
         "capital": round(float(capital_value), 2) if capital_value > 0 else None,  # Monte Carlo DD + 3 sigma
         "currency": (str(data["currency"])[:3] if data.get("currency") else None),
@@ -122,7 +127,7 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
     - A trade with its MT5 account must be from the account the portfolio copies from, when it names one. A trade
       without it (recorded before the Dash kept the account) only from the Dash portfolio's own token or OnTick, not
       from another Dash portfolio of the same strategies, which may be a demo.
-    - After the first import, a trade recorded more than LATE_LIMIT after it closed is left out.
+    - A trade recorded more than LATE_LIMIT after it closed is left out: it was not followed live.
     - The cursor moves past every trade the Dash sent, taken or not, so none comes back. With no trade at all on the
       first import it starts now: what the Dash records afterwards comes, a strategy's older trades never."""
     trades = [t for t in live.get("trades") or [] if isinstance(t, dict)]
@@ -147,7 +152,7 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
                 continue
         elif t.get("same_portfolio") is not True and t.get("verified") is not True:
             continue
-        if not first and recorded is not None and recorded - traded > LATE_LIMIT:
+        if recorded is not None and recorded - traded > LATE_LIMIT:
             continue
         lots = t.get("lots")
         db.add(models.IncubationTrade(
@@ -163,6 +168,16 @@ def freeze_incubation(db: Session, portfolio: models.Portfolio, live: dict, now:
     # that does, or the history would be lost
     portfolio.incubation_cursor = cursor
     return taken
+
+
+def composed_at(db: Session, portfolio_id: int) -> Optional[datetime.datetime]:
+    """When the linked Dash portfolio was put together, as its last backtest said; None without."""
+    link = db.query(models.DashLink).filter(models.DashLink.portfolio_id == portfolio_id).first()
+    try:
+        data = json.loads(link.backtest) if link is not None and link.backtest else {}
+    except ValueError:
+        return None
+    return _utc(data["composed_at"]) if data.get("composed_at") else None
 
 
 Fetch = Callable[[str, Optional[str]], Tuple[int, str]]

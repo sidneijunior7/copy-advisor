@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+import dash_bridge
 import models
 
 MAX_DAYS = 3650
@@ -292,6 +293,7 @@ def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetim
     as the Master's deals tell them."""
     start = since(days, now)
     rows, _, track, trades, copy_start = _official(db, p, start)
+    composed = dash_bridge.composed_at(db, p.id) if trades else None
     results: List[Tuple[datetime.datetime, float]] = [(at, result) for at, result, _, _, _ in rows]
     by_strategy: Dict[int, List[Tuple[datetime.datetime, float]]] = {}
     for at, result, strategy_id, _, _ in rows:
@@ -314,7 +316,10 @@ def portfolio(db: Session, p: models.Portfolio, days: int, now: datetime.datetim
         "before_mirror": before_mirror(db, p, start),
         "homologation": {"trades": len(trades), "net": round(sum(t.pnl for t in trades), 2),
                          "verified": sum(1 for t in trades if t.verified),
-                         "to": trades[-1].traded_at if trades else None, "copy_start": copy_start},
+                         "to": trades[-1].traded_at if trades else None, "copy_start": copy_start,
+                         # Closed before the Dash portfolio was put together: its strategies' own live tracking
+                         "composed_at": composed,
+                         "before_composed": sum(1 for t in trades if composed and t.traded_at < composed)},
     }
 
 

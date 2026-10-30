@@ -20,6 +20,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+import dash_bridge
 import models
 import performance
 
@@ -181,7 +182,8 @@ def incubation(db: Session, p: models.Portfolio, bt: dict) -> Optional[dict]:
     """The Dash portfolio's live tracking frozen for the portfolio, before or beside the Mirror: the same numbers as
     the backtest, over the same capital. verified: how many of its trades came from OnTick, the rest from the
     manager's own EA; official: how many closed before the first copy, the homologation in the track record. None
-    without."""
+    without. before_composed: how many closed before the Dash portfolio was put together (composed_at), its strategies'
+    own live tracking."""
     trades = (db.query(models.IncubationTrade).filter(models.IncubationTrade.portfolio_id == p.id)
               .order_by(models.IncubationTrade.traded_at).all())
     if not trades:
@@ -192,8 +194,10 @@ def incubation(db: Session, p: models.Portfolio, bt: dict) -> Optional[dict]:
                  "currency": bt.get("currency"), "from": fmt(trades[0].traded_at), "to": fmt(trades[-1].traded_at),
                  "truncated": False})
     del out["strategies"]
+    composed = dash_bridge.composed_at(db, p.id)
     return {**out, "verified": sum(1 for t in trades if t.verified),
-            "official": sum(1 for t in trades if copy_start is None or t.traded_at < copy_start)}
+            "official": sum(1 for t in trades if copy_start is None or t.traded_at < copy_start),
+            "composed_at": composed, "before_composed": sum(1 for t in trades if composed and t.traded_at < composed)}
 
 
 def view(db: Session, p: models.Portfolio, link: Optional[models.DashLink], days: int, now: datetime.datetime,

@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import random
+import sys
 import uuid
 
 import pytest
@@ -19,6 +20,7 @@ import dash_bridge  # noqa: E402
 import database  # noqa: E402
 import marketplace  # noqa: E402
 import models  # noqa: E402
+import reimport_homologation  # noqa: E402
 import server  # noqa: E402
 from test_dash_bridge import FakeDash, new_token  # noqa: E402
 from test_marketplace import LISTING, published  # noqa: E402
@@ -236,6 +238,38 @@ def test_the_live_tracking_is_frozen_as_the_homologation(client, monkeypatch):
     assert performance["homologation"]["trades"] == 2 and performance["trades"] == 7  # b2 came after the copy started
     view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr, params={"days": 365}).json()
     assert view["incubation"]["official"] == 2 and view["cone"]["trades"] == 7
+
+
+def test_the_first_import_takes_the_strategies_history_recorded_live(client, monkeypatch):
+    """The Dash sends its strategies' whole live tracking, also from before the Dash portfolio was put together: what
+    was recorded as it closed comes, history sent afterwards does not, and the listing tells which came before."""
+    _, mgr, portfolio_id, _ = published(client, title=f"Histórico {uuid.uuid4().hex[:6]}")
+    monkeypatch.setattr(dash_bridge, "send", FakeDash())
+    token = new_token()
+    client.put(f"/portfolios/{portfolio_id}/dash", headers=mgr, json={"token": token})
+    answer = json.loads(with_live([live_trade("h1", 40, 300.0, verified=True),
+                                   live_trade("h2", 30, 900.0, recorded_days_ago=0, verified=True),  # Sent afterwards
+                                   live_trade("h3", 5, -100.0, verified=True)]))
+    answer["portfolio"]["created_at"] = iso(NOW - datetime.timedelta(days=10))
+    asked = []
+
+    def fetch(t, after=None):
+        asked.append(after)
+        return 200, json.dumps(answer)
+
+    dash_bridge.run_once(post=FakeDash(), fetch=fetch)
+    view = client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr, params={"days": 365}).json()
+    assert (view["incubation"]["trades"], view["incubation"]["net"], view["incubation"]["before_composed"]) == (2, 200.0, 1)
+    assert view["incubation"]["composed_at"].startswith((NOW - datetime.timedelta(days=10)).strftime("%Y-%m-%dT%H:%M"))
+    homologation = client.get(f"/portfolios/{portfolio_id}/performance", headers=mgr, params={"days": 365}).json()["homologation"]
+    assert (homologation["trades"], homologation["before_composed"]) == (2, 1)
+
+    # Imported again from the start (reimport_homologation.py): the next round asks for everything, nothing doubles
+    monkeypatch.setattr(sys, "argv", ["reimport_homologation.py", str(portfolio_id), "--apply"])
+    reimport_homologation.main()
+    dash_bridge.run_once(post=FakeDash(), fetch=fetch)
+    assert asked == [None, None]
+    assert client.get(f"/portfolios/{portfolio_id}/backtest", headers=mgr).json()["incubation"]["trades"] == 2
 
 
 def test_with_nothing_to_take_the_homologation_starts_now(client, monkeypatch):
