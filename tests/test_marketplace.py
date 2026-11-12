@@ -217,3 +217,84 @@ def test_a_request_without_an_account_approved_twice_keeps_one_license(client):
         db.commit()
         assert again.id == first.id
         assert db.query(models.License).filter(models.License.portfolio_id == portfolio_id).count() == 1
+
+
+def _valid_cpf(seed: str) -> str:
+    """Builds a valid 11-digit CPF from a 9-digit numeric seed."""
+    digits = [int(c) for c in seed[:9].ljust(9, "0")]
+    if len(set(digits)) == 1:
+        digits[0] = (digits[0] + 1) % 10
+    for length in (9, 10):
+        total = sum(digits[i] * (length + 1 - i) for i in range(length))
+        check = (total * 10) % 11
+        digits.append(0 if check == 10 else check)
+    return "".join(str(d) for d in digits)
+
+
+def test_checkout_email_check_cpf_onboarding_and_hosting_choice(client, fresh_limits):
+    _, mgr, _, listing = published(client, title=f"Checkout {uuid.uuid4().hex[:6]}")
+    email = f"guest_{uuid.uuid4().hex[:8]}@cliente.com"
+    assert client.post("/auth/email-check", json={"email": "invalido"}).status_code == 422
+    assert client.post("/auth/email-check", json={"email": email}).json() == {"exists": False}
+
+    # Invalid CPFs are rejected at sign-up
+    for bad_cpf in ("111.111.111-11", "123.456.789-00", "12345"):
+        r = client.post("/register", json={"email": email, "password": "s3nha-forte", "name": "João", "cpf": bad_cpf})
+        assert r.status_code == 422, bad_cpf
+
+    cpf = _valid_cpf(str(uuid.uuid4().int)[:9])
+    formatted_cpf = f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
+    r = client.post("/register", json={
+        "email": email, "password": "s3nha-forte", "name": "João Silva",
+        "cpf": formatted_cpf, "broker": "XP", "advisor": "EQI Investimentos", "advisor_unknown": False,
+    })
+    assert r.status_code == 200, r.text
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    assert client.post("/auth/email-check", json={"email": email.upper()}).json() == {"exists": True}
+
+    # Duplicate CPF is rejected on another account
+    r_dup = client.post("/register", json={
+        "email": f"other_{uuid.uuid4().hex[:8]}@cliente.com", "password": "s3nha-forte", "cpf": cpf,
+    })
+    assert r_dup.status_code == 409
+
+    me = client.get("/me", headers=headers).json()
+    assert me["cpf"] == cpf and me["broker"] == "XP" and me["advisor"] == "EQI Investimentos" and not me["advisor_unknown"]
+
+    # Subscribing through the checkout wizard records wants_hosting and updates broker/advisor when changed
+    sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=headers, json={
+        "wants_hosting": True, "broker": "Clear", "advisor_unknown": True,
+    }).json()
+    assert sub["wants_hosting"] is True
+    me_after = client.get("/me", headers=headers).json()
+    assert me_after["broker"] == "Clear" and me_after["advisor"] is None and me_after["advisor_unknown"] is True
+
+    client.post(f"/subscriptions/{sub['id']}/approve", headers=mgr, json={})
+    [lic] = client.get("/me/licenses", headers=headers).json()["licenses"]
+    assert lic["wants_hosting"] is True
+
+
+def test_marketplace_simulation_scales_profit_capital_and_drawdown(client):
+    _, mgr, portfolio_id, listing = published(client, title=f"Simulador {uuid.uuid4().hex[:6]}")
+    now = datetime.datetime.utcnow()
+    with database.SessionLocal() as db:
+        db.add_all([
+            models.IncubationTrade(portfolio_id=portfolio_id, dash_id="t1", traded_at=now - datetime.timedelta(days=20),
+                                   pnl=600.0, lots=2.0, verified=True),
+            models.IncubationTrade(portfolio_id=portfolio_id, dash_id="t2", traded_at=now - datetime.timedelta(days=10),
+                                   pnl=-200.0, lots=2.0, verified=True),
+            models.IncubationTrade(portfolio_id=portfolio_id, dash_id="t3", traded_at=now - datetime.timedelta(days=5),
+                                   pnl=400.0, lots=2.0, verified=True),
+        ])
+        db.commit()
+    marketplace.clear_cache()
+
+    sim = client.get(f"/api/marketplace/{listing['slug']}/simulation").json()
+    # Normalized per 1 lot: +300, -100, +200 -> net = 400 per lot, max_drawdown = 100 per lot
+    # Base lots = 2, min_capital = 5000 -> unit_capital = 2500 per lot
+    assert sim["trades"] == 3 and sim["unit_net"] == 400.0 and sim["unit_max_drawdown"] == 100.0
+    assert sim["unit_capital"] == 2500.0 and sim["base_capital"] == 5000.0
+    by_lots = {s["lots"]: s for s in sim["steps"]}
+    assert by_lots[1.0]["simulated_profit"] == 400.0 and by_lots[1.0]["recommended_capital"] == 2500.0
+    assert by_lots[2.0]["simulated_profit"] == 800.0 and by_lots[2.0]["recommended_capital"] == 5000.0
+    assert by_lots[5.0]["simulated_profit"] == 2000.0 and by_lots[5.0]["max_drawdown"] == 500.0

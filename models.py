@@ -30,6 +30,10 @@ class User(Base):
     email_verified_at = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True) # Sessions that began before it are over
     stripe_customer_id = Column(String(64), nullable=True) # The client's customer in Stripe (payments.py)
+    cpf = Column(String(11), unique=True, index=True, nullable=True) # Digits only, collected during checkout
+    broker = Column(String(32), nullable=True) # Homologated broker chosen at checkout (XP, Clear, Rico, Genial, none)
+    advisor = Column(String(120), nullable=True) # Investment advisor/office name when the client has one
+    advisor_unknown = Column(Boolean, nullable=False, default=False) # True when the client picked "Não sei"
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -183,6 +187,7 @@ class Subscription(Base):
     stripe_status = Column(String(32)) # active, trialing, past_due, canceled...
     stripe_period_end = Column(DateTime) # The paid period's end, as Stripe last said
     stripe_cancel_at_period_end = Column(Boolean, nullable=False, default=False) # Cancelled: ends with the period
+    wants_hosting = Column(Boolean, nullable=False, default=False) # Chosen in the checkout wizard: cloud hosting
 
     listing = relationship("Listing")
     plan = relationship("ListingPlan")

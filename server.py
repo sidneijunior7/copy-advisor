@@ -1095,12 +1095,21 @@ def delete_hosting(lic: models.License, user: models.User, db: Session):
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Sign-ups per client IP per hour: an open form is the cheapest way to fill the users table
 signup_limiter = FailureLimiter(int(os.getenv("SIGNUP_MAX_PER_HOUR", "5")), 3600)
+email_check_limiter = FailureLimiter(int(os.getenv("EMAIL_CHECK_MAX_PER_HOUR", "30")), 3600)
+
+
+class EmailCheckRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
 
 
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=200)
     name: Optional[str] = Field(default=None, max_length=100, pattern=hosting.ONE_LINE)  # Filled in later
+    cpf: Optional[str] = Field(default=None, max_length=20)
+    broker: Optional[marketplace.BrokerChoice] = None
+    advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
+    advisor_unknown: bool = False
 
 
 class ClaimRequest(BaseModel):
@@ -1112,6 +1121,20 @@ class ClientHosting(BaseModel):
     server: Optional[str] = hosting.HostingUpdate.model_fields["server"]
     password: Optional[str] = hosting.HostingUpdate.model_fields["password"]
     enabled: Optional[bool] = None
+
+
+@app.post("/auth/email-check")
+def check_email(data: EmailCheckRequest, request: Request, db: Session = Depends(get_db)):
+    """Tells the checkout wizard whether an email already has an account (ask for password) or is new (create account)."""
+    ip = client_ip(request)
+    if email_check_limiter.blocked(f"email-check:{ip}"):
+        raise HTTPException(status_code=429, detail="Muitas tentativas a partir desta rede. Aguarde alguns minutos.")
+    email = data.email.strip().lower()
+    if not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=422, detail="Email inválido")
+    email_check_limiter.fail(f"email-check:{ip}")
+    exists = db.query(models.User.id).filter(func.lower(models.User.email) == email).first() is not None
+    return {"exists": exists}
 
 
 @app.post("/register")
@@ -1126,11 +1149,18 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     if auth.validate_password(data.password):
         raise HTTPException(status_code=422, detail=f"A senha precisa ter de {auth.PASSWORD_MIN_LENGTH} a "
                                                     f"{auth.PASSWORD_MAX_BYTES} caracteres")
+    try:
+        cpf = auth.clean_cpf(data.cpf)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     signup_limiter.fail(f"signup:{ip}")
     if db.query(models.User).filter(func.lower(models.User.email) == email).first():
         raise HTTPException(status_code=409, detail="Este email já tem conta: entre com ele")
+    if cpf is not None and db.query(models.User.id).filter(models.User.cpf == cpf).first():
+        raise HTTPException(status_code=409, detail="Este CPF já está cadastrado")
     user = models.User(email=email, name=(data.name or "").strip() or None, password_hash=auth.get_password_hash(data.password),
-                       role="CLIENT", status="active")
+                       cpf=cpf, broker=data.broker, advisor=(data.advisor or "").strip() or None,
+                       advisor_unknown=bool(data.advisor_unknown), role="CLIENT", status="active")
     db.add(user)
     db.commit()
     logger.info(f"Client {user.id} signed up")
@@ -1159,7 +1189,11 @@ def my_license_view(lic: models.License, db: Session) -> dict:
 
 def license_extras(lics, db: Session) -> Dict[int, dict]:
     """Per license: the free days of a launch code, and its portfolio's listing with the plans a renewal can take."""
-    free = promos.of_licenses(db, [l.id for l in lics])
+    ids = [l.id for l in lics]
+    free = promos.of_licenses(db, ids)
+    hosted_subs = ({lid for (lid,) in db.query(models.Subscription.license_id).filter(
+        models.Subscription.license_id.in_(ids), models.Subscription.wants_hosting.is_(True))}
+        if ids else set())
     portfolios = {l.portfolio_id for l in lics if l.portfolio_id is not None}
     listings = {l.portfolio_id: l for l in db.query(models.Listing).filter(
         models.Listing.portfolio_id.in_(portfolios), models.Listing.status == "published")} if portfolios else {}
@@ -1168,6 +1202,7 @@ def license_extras(lics, db: Session) -> Dict[int, dict]:
         listing = listings.get(l.portfolio_id)
         plans = marketplace.active_plans(listing) if listing is not None and marketplace.pay_online(listing) else []
         out[l.id] = {"promo": free.get(l.id), "listing_slug": listing.slug if listing else None,
+                     "wants_hosting": l.id in hosted_subs,
                      "renew_plans": [marketplace.plan_out(p, public=True) for p in plans]}
     return out
 
@@ -1686,6 +1721,8 @@ def reset_password(data: ResetIn, request: Request, db: Session = Depends(get_db
 def my_account(current_user: models.User = Depends(get_current_user)):
     return {"email": current_user.email, "name": current_user.name, "role": current_user.role, "bio": current_user.bio,
             "youtube_url": current_user.youtube_url, "instagram_url": current_user.instagram_url,
+            "cpf": current_user.cpf, "broker": current_user.broker, "advisor": current_user.advisor,
+            "advisor_unknown": bool(current_user.advisor_unknown),
             "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled()}
 
 @app.put("/me/profile")
@@ -1742,6 +1779,11 @@ def get_marketplace_followers(slug: str, days: int = marketplace.PUBLIC_DAYS, db
     """How the followers copied the portfolio (followers.py), once there are enough of them to show."""
     return marketplace.public_followers(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
 
+@app.get("/api/marketplace/{slug}/simulation")
+def get_marketplace_simulation(slug: str, days: int = marketplace.SIMULATION_DAYS, db: Session = Depends(get_db)):
+    """Per-contract track record and dynamic plan steps for the checkout contract simulator."""
+    return marketplace.public_simulation(db, published_listing(slug, db), public_days(days), datetime.datetime.utcnow())
+
 # Requests per client per day: each one emails the manager, and cancelling frees the pending slot again
 subscribe_limiter = FailureLimiter(int(os.getenv("SUBSCRIBE_MAX_PER_DAY", "20")), 86400)
 
@@ -1758,12 +1800,18 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     if marketplace.pay_online(listing):
         plan = next((p for p in marketplace.active_plans(listing) if p.id == data.plan_id), None)
         if plan is None: raise HTTPException(status_code=422, detail="Escolha um dos planos do portfólio")
+    if data.broker is not None:
+        current_user.broker = data.broker
+    if data.advisor is not None or data.advisor_unknown is not None:
+        current_user.advisor = (data.advisor or "").strip() or None
+        current_user.advisor_unknown = bool(data.advisor_unknown)
     pending = db.query(models.Subscription).filter(models.Subscription.client_user_id == current_user.id,
                                                    models.Subscription.status == "pending")
     same = pending.filter(models.Subscription.listing_id == listing.id,
                           models.Subscription.mt5_login == data.mt5_login).first()
     if same is not None and plan is not None:
         same.plan = plan  # Back from an abandoned Checkout: pay that one, maybe on another plan
+        same.wants_hosting = bool(data.wants_hosting)
         db.commit()
         return marketplace.subscription_out(same, for_manager=False)
     if same is not None:
@@ -1780,6 +1828,7 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     subscribe_limiter.fail(f"subscribe:{current_user.id}")
     sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
                               kind="renewal" if existing is not None else "new", plan=plan,
+                              wants_hosting=bool(data.wants_hosting),
                               note=(data.note or "").strip() or None, created_at=datetime.datetime.utcnow())
     db.add(sub)
     db.commit()

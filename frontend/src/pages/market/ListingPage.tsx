@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, ExternalLink, MailCheck, Store, Ticket } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, MailCheck, Store, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
 import api, {
     type BacktestView, type ClientLicense, type Me, type MyLicenses, type PortfolioPerformance, type PublicFollowerStats, type PublicListing,
-    type Subscription,
 } from '../../api';
 import AboutAuthor, { AuthorLinks } from '../../components/AboutAuthor';
 import BacktestSection from '../../components/BacktestSection';
@@ -12,7 +11,6 @@ import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
-import PlanPicker from '../../components/PlanPicker';
 import ResendLinkButton from '../../components/ResendLinkButton';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -21,7 +19,6 @@ import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
 import { formatMoney, hostingPriceLabel, priceLabel } from '../../lib/money';
 import { riskOf } from '../../lib/risk';
-import { openCheckout } from '../../lib/stripe';
 import { apiError, cn } from '../../lib/utils';
 
 // A launch code: the portfolio free for some days, without a card. The license comes without the MT5 account, and
@@ -74,12 +71,8 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
     const urlCode = params.get('codigo')?.trim() ?? ''; // From a campaign's link
     const [me, setMe] = useState<Me | null>(null);
     const [mine, setMine] = useState<ClientLicense | null>(null); // A license of this portfolio the client has already
-    const [another, setAnother] = useState(false); // ...and still buys one more, for another account
     const [codeOpen, setCodeOpen] = useState(false);
-    const [done, setDone] = useState<Subscription | null>(null);
-    const [sending, setSending] = useState(false);
-    const [planId, setPlanId] = useState<number | null>(listing.plans[0]?.id ?? null);
-    const next = encodeURIComponent(`/marketplace/${listing.slug}${urlCode ? `?codigo=${encodeURIComponent(urlCode)}` : ''}`);
+    const checkoutHref = `/assinar/${listing.slug}${urlCode ? `?codigo=${encodeURIComponent(urlCode)}` : ''}`;
 
     useEffect(() => {
         if (!user) return;
@@ -91,83 +84,49 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
         }
     }, [user, listing.slug]);
 
-    // The MT5 account comes after paying, on the license: buying never waits on looking it up
-    const subscribe = async () => {
-        setSending(true);
-        try {
-            const res = await api.post<Subscription>(`/api/marketplace/${listing.slug}/subscribe`,
-                listing.pay_online ? { plan_id: planId } : {});
-            if (res.data.listing.pay_online) {
-                await openCheckout(res.data.id); // Stripe's page; paying approves the request by itself
-                return;
-            }
-            setDone(res.data);
-            if (res.data.listing.checkout_url) window.open(res.data.listing.checkout_url, '_blank', 'noopener,noreferrer');
-        } catch (e) {
-            console.error(e);
-            toast.error(apiError(e, 'Não foi possível enviar o pedido.'));
-        } finally {
-            setSending(false);
-        }
-    };
-
     if (!user) {
         return (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
                 {urlCode && (
                     <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
                         <Ticket className="mt-0.5 size-4 shrink-0 text-primary" />
-                        <span>Você tem o código <strong className="font-mono">{urlCode.toUpperCase()}</strong>: crie sua conta para copiar grátis, sem cartão.</span>
+                        <span>Você tem o código <strong className="font-mono">{urlCode.toUpperCase()}</strong>: monte seu plano para copiar grátis, sem cartão.</span>
                     </p>
                 )}
-                <Link to={`/cadastro?next=${next}`} className="block"><Button size="lg" className="w-full">Copiar esta estratégia <ArrowRight /></Button></Link>
-                <Link to={`/login?next=${next}`} className="block"><Button variant="ghost" className="w-full">Já tenho conta</Button></Link>
+                <Link to={checkoutHref} className="block">
+                    <Button size="lg" className="w-full">Assinar este portfólio <ArrowRight /></Button>
+                </Link>
+                <p className="text-center text-xs text-muted-foreground">
+                    Simule contratos, retorno e escolha como rodar antes de criar sua conta.
+                </p>
             </div>
         );
     }
     if (user.role !== 'CLIENT') {
         return <p className="text-sm text-muted-foreground">Entre com uma conta de cliente para assinar.</p>;
     }
-    if (done) {
-        return (
-            <div className="space-y-3 text-sm">
-                <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                    Pedido enviado. {done.listing.checkout_url ? 'Pague na página do gestor, aberta numa nova aba' : 'O gestor envia como pagar'}:
-                    ele libera a cópia, e você a ativa em Minhas cópias.</p>
-                {done.listing.checkout_url && (
-                    <a href={done.listing.checkout_url} target="_blank" rel="noopener noreferrer" className="block">
-                        <Button className="w-full"><ExternalLink /> Pagar</Button>
-                    </a>
-                )}
-                {me?.email_enabled && !me.email_verified && (
-                    <p className="flex items-start gap-2 text-muted-foreground"><MailCheck className="mt-0.5 size-4 shrink-0 text-warning" />
-                        Confirme seu email pelo link na caixa de entrada: ele é pedido para conectar a conta.</p>
-                )}
-                <Link to="/client" className="block text-center font-medium text-primary underline-offset-4 hover:underline">Ir para Minhas cópias</Link>
-            </div>
-        );
-    }
-    if (mine && !another) {
+    if (mine) {
         return (
             <div className="space-y-2">
                 <p className="flex items-start gap-2 text-sm"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                     Você já tem este portfólio{mine.mt5_login != null ? ` na conta ${mine.mt5_login}` : ''}.</p>
                 <Link to={`/client/licenses/${mine.id}`} className="block"><Button size="lg" className="w-full">Ver minha cópia <ArrowRight /></Button></Link>
-                <Button variant="ghost" className="w-full" onClick={() => setAnother(true)}>Assinar para outra conta MT5</Button>
+                <Link to={checkoutHref} className="block"><Button variant="ghost" className="w-full">Assinar para outra conta MT5</Button></Link>
             </div>
         );
     }
-    const promo = !mine && (urlCode !== '' || listing.has_promo === true);
+    const promo = urlCode !== '' || listing.has_promo === true;
     return (
         <div className="space-y-3">
             {promo && urlCode && <PromoBox slug={listing.slug} initial={urlCode} me={me} />}
-            {listing.pay_online && <PlanPicker plans={listing.plans} value={planId} onChange={setPlanId} />}
-            <Button size="lg" className="w-full" loading={sending} disabled={listing.pay_online && planId == null} onClick={subscribe}>
-                Copiar esta estratégia {!sending && <ArrowRight />}
-            </Button>
-            {listing.pay_online && (
-                <p className="text-center text-xs text-muted-foreground">Pagamento seguro no cartão pela Stripe. Renova sozinho; troque de plano ou cancele quando quiser, em Pagamentos.</p>
-            )}
+            <Link to={checkoutHref} className="block">
+                <Button size="lg" className="w-full">
+                    Assinar este portfólio <ArrowRight />
+                </Button>
+            </Link>
+            <p className="text-center text-xs text-muted-foreground">
+                Escolha a quantidade de contratos e como prefere rodar na próxima etapa.
+            </p>
             {promo && !urlCode && (codeOpen
                 ? <PromoBox slug={listing.slug} initial="" me={me} />
                 : <Button variant="ghost" className="w-full" onClick={() => setCodeOpen(true)}><Ticket /> Tenho um código de lançamento</Button>)}
@@ -335,7 +294,7 @@ export default function ListingPage() {
             <div className={cn('fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 py-3 backdrop-blur transition-transform lg:hidden', boxVisible && 'translate-y-full')}>
                 <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
                     <p className="min-w-0 truncate font-semibold">{priceLabel(listing)}</p>
-                    <Button onClick={() => box.current?.scrollIntoView({ behavior: 'smooth' })}>Copiar esta estratégia <ArrowRight /></Button>
+                    <Link to={`/assinar/${listing.slug}`}><Button>Assinar este portfólio <ArrowRight /></Button></Link>
                 </div>
             </div>
 

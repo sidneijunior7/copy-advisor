@@ -30,6 +30,7 @@ def fresh_limits(monkeypatch):
     monkeypatch.setenv("HOSTING_SECRET", Fernet.generate_key().decode())
     server.failure_limiter.reset()
     server.signup_limiter.reset()
+    server.email_check_limiter.reset()
 
 
 def signup(client, email=None, password="s3nha-forte", name="Cliente"):

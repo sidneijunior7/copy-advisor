@@ -170,6 +170,11 @@ def test_plans_take_price_currency_and_period_from_stripe(client, fake):
     public = client.get(f"/api/marketplace/{listing['slug']}").json()
     assert public["pay_online"] and [p["id"] for p in public["plans"]] == [small["id"], big["id"]]
     assert "stripe_price_id" not in public["plans"][0]
+    sim = client.get(f"/api/marketplace/{listing['slug']}/simulation").json()
+    assert [(s["plan_id"], s["lots"], s["price"], s["recommended_capital"]) for s in sim["steps"]] == [
+        (small["id"], 2, 69.9, 5000.0),
+        (big["id"], 5, 224.9, 12500.0),
+    ]
 
     url = f"/portfolios/{listing['portfolio_id']}/listing"
     for bad in ("price_nao_existe", "price_avulso", "preco"):

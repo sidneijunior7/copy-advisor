@@ -25,7 +25,10 @@ import models
 import performance
 
 MARKETS = ("B3", "Forex", "Cripto", "Índices", "Commodities")
+BROKERS = ("XP", "Clear", "Rico", "Genial", "none")
+BrokerChoice = Literal["XP", "Clear", "Rico", "Genial", "none"]
 PUBLIC_DAYS = 90  # The period the catalog shows
+SIMULATION_DAYS = 180  # The default period for the checkout contract simulator
 CACHE_SECONDS = 300  # Public performance is computed at most this often per listing and period
 MAX_PENDING_PER_CLIENT = 10
 CURVE_POINTS = 40  # Sparkline of a catalog card
@@ -62,6 +65,10 @@ class SubscriptionIn(BaseModel):
     mt5_login: Optional[int] = Field(default=None, gt=0, le=10**12)  # None: connected on the license afterwards
     plan_id: Optional[int] = None  # Required when the listing has plans
     note: Optional[str] = Field(default=None, max_length=500)
+    wants_hosting: bool = False
+    broker: Optional[BrokerChoice] = None
+    advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
+    advisor_unknown: Optional[bool] = None
 
 
 class Decision(BaseModel):
@@ -196,6 +203,67 @@ def public_followers(db: Session, listing: models.Listing, days: int, now: datet
                    lambda: followers.public(followers.portfolio(db, listing.portfolio, days, now)))
 
 
+def public_simulation(db: Session, listing: models.Listing, days: int, now: datetime.datetime) -> dict:
+    """Per-contract track record and dynamic plan steps for the checkout contract simulator."""
+    def compute():
+        start = performance.since(days, now)
+        rows, _, track, _, _ = performance._official(db, listing.portfolio, start)
+        plans = sorted(active_plans(listing), key=lambda p: (p.max_lots, p.price, p.id))
+        base_lots = plans[0].max_lots if plans else (listing.default_max_lots or 1.0)
+        if base_lots <= 0:
+            base_lots = 1.0
+        unit_results = [(at, result / (vol if vol and vol > 0 else base_lots)) for at, result, _, _, vol in rows]
+        currency = track["currency"] or listing.currency or "BRL"
+        s = performance.stats(unit_results, None, currency)
+        if listing.min_capital and listing.min_capital > 0:
+            unit_capital = round(listing.min_capital / base_lots, 2)
+        elif track["capital"] and track["capital"] > 0:
+            unit_capital = round(track["capital"] / base_lots, 2)
+        elif s["max_drawdown"] > 0:
+            unit_capital = round(max(s["max_drawdown"] * 3.0, 1000.0), 2)
+        else:
+            unit_capital = 1000.0
+        if plans:
+            steps = [{
+                "plan_id": p.id,
+                "name": p.name,
+                "lots": p.max_lots,
+                "price": p.price,
+                "currency": p.currency,
+                "days": p.days,
+                "recommended_capital": round(unit_capital * p.max_lots, 2),
+                "simulated_profit": round(s["net"] * p.max_lots, 2),
+                "max_drawdown": round(s["max_drawdown"] * p.max_lots, 2),
+            } for p in plans]
+        else:
+            tiers = sorted({base_lots, 1.0, 2.0, 3.0, 5.0, 10.0})
+            steps = [{
+                "plan_id": None,
+                "name": f"{lots:g}".replace(".", ",") + (" contrato" if lots == 1 else " contratos"),
+                "lots": lots,
+                "price": listing.price,
+                "currency": listing.currency or "BRL",
+                "days": listing.default_days or 30,
+                "recommended_capital": round(unit_capital * lots, 2),
+                "simulated_profit": round(s["net"] * lots, 2),
+                "max_drawdown": round(s["max_drawdown"] * lots, 2),
+            } for lots in tiers]
+        return {
+            "currency": currency,
+            "days": days,
+            "trades": s["trades"],
+            "win_rate": s["win_rate"],
+            "base_lots": base_lots,
+            "base_capital": round(unit_capital * base_lots, 2),
+            "unit_capital": unit_capital,
+            "unit_net": s["net"],
+            "unit_max_drawdown": s["max_drawdown"],
+            "months": s["months"],
+            "steps": steps,
+        }
+    return _cached(("simulation", listing.id, days), compute)
+
+
 def clear_cache():
     with _cache_lock:
         _cache.clear()
@@ -221,7 +289,7 @@ def summary(stats: dict) -> dict:
 
 def public_listing(db: Session, listing: models.Listing, now: datetime.datetime) -> dict:
     out = {k: v for k, v in listing_out(listing).items()
-           if k not in ("portfolio_id", "status", "suspended_reason", "default_max_lots")}
+           if k not in ("portfolio_id", "status", "suspended_reason")}
     out["plans"] = [plan_out(p, public=True) for p in active_plans(listing)]
     out["manager"] = manager_profile(listing)
     out["strategies"] = [s.name for s in listing.portfolio.strategies] if listing.portfolio else []
@@ -243,6 +311,7 @@ def subscription_out(s: models.Subscription, for_manager: bool) -> dict:
         "decided_at": s.decided_at, "plan": plan_out(s.plan, public=True),
         "paid_online": s.stripe_subscription_id is not None, "stripe_status": s.stripe_status,
         "stripe_period_end": s.stripe_period_end, "stripe_cancel_at_period_end": bool(s.stripe_cancel_at_period_end),
+        "wants_hosting": bool(s.wants_hosting),
     }
     if for_manager:
         out["client"] = {"name": s.client.name, "email": s.client.email}

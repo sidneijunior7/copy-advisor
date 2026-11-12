@@ -69,3 +69,8 @@ export const SUBSCRIPTION_STATUS = {
     rejected: { label: 'Recusada', variant: 'destructive' },
     cancelled: { label: 'Cancelada', variant: 'muted' },
 } as const;
+
+const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+// "2026-10" as "out/26"
+export const formatMonth = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1] ?? month}/${month.slice(2, 4)}`;

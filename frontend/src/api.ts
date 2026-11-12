@@ -262,6 +262,7 @@ export type ClientLicense = {
     // From a launch code: the free days start when the account is connected (started_at), and end at ends_at
     promo: { free_days: number; started_at: string | null; ends_at: string | null } | null;
     listing_slug: string | null; // The portfolio's page in the marketplace, while it is there
+    wants_hosting?: boolean; // Chosen during checkout: pre-selects cloud hosting in the activation wizard
     renew_plans: Plan[]; // What a renewal can be paid with in Stripe; empty when it is paid by hand
 };
 
@@ -485,8 +486,41 @@ export type BacktestView =
 // The marketplace shows the figures only past a minimum of followers and copies
 export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
 
-export type Me = { email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;
-    youtube_url: string | null; instagram_url: string | null; email_verified: boolean; email_enabled: boolean };
+export const BROKERS = ['XP', 'Clear', 'Rico', 'Genial', 'none'] as const;
+export type BrokerChoice = typeof BROKERS[number];
+
+export type Me = {
+    email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;
+    youtube_url: string | null; instagram_url: string | null;
+    cpf?: string | null; broker?: BrokerChoice | null; advisor?: string | null; advisor_unknown?: boolean;
+    email_verified: boolean; email_enabled: boolean;
+};
+
+export type SimulationStep = {
+    plan_id: number | null;
+    name: string;
+    lots: number;
+    price: number | null;
+    currency: string;
+    days: number;
+    recommended_capital: number;
+    simulated_profit: number;
+    max_drawdown: number;
+};
+
+export type PortfolioSimulation = {
+    currency: string;
+    days: number;
+    trades: number;
+    win_rate: number | null;
+    base_lots: number;
+    base_capital: number;
+    unit_capital: number;
+    unit_net: number;
+    unit_max_drawdown: number;
+    months: { month: string; net: number }[];
+    steps: SimulationStep[];
+};
 
 export const MARKETS = ['B3', 'Forex', 'Cripto', 'Índices', 'Commodities'] as const;
 export type Market = typeof MARKETS[number];
@@ -525,7 +559,7 @@ export type PortfolioDeletion = {
 export type MyListing = { portfolio: { id: number; name: string; strategies: number }; listing: Listing | null };
 
 // What anyone sees in the marketplace: the last 90 days in stats, the manager's public profile
-export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended_reason' | 'default_max_lots'> & {
+export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended_reason'> & {
     manager: { name: string; bio: string | null; youtube_url: string | null; instagram_url: string | null };
     strategies: string[];
     hosting_price?: HostingPrice | null; // On the listing's own page, when it can be hosted and hosting is charged
@@ -556,6 +590,7 @@ export type Subscription = {
     stripe_status: string | null;
     stripe_period_end: string | null;
     stripe_cancel_at_period_end: boolean;
+    wants_hosting?: boolean;
     client?: { name: string | null; email: string }; // Only for the manager
 };
 

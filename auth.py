@@ -47,6 +47,23 @@ def validate_password(password: str) -> Optional[str]:
     return None
 
 
+def clean_cpf(raw: Optional[str]) -> Optional[str]:
+    """The 11 digits of a valid Brazilian CPF, None when blank, or ValueError when invalid."""
+    if raw is None:
+        return None
+    digits = "".join(c for c in raw if c.isdigit())
+    if not digits:
+        return None
+    if len(digits) != 11 or len(set(digits)) == 1:
+        raise ValueError("CPF inválido")
+    for length in (9, 10):
+        total = sum(int(digits[i]) * (length + 1 - i) for i in range(length))
+        check = (total * 10) % 11
+        if (0 if check == 10 else check) != int(digits[length]):
+            raise ValueError("CPF inválido")
+    return digits
+
+
 def get_password_hash(password: str) -> str:
     error = validate_password(password)
     if error:

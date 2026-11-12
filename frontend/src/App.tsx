@@ -11,6 +11,7 @@ import Register from './pages/Register';
 import { ForgotPassword, ResetPassword, VerifyEmail } from './pages/EmailLinks';
 import Catalog from './pages/market/Catalog';
 import ListingPage from './pages/market/ListingPage';
+import CheckoutPage from './pages/market/CheckoutPage';
 import AdminHosting from './pages/dev/AdminHosting';
 import AdminListings from './pages/dev/AdminListings';
 import NotFound from './pages/NotFound';
@@ -83,6 +84,7 @@ function App() {
             <Route element={<PublicLayout />}>
               <Route path="/marketplace" element={<Catalog />} />
               <Route path="/marketplace/:slug" element={<ListingPage />} />
+              <Route path="/assinar/:slug" element={<CheckoutPage />} />
             </Route>
 
             {/* TDM_DEV Routes */}
