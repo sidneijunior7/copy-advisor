@@ -259,9 +259,9 @@ export default function Clients() {
                             />
                         </Field>
                         <Field
-                            label="Limite de lotes"
+                            label="Lotes por estratégia"
                             htmlFor="license-lots"
-                            hint="Soma das cópias abertas na conta. Baixar o limite não fecha posições já abertas."
+                            hint="Por estratégia: a soma das cópias abertas de cada estratégia do portfólio. Baixar o limite não fecha posições já abertas."
                             error={errors.max_lots?.message}
                         >
                             <Input
@@ -364,7 +364,7 @@ export default function Clients() {
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Conta</TableHead>
-                                    <TableHead className="text-right">Limite de lotes</TableHead>
+                                    <TableHead className="text-right">Lotes por estratégia</TableHead>
                                     <TableHead>Chave (EA v4)</TableHead>
                                     <TableHead>Validade</TableHead>
                                     <TableHead>Status</TableHead>
@@ -397,7 +397,7 @@ export default function Clients() {
                                                         </p>
                                                     )}
                                                 </TableCell>
-                                                <TableCell label="Limite de lotes" className="text-right font-mono tabular-nums">
+                                                <TableCell label="Lotes por estratégia" className="text-right font-mono tabular-nums">
                                                     {mine?.kind === 'limit' ? (
                                                         <form
                                                             onSubmit={e => { e.preventDefault(); saveLimit(l, mine.value); }}

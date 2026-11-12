@@ -14,7 +14,7 @@ export default function PlanPicker({ plans, value, onChange, name = 'plano' }: {
                         <input type="radio" name={name} checked={value === p.id} onChange={() => onChange(p.id)} />
                         <span>
                             <span className="block font-medium">{p.name}</span>
-                            <span className="block text-xs text-muted-foreground">Copia ordens de até {p.max_lots.toLocaleString('pt-BR')} {p.max_lots === 1 ? 'lote' : 'lotes'} (contratos)</span>
+                            <span className="block text-xs text-muted-foreground">Até {p.max_lots.toLocaleString('pt-BR')} {p.max_lots === 1 ? 'lote' : 'lotes'} (contratos) abertos por estratégia</span>
                         </span>
                     </span>
                     <span className="shrink-0 font-semibold">{formatMoney(p.price, p.currency)}<span className="text-xs font-normal text-muted-foreground"> / {periodLabel(p.days)}</span></span>

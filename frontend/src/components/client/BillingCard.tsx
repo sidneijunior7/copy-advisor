@@ -54,7 +54,7 @@ export default function BillingCard({ billing, onChanged, title = 'Assinatura', 
                         <p className="font-medium">{billing.plan?.name ?? 'Plano'}</p>
                         {billing.plan && (
                             <p className="text-xs text-muted-foreground">
-                                {formatMoney(billing.plan.price, billing.plan.currency)} / {periodLabel(billing.plan.days)} · limite de {billing.plan.max_lots.toLocaleString('pt-BR')} lotes
+                                {formatMoney(billing.plan.price, billing.plan.currency)} / {periodLabel(billing.plan.days)} · limite de {billing.plan.max_lots.toLocaleString('pt-BR')} lotes por estratégia
                             </p>
                         )}
                     </div>

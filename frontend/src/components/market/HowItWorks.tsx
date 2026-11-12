@@ -86,7 +86,7 @@ const FAQ = [
     },
     {
         q: 'Qual plano escolher?',
-        a: 'O plano define o tamanho máximo de cada ordem copiada, em lotes (contratos). Para começar, o menor plano costuma bastar; dá para trocar depois, e a diferença é proporcional.',
+        a: 'O plano define quantos lotes (contratos) cada estratégia do portfólio pode ter abertos na sua conta ao mesmo tempo. Para começar, o menor plano costuma bastar; dá para trocar depois, e a diferença é proporcional.',
     },
 ];
 

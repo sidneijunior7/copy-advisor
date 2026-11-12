@@ -26,9 +26,9 @@ O EA **Trademetric Copy Trader Slave** copia para a sua conta do MetaTrader 5 as
 O canto do gráfico mostra:
 
 ```
-TDM Mirror Slave 4.04
+TDM Mirror Slave 4.05
 Hub: conectado, portfólio 3
-Licença: ativa, limite 2.00 lotes
+Licença: ativa, limite 2.00 lotes por estratégia
 Cópias abertas: 0
 ```
 
@@ -52,7 +52,7 @@ Se você tem conta no painel (**Minhas licenças**), prefira ajustar o tamanho e
 - **Sizing = Fixed factor** (padrão): o lote da estratégia multiplicado por **inp_lots_factor**. Com **inp_lots_op** em *Divide*, o lote é dividido pelo fator. Exemplo: fator 2 copia o dobro, e fator 2 com *Divide* copia a metade.
 - **Sizing = Proportional to balance** ou **Proportional to equity**: o lote acompanha o seu saldo (ou patrimônio). Em **Proportional: capital...**, informe o capital que copia o lote da estratégia por inteiro. Exemplo: com 10000 nesse campo e saldo de 5000, você copia metade do lote. A proporção é fixada na abertura de cada posição.
 - O volume nunca fica abaixo do mínimo do ativo: contas pequenas copiam o mínimo, então confira a margem.
-- O seu plano tem um **limite de lotes**, que vale para a soma das posições abertas. O que passar do limite não é copiado.
+- O seu plano tem um **limite de lotes**, que vale para cada estratégia do portfólio: a soma das posições abertas de uma estratégia não passa dele. O que passar do limite não é copiado.
 
 ## Outras entradas
 

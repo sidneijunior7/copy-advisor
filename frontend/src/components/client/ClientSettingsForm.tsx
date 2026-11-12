@@ -59,7 +59,7 @@ export default function ClientSettingsForm({ license, onSaved }: ClientSettingsF
     return (
         <Card
             title="Ajustes da cópia"
-            description={`Dentro dos limites do portfólio: fator de ${limits.factor_min.toLocaleString('pt-BR')} a ${limits.factor_max.toLocaleString('pt-BR')}. O limite de ${license.max_lots.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lotes da licença vale para a soma das cópias abertas.`}
+            description={`Dentro dos limites do portfólio: fator de ${limits.factor_min.toLocaleString('pt-BR')} a ${limits.factor_max.toLocaleString('pt-BR')}. O limite de ${license.max_lots.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lotes da licença vale para cada estratégia: a soma das cópias abertas de uma estratégia não passa dele.`}
             icon={<SlidersHorizontal />}
         >
             <form onSubmit={handleSubmit(save)} className="space-y-5" noValidate>

@@ -130,7 +130,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
             <fieldset className="space-y-2">
                 <legend className="text-sm font-medium">Planos pagos pela Stripe</legend>
                 <p className="text-xs text-muted-foreground">
-                    Cada plano é o price ID de um preço recorrente (price_...) e o limite de lotes que ele compra. O cliente escolhe o plano, paga no cartão,
+                    Cada plano é o price ID de um preço recorrente (price_...) e o limite de lotes que ele compra, por estratégia do portfólio. O cliente escolhe o plano, paga no cartão,
                     a licença sai sozinha e renova a cada cobrança. Valor, moeda e período vêm da Stripe; o nome, do apelido do preço.
                 </p>
                 {plans.fields.map((f, i) => (

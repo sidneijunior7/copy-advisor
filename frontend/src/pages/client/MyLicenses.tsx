@@ -153,7 +153,7 @@ export default function MyLicenses() {
                                         <dd className="font-mono font-semibold">{l.mt5_login ?? '—'}</dd>
                                     </div>
                                     <div>
-                                        <dt className="text-xs text-muted-foreground">Limite por ordem</dt>
+                                        <dt className="text-xs text-muted-foreground">Limite por estratégia</dt>
                                         <dd className="font-mono">{l.max_lots.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lotes</dd>
                                     </div>
                                     <div>

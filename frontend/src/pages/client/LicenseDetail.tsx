@@ -179,7 +179,7 @@ export default function LicenseDetail() {
                         <Card title="Licença" icon={<Briefcase />}>
                             <dl className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
-                                    <dt className="text-xs text-muted-foreground">Limite de lotes</dt>
+                                    <dt className="text-xs text-muted-foreground">Limite por estratégia</dt>
                                     <dd className="font-mono">{license.max_lots.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</dd>
                                 </div>
                                 <div>
