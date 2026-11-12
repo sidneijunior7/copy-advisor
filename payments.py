@@ -252,9 +252,14 @@ def sync(db: Session, s: dict, now: datetime.datetime) -> Tuple[Optional[models.
         sync_hosting(db, terminal, s, now)
         return None, False
     ours = (s.get("metadata") or {}).get("subscription_id")
-    sub = db.get(models.Subscription, int(ours)) if ours and str(ours).isdigit() else None
+    # Stripe sends a purchase's events at once (checkout.session.completed, customer.subscription.created,
+    # invoice.paid), each in a request of its own. The request's row stays locked until this transaction ends, so
+    # they go one at a time: otherwise each one finds it pending and approves it, and a request without an MT5
+    # account gets a new license every time
+    query = db.query(models.Subscription).populate_existing().with_for_update()
+    sub = query.filter(models.Subscription.id == int(ours)).first() if ours and str(ours).isdigit() else None
     if sub is None:
-        sub = db.query(models.Subscription).filter(models.Subscription.stripe_subscription_id == s["id"]).first()
+        sub = query.filter(models.Subscription.stripe_subscription_id == s["id"]).first()
     if sub is None:
         logger.warning(f"Stripe subscription {s['id']}: no request of ours")
         return None, False

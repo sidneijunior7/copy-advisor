@@ -200,3 +200,20 @@ def test_admin_suspends_and_the_manager_cannot_republish(client):
 def test_slugify():
     assert marketplace.slugify("  Índice — Tendência 2026! ") == "indice-tendencia-2026"
     assert marketplace.slugify("***") == "portfolio"
+
+
+def test_a_request_without_an_account_approved_twice_keeps_one_license(client):
+    """Stripe's events for one purchase arrive together: approving the same request again (the webhook seeing it
+    pending twice) extends its license instead of making another one."""
+    _, _, portfolio_id, listing = published(client, title=f"Sem conta {uuid.uuid4().hex[:6]}")
+    cli, _ = client_headers(client)
+    sub_id = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={}).json()["id"]
+    now = datetime.datetime.utcnow()
+    with database.SessionLocal() as db:
+        sub = db.get(models.Subscription, sub_id)
+        first = marketplace.approve(db, sub, marketplace.Decision(), now)
+        sub.status = "pending"  # What a second event saw before the first one committed
+        again = marketplace.approve(db, sub, marketplace.Decision(), now)
+        db.commit()
+        assert again.id == first.id
+        assert db.query(models.License).filter(models.License.portfolio_id == portfolio_id).count() == 1

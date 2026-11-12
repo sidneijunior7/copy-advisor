@@ -256,9 +256,11 @@ def approve(db: Session, sub: models.Subscription, decision: Decision, now: date
     days = decision.days or listing.default_days or 30
     max_lots = decision.max_lots or (sub.plan.max_lots if sub.plan else None) or listing.default_max_lots or 1.0
     # Without an account yet the license is always new: the client connects it afterwards (connect_account)
-    lic = None if sub.mt5_login is None else (db.query(models.License)
-           .filter(models.License.portfolio_id == listing.portfolio_id,
-                   models.License.client_mt5_login == sub.mt5_login).first())
+    # A request approved before keeps its license: approving it again never makes a second one
+    lic = db.get(models.License, sub.license_id) if sub.license_id is not None else None
+    if lic is None and sub.mt5_login is not None:
+        lic = (db.query(models.License).filter(models.License.portfolio_id == listing.portfolio_id,
+                                               models.License.client_mt5_login == sub.mt5_login).first())
     if lic is None:
         lic = models.License(portfolio_id=listing.portfolio_id, client_mt5_login=sub.mt5_login, max_lots=max_lots,
                              is_active=True, expires_at=now + datetime.timedelta(days=days),
