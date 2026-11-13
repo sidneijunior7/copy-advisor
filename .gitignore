@@ -75,3 +75,5 @@ tools/spike/out/
 tools/spike/private/
 tools/perf/
 .claude/settings.local.json
+AVALIACAO_BANCO_PROPRIO.md
+secrets/
