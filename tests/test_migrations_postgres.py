@@ -157,3 +157,41 @@ def test_access_keys_strip_master_keys_from_signal_history(pg_url):
     with engine.connect() as c:
         raws = [r[0] for r in c.execute(text("SELECT raw FROM signals ORDER BY id"))]
         assert raws == ["V2|900|OPEN|55|0|EURUSD|1|1.1|0|0|42", None]
+
+
+def test_supabase_api_roles_reach_nothing(pg_url):
+    """Supabase's Data API acts as anon or authenticated: every table gets RLS and those roles lose every privilege,
+    on each start, while the owner the Mirror connects as keeps working."""
+    engine = create_engine(pg_url)
+    reset(engine)
+    with engine.begin() as c:
+        for role in ("anon", "authenticated"):
+            c.execute(text(f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') "
+                           f"THEN CREATE ROLE {role} NOLOGIN; END IF; END $$"))
+        c.execute(text("GRANT USAGE ON SCHEMA public TO anon, authenticated"))
+        # As Supabase does: whatever the owner creates in public is granted to the API roles
+        c.execute(text("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated"))
+    run(pg_url, "migrate.py")
+    with engine.begin() as c:
+        exposed = c.execute(text("SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                                 "WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity")).all()
+        assert exposed == []
+        grants = c.execute(text("SELECT table_name, privilege_type FROM information_schema.role_table_grants "
+                                "WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated')")).all()
+        assert grants == []
+        c.execute(text("INSERT INTO users (email, role, status) VALUES ('rls@x.com', 'CLIENT', 'active')"))
+        assert c.execute(text("SELECT count(*) FROM users")).scalar() >= 1  # The owner is not restricted
+    with engine.connect() as c:
+        c.execute(text("SET ROLE anon"))
+        with pytest.raises(Exception, match="permission denied"):
+            c.execute(text("SELECT * FROM users"))
+        c.rollback()
+    # A table created later, as a new migration would, is covered on the next start
+    with engine.begin() as c:
+        c.execute(text("CREATE TABLE later_table (id int)"))
+    run(pg_url, "migrate.py")
+    with engine.begin() as c:
+        assert c.execute(text("SELECT relrowsecurity FROM pg_class WHERE relname = 'later_table'")).scalar() is True
+        assert c.execute(text("SELECT count(*) FROM information_schema.role_table_grants "
+                              "WHERE table_name = 'later_table' AND grantee = 'anon'")).scalar() == 0
+        c.execute(text("DROP TABLE later_table"))

@@ -20,6 +20,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("migrate")
 
 BASELINE = "0001_baseline"
+# Supabase's roles for its Data API (PostgREST): whoever has the project's public anon key acts as anon. The Mirror
+# never uses that API, so these roles must reach nothing in public
+SUPABASE_API_ROLES = ("anon", "authenticated")
 ADVISORY_LOCK_ID = 727001  # Arbitrary, just has to be the same for every migrate.py
 MAX_DB_RETRIES = 5
 
@@ -33,6 +36,27 @@ def connect(retries: int = MAX_DB_RETRIES):
                 raise
             logger.warning(f"DB connection attempt {attempt}/{retries} failed: {e}. Retrying in {attempt * 2}s...")
             time.sleep(attempt * 2)
+
+
+def harden(conn):
+    """On Supabase: row level security on every table of public, and no privilege there for its API roles, on
+    every start. A migration's new table is covered on the next deploy, and turning the Data API back on by
+    mistake exposes nothing. The Mirror connects as the tables' owner, which RLS does not restrict."""
+    roles = [r for (r,) in conn.execute(text("SELECT rolname FROM pg_roles WHERE rolname = ANY(:names)"),
+                                        {"names": list(SUPABASE_API_ROLES)})]
+    if not roles:
+        return  # Not Supabase (a local or test Postgres): nothing exposes the tables
+    open_tables = [t for (t,) in conn.execute(text(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity"))]
+    for table in open_tables:
+        conn.execute(text(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY'))
+    who = ", ".join(roles)
+    for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+        conn.execute(text(f"REVOKE ALL ON ALL {kind} IN SCHEMA public FROM {who}"))
+        conn.execute(text(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON {kind} FROM {who}"))
+    if open_tables:
+        logger.info(f"Row level security turned on for {len(open_tables)} table(s): {', '.join(sorted(open_tables))}")
 
 
 def main(retries: int = MAX_DB_RETRIES):
@@ -53,6 +77,8 @@ def main(retries: int = MAX_DB_RETRIES):
             logger.info(f"Existing schema without alembic_version: stamping {BASELINE}")
             command.stamp(cfg, BASELINE)
         command.upgrade(cfg, "head")
+        if database.IS_POSTGRES:
+            harden(conn)
         conn.commit()
         logger.info("Database is at head")
     except Exception:
