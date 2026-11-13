@@ -9,6 +9,7 @@ import BacktestSection from '../../components/BacktestSection';
 import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
+import SellerInfo from '../../components/market/SellerInfo';
 import PerformanceView from '../../components/PerformanceView';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -276,6 +277,7 @@ export default function ListingPage() {
                         </p>
                     )}
                     <SubscribeBox listing={listing} copiers={copiers} />
+                    <SellerInfo seller={listing.seller} fallbackName={listing.manager.name} className="border-t border-border pt-4" />
                     <p className="text-xs text-muted-foreground">Resultados passados não garantem resultados futuros. Operar envolve risco de perda.</p>
                 </aside>
             </div>

@@ -490,12 +490,18 @@ export type PublicFollowerStats = { enough: boolean; min_followers: number; min_
 export const BROKERS = ['XP', 'Clear', 'Rico', 'Genial', 'other', 'none'] as const;
 export type BrokerChoice = typeof BROKERS[number];
 
+// Who sells a trader's portfolios (Decreto 7.962/2013): what the buyer sees, and what the trader typed. The
+// credential is the trader's own statement until the platform checks it
+export type Seller = { name: string; document: string; document_kind: 'CPF' | 'CNPJ'; address: string; email: string; credential: string | null };
+export type SellerOwn = { name: string | null; document: string | null; address: string | null; email: string | null; credential: string | null; complete: boolean };
+
 export type Me = {
     email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;
     youtube_url: string | null; instagram_url: string | null;
     cpf?: string | null; broker?: BrokerChoice | null; broker_other?: string | null; advisor?: string | null; advisor_unknown?: boolean;
     email_verified: boolean; email_enabled: boolean;
     closure_requested_at?: string | null; // The holder asked to close the account (privacy.py)
+    seller?: SellerOwn | null; // A trader's: who sells its portfolios, as typed
 };
 
 export type SimulationStep = {
@@ -569,6 +575,7 @@ export type PublicListing = Omit<Listing, 'portfolio_id' | 'status' | 'suspended
     hosting_price?: HostingPrice | null; // On the listing's own page, when it can be hosted and hosting is charged
     hosting_room?: boolean; // On the listing's own page: the pods have room, so the cloud is offered
     has_promo?: boolean; // On the listing's own page: it takes a launch code (never which)
+    seller?: Seller | null; // On the listing's own page: who sells it, once the trader filled it in
     stats: Pick<PerformanceStats, 'currency' | 'trades' | 'win_rate' | 'net' | 'return_pct' | 'max_drawdown_pct' | 'profit_factor'> & {
         per_lot: number | null; // The average result per lot closed, in the portfolio's currency
         assets: string[]; // What the copy traded, the most lots first (WIN, WDO, EURUSD...); empty without copies

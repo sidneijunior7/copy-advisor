@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle2, Cloud, CreditCard, MailCheck, Monitor, Ticket
 import type { PublicListing, SimulationStep, Subscription } from '../../../api';
 import ResendLinkButton from '../../../components/ResendLinkButton';
 import { Button } from '../../../components/ui/Button';
+import SellerInfo from '../../../components/market/SellerInfo';
 import { Input } from '../../../components/ui/Field';
 import { formatMoney, hostingPriceLabel } from '../../../lib/money';
 import { cn } from '../../../lib/utils';
@@ -118,6 +119,7 @@ export function PaySummary(p: SummaryProps) {
                     <Row label="Onde a cópia roda" value="No meu computador ou VPS"
                         detail="A nuvem está sem vagas agora: você instala no seu computador e pode migrar quando abrir vaga." />
                 )}
+                <div className="py-4"><SellerInfo seller={listing.seller} fallbackName={listing.manager.name} /></div>
             </div>
 
             {/* The totals are in the order beside the steps on a wide screen; here only where that column is not */}
@@ -192,6 +194,8 @@ export function PromoSummary({ listing, code, onCode, email, unverified, risk, o
             <StepHeader title={`Ative seu acesso grátis a ${listing.title}`}>
                 Sem cartão. Os dias grátis começam quando você conectar sua conta MT5.
             </StepHeader>
+
+            <SellerInfo seller={listing.seller} fallbackName={listing.manager.name} className="lg:hidden" />
 
             <div className="max-w-sm space-y-2">
                 <label htmlFor="promo-code" className="text-sm font-medium">Código de lançamento</label>

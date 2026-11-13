@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
-import { Check, EyeOff, ExternalLink, Instagram, Pencil, Plus, Send, Store, Ticket, UserRound, Youtube } from 'lucide-react';
+import { AlertTriangle, Check, EyeOff, ExternalLink, FileText, Instagram, Pencil, Plus, Send, Store, Ticket, UserRound, Youtube } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { type Listing, type Me, type MyListing } from '../../api';
 import Card from '../../components/Card';
@@ -12,6 +12,7 @@ import PromoCodes from '../../components/PromoCodes';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Textarea } from '../../components/ui/Field';
+import { formatDocument } from '../../lib/cpf';
 import { priceLabel } from '../../lib/money';
 import { apiError } from '../../lib/utils';
 
@@ -82,6 +83,63 @@ function PublicProfile({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
     );
 }
 
+type SellerForm = { name: string; document: string; address: string; email: string; credential: string };
+
+const sellerDefaults = (me: Me): SellerForm => ({
+    name: me.seller?.name ?? '', document: me.seller?.document ? formatDocument(me.seller.document) : '',
+    address: me.seller?.address ?? '', email: me.seller?.email ?? '', credential: me.seller?.credential ?? '',
+});
+
+// Who sells the trader's portfolios: the buyer sees it next to the price and in the checkout, as e-commerce law asks
+// (Decreto 7.962/2013). Without it a portfolio cannot be published
+function SellerDetails({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
+    const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting, isDirty } } = useForm<SellerForm>({ defaultValues: sellerDefaults(me) });
+    const save = async (data: SellerForm) => {
+        try {
+            const res = await api.put<Me>('/me/seller', {
+                name: data.name.trim(), document: data.document, address: data.address.trim(), email: data.email.trim(),
+                credential: data.credential.trim() || null,
+            });
+            onSaved(res.data);
+            reset(sellerDefaults(res.data));
+            toast.success('Dados do vendedor salvos');
+        } catch (e) {
+            toast.error(apiError(e, 'Não foi possível salvar os dados do vendedor.'));
+        }
+    };
+    const documentField = register('document', {
+        required: 'Informe o CPF ou o CNPJ',
+        validate: v => [11, 14].includes(v.replace(/\D/g, '').length) || 'CPF com 11 dígitos ou CNPJ com 14',
+    });
+    return (
+        <Card title="Dados do vendedor" icon={<FileText />}
+            description="Quem vende os seus portfólios. Aparece na página do portfólio e no checkout.">
+            <form onSubmit={handleSubmit(save)} className="space-y-4" noValidate>
+                <Field label="Nome completo ou razão social" htmlFor="seller-name" error={errors.name?.message}>
+                    <Input {...register('name', { required: 'Informe o nome', minLength: { value: 3, message: 'Nome completo' }, maxLength: { value: 120, message: 'Até 120 caracteres' } })} id="seller-name" />
+                </Field>
+                <Field label="CPF ou CNPJ" htmlFor="seller-document" error={errors.document?.message}>
+                    <Input {...documentField} id="seller-document" inputMode="numeric" className="font-mono"
+                        onChange={e => { setValue('document', formatDocument(e.target.value), { shouldDirty: true }); }} />
+                </Field>
+                <Field label="Endereço" htmlFor="seller-address" error={errors.address?.message} hint="Rua, número, complemento, cidade e estado.">
+                    <Input {...register('address', { required: 'Informe o endereço', minLength: { value: 10, message: 'Endereço completo' }, maxLength: { value: 200, message: 'Até 200 caracteres' } })} id="seller-address" />
+                </Field>
+                <Field label="E-mail de contato" htmlFor="seller-email" error={errors.email?.message} hint="Para os clientes falarem com você.">
+                    <Input {...register('email', { required: 'Informe o e-mail', pattern: { value: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, message: 'E-mail inválido' } })} id="seller-email" type="email" />
+                </Field>
+                <Field label="Credenciamento de analista (opcional)" htmlFor="seller-credential" error={errors.credential?.message}
+                    hint="Ex.: CNPI 1234. Aparece como informado por você.">
+                    <Input {...register('credential', { maxLength: { value: 60, message: 'Até 60 caracteres' } })} id="seller-credential" />
+                </Field>
+                <div className="flex justify-end">
+                    <Button size="sm" loading={isSubmitting} disabled={!isDirty}>{!isSubmitting && <Check />} Salvar dados</Button>
+                </div>
+            </form>
+        </Card>
+    );
+}
+
 // The manager's listings: one per portfolio, edited here and published when ready
 export default function ManagerMarketplace() {
     const [me, setMe] = useState<Me | null>(null);
@@ -117,14 +175,24 @@ export default function ManagerMarketplace() {
         <div className="space-y-6">
             <PageHeader
                 title="Vitrine"
-                description="Publique seus portfólios para clientes novos. Eles veem o desempenho real e pedem a assinatura; você aprova em Assinaturas."
+                description="Publique seus portfólios para clientes novos. Você vende a assinatura; a Trademetric fornece a plataforma."
                 icon={<Store />}
             >
                 <Link to="/marketplace" target="_blank"><Button variant="outline" size="sm"><ExternalLink /> Ver a página pública</Button></Link>
             </PageHeader>
 
+            {me && !me.seller?.complete && (
+                <p role="status" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                    <span>Preencha os <strong>dados do vendedor</strong> ao lado. Sem eles, o cliente não vê quem vende, e os portfólios não podem ser publicados.</span>
+                </p>
+            )}
+
             <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
-                <div className="order-last xl:order-2">{me && <PublicProfile me={me} onSaved={setMe} />}</div>
+                <div className="order-last space-y-6 xl:order-2">
+                    {me && <SellerDetails me={me} onSaved={setMe} />}
+                    {me && <PublicProfile me={me} onSaved={setMe} />}
+                </div>
                 <div className="space-y-4 xl:col-span-2">
                     {items === null ? (
                         <p className="text-sm text-muted-foreground">Carregando...</p>

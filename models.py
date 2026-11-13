@@ -43,6 +43,13 @@ class User(Base):
     # A closed account's email, name and CPF, kept apart for the legal period (privacy.KEEP_CLOSED) so that the
     # unique email and CPF are free for a new sign-up; dropped by privacy.purge
     closed_identity = Column(Text, nullable=True)
+    # A trader is the seller of its portfolios: who sells, as e-commerce law asks every seller to show (Decreto
+    # 7.962/2013, art. 2º). Shown on the portfolio's page and in the checkout; a portfolio is published only with them
+    seller_name = Column(String(120), nullable=True) # Full name, or the company's legal name
+    seller_document = Column(String(14), nullable=True) # CPF (11 digits) or CNPJ (14), digits only
+    seller_address = Column(String(200), nullable=True)
+    seller_email = Column(String(255), nullable=True) # Public contact for the buyers
+    analyst_credential = Column(String(60), nullable=True) # As the trader typed it (e.g. CNPI 1234): not checked yet
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")

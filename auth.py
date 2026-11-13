@@ -47,6 +47,28 @@ def validate_password(password: str) -> Optional[str]:
     return None
 
 
+def clean_cnpj(digits: str) -> str:
+    """The 14 digits of a valid CNPJ, or ValueError."""
+    if len(digits) != 14 or len(set(digits)) == 1:
+        raise ValueError("CNPJ inválido")
+    for length, weights in ((12, (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)), (13, (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2))):
+        rest = sum(int(digits[i]) * weights[i] for i in range(length)) % 11
+        if (0 if rest < 2 else 11 - rest) != int(digits[length]):
+            raise ValueError("CNPJ inválido")
+    return digits
+
+
+def clean_document(raw: str) -> str:
+    """A seller's CPF or CNPJ, digits only, or ValueError."""
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 14:
+        return clean_cnpj(digits)
+    cpf = clean_cpf(digits)
+    if cpf is None:
+        raise ValueError("Informe o CPF ou o CNPJ")
+    return cpf
+
+
 def clean_cpf(raw: Optional[str]) -> Optional[str]:
     """The 11 digits of a valid Brazilian CPF, None when blank, or ValueError when invalid."""
     if raw is None:

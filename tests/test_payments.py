@@ -20,7 +20,7 @@ import server
 from test_clients import claimed_license, client_headers, fresh_limits  # noqa: F401
 from test_hosting import free_pods, license_hash, make_pod, sync
 from test_management import make_manager, make_portfolio
-from test_marketplace import LISTING
+from test_marketplace import LISTING, set_seller
 
 SECRET = "whsec_test"
 DAY = 86400
@@ -135,6 +135,7 @@ def stripe_listing(client, fake):
     manager_id, mgr = make_manager()
     portfolio_id, _ = make_portfolio(manager_id, with_strategy=True)
     assert client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste"}).status_code == 200
+    set_seller(client, mgr)
     r = client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr,
                    json={**LISTING, "title": f"Stripe {uuid.uuid4().hex[:6]}", "price": 1, "default_days": 7,
                          "plans": [{"stripe_price_id": small, "max_lots": 2}, {"stripe_price_id": big, "max_lots": 5}]})

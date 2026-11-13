@@ -30,10 +30,21 @@ LISTING = {"title": "Tendência no Índice", "summary": "Mini índice, tendênci
            "default_max_lots": 2, "min_capital": 5000}
 
 
+SELLER = {"name": "Trader Teste da Silva", "document": "529.982.247-25", "address": "Rua das Flores, 100, São Paulo/SP",
+          "email": "Contato@Trader.com", "credential": "CNPI 1234"}
+
+
+def set_seller(client, mgr, **changes):
+    r = client.put("/me/seller", headers=mgr, json={**SELLER, **changes})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def published(client, title=LISTING["title"]):
     manager_id, mgr = make_manager()
     portfolio_id, _ = make_portfolio(manager_id, with_strategy=True)
     assert client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste", "bio": "Opera índice"}).status_code == 200
+    set_seller(client, mgr)
     r = client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr, json={**LISTING, "title": title})
     assert r.status_code == 200, r.text
     assert client.post(f"/portfolios/{portfolio_id}/listing/publish", headers=mgr).status_code == 200
@@ -51,6 +62,9 @@ def test_listing_drafts_slugs_and_publishing(client):
     assert r2.json()["slug"] != r.json()["slug"]  # Unique address
     r = client.post(f"/portfolios/{other_portfolio}/listing/publish", headers=mgr)
     assert r.status_code == 409 and "nome" in r.json()["detail"]  # The public name first
+    assert client.put("/me/profile", headers=mgr, json={"name": "Trader Sem Dados"}).status_code == 200
+    r = client.post(f"/portfolios/{other_portfolio}/listing/publish", headers=mgr)
+    assert r.status_code == 409 and "vendedor" in r.json()["detail"]  # Then who sells
     for bad in ({**LISTING, "checkout_url": "http://pay.example.com"}, {**LISTING, "markets": ["Ações"]},
                 {**LISTING, "slug": "Com Espaço"}, {**LISTING, "price": -1}):
         assert client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr, json=bad).status_code == 422, bad
@@ -298,3 +312,29 @@ def test_marketplace_simulation_scales_profit_capital_and_drawdown(client):
     assert by_lots[1.0]["simulated_profit"] == 400.0 and by_lots[1.0]["recommended_capital"] == 2500.0
     assert by_lots[2.0]["simulated_profit"] == 800.0 and by_lots[2.0]["recommended_capital"] == 5000.0
     assert by_lots[5.0]["simulated_profit"] == 2000.0 and by_lots[5.0]["max_drawdown"] == 500.0
+
+
+def test_the_buyer_sees_who_sells_and_only_once_it_is_complete(client):
+    _, mgr = make_manager()
+    assert client.get("/me", headers=mgr).json()["seller"] is None
+    for bad in ({"document": "111.111.111-11"}, {"document": "11.222.333/0001-82"}, {"email": "sem-arroba"},
+                {"address": "curto"}, {"name": "Linha" + chr(10) + "quebrada"}):
+        assert client.put("/me/seller", headers=mgr, json={**SELLER, **bad}).status_code == 422, bad
+    me = set_seller(client, mgr)
+    assert me["seller"] == {"name": SELLER["name"], "document": "52998224725", "address": SELLER["address"],
+                            "email": "contato@trader.com", "credential": "CNPI 1234", "complete": True}
+    # A company sells too, and the credential is optional
+    assert set_seller(client, mgr, document="11.222.333/0001-81", credential=None)["seller"]["credential"] is None
+    cli, _ = client_headers(client)
+    assert client.put("/me/seller", headers=cli, json=SELLER).status_code == 403
+    assert client.get("/me", headers=cli).json()["seller"] is None
+
+    _, trader, _, listing = published(client, title=f"Vendedor {uuid.uuid4().hex[:6]}")
+    detail = client.get(f"/api/marketplace/{listing['slug']}").json()
+    assert detail["seller"] == {"name": SELLER["name"], "document": "529.982.247-25", "document_kind": "CPF",
+                                "address": SELLER["address"], "email": "contato@trader.com", "credential": "CNPI 1234"}
+    # Not in the catalog's list: the seller's document only where the buyer is about to contract
+    catalog = client.get("/api/marketplace").json()
+    assert all("seller" not in item for item in catalog)
+    set_seller(client, trader, document="11.222.333/0001-81")
+    assert client.get(f"/api/marketplace/{listing['slug']}").json()["seller"]["document"] == "11.222.333/0001-81"

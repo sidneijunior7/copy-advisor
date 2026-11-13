@@ -1791,7 +1791,8 @@ def my_account(current_user: models.User = Depends(get_current_user)):
             "cpf": current_user.cpf, "broker": current_user.broker, "broker_other": current_user.broker_other,
             "advisor": current_user.advisor, "advisor_unknown": bool(current_user.advisor_unknown),
             "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled(),
-            "closure_requested_at": current_user.closure_requested_at}
+            "closure_requested_at": current_user.closure_requested_at,
+            "seller": marketplace.seller_own(current_user) if current_user.role == "MANAGER" else None}
 
 @app.put("/me/profile")
 def update_profile(data: marketplace.Profile, current_user: models.User = Depends(get_current_user),
@@ -1885,6 +1886,25 @@ def update_broker(data: marketplace.BrokerIn, current_user: models.User = Depend
     db.commit()
     return my_account(current_user)
 
+@app.put("/me/seller")
+def update_seller(data: marketplace.SellerIn, current_user: models.User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """Who sells the trader's portfolios: shown on each portfolio's page and in the checkout."""
+    if current_user.role != "MANAGER": raise HTTPException(status_code=403)
+    try:
+        document = auth.clean_document(data.document)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    current_user.seller_name = data.name.strip()
+    current_user.seller_document = document
+    current_user.seller_address = data.address.strip()
+    current_user.seller_email = data.email.strip().lower()
+    current_user.analyst_credential = (data.credential or "").strip() or None
+    db.commit()
+    marketplace.clear_cache()
+    logger.info(f"Manager {current_user.id} updated the seller details")
+    return my_account(current_user)
+
 def published_listing(slug: str, db: Session) -> models.Listing:
     listing = db.query(models.Listing).filter(models.Listing.slug == slug, models.Listing.status == "published").first()
     if listing is None: raise HTTPException(status_code=404, detail="Portfólio não encontrado")
@@ -1906,6 +1926,7 @@ def get_marketplace_listing(slug: str, db: Session = Depends(get_db)):
     out["hosting_room"] = hosts and hosting.room(db, datetime.datetime.utcnow()) > 0  # Full: not offered for now
     out["hosting_price"] = payments.hosting_terms() if out["hosting_room"] else None
     out["has_promo"] = promos.has_usable(db, listing, datetime.datetime.utcnow())
+    out["seller"] = marketplace.seller_public(listing.portfolio.owner if listing.portfolio else None)
     return out
 
 def public_days(days: int) -> int:
@@ -2282,6 +2303,8 @@ def publish_listing(portfolio_id: int, current_user: models.User = Depends(get_c
         raise HTTPException(status_code=409, detail="Vincule ao menos uma estratégia ao portfólio antes de publicar")
     if not current_user.name:
         raise HTTPException(status_code=409, detail="Preencha seu nome público no perfil antes de publicar")
+    if not marketplace.seller_complete(current_user):  # The buyer has to see who sells (Decreto 7.962/2013)
+        raise HTTPException(status_code=409, detail="Preencha os dados do vendedor na Vitrine antes de publicar")
     listing.status = "published"
     listing.published_at = listing.published_at or datetime.datetime.utcnow()
     db.commit()

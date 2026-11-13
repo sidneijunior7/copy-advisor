@@ -116,6 +116,45 @@ YOUTUBE_URL = r"^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[^\s<>\"']+$"
 INSTAGRAM_URL = r"^https://(www\.)?instagram\.com/[^\s<>\"']+$"
 
 
+EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+class SellerIn(BaseModel):
+    """Who sells a trader's portfolios (models.User.seller_*)."""
+    name: str = Field(min_length=3, max_length=120, pattern=hosting.ONE_LINE)
+    document: str = Field(min_length=11, max_length=20)  # CPF or CNPJ, with or without the punctuation
+    address: str = Field(min_length=10, max_length=200, pattern=hosting.ONE_LINE)
+    email: str = Field(min_length=5, max_length=255, pattern=EMAIL)
+    credential: Optional[str] = Field(default=None, max_length=60, pattern=hosting.ONE_LINE)
+
+
+def seller_complete(user: Optional[models.User]) -> bool:
+    return bool(user and user.seller_name and user.seller_document and user.seller_address and user.seller_email)
+
+
+def format_document(digits: str) -> str:
+    if len(digits) == 14:
+        return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+
+
+def seller_own(user: models.User) -> Optional[dict]:
+    """What the trader typed, for the form."""
+    if not any((user.seller_name, user.seller_document, user.seller_address, user.seller_email, user.analyst_credential)):
+        return None
+    return {"name": user.seller_name, "document": user.seller_document, "address": user.seller_address,
+            "email": user.seller_email, "credential": user.analyst_credential, "complete": seller_complete(user)}
+
+
+def seller_public(user: Optional[models.User]) -> Optional[dict]:
+    """The seller as the buyer sees it, only once complete. The credential is the trader's own statement."""
+    if not seller_complete(user):
+        return None
+    return {"name": user.seller_name, "document": format_document(user.seller_document),
+            "document_kind": "CNPJ" if len(user.seller_document) == 14 else "CPF",
+            "address": user.seller_address, "email": user.seller_email, "credential": user.analyst_credential}
+
+
 class Profile(BaseModel):
     name: str = Field(min_length=1, max_length=100, pattern=hosting.ONE_LINE)
     bio: Optional[str] = Field(default=None, max_length=2000)

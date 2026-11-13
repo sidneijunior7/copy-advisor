@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { ChevronDown, Cloud, Lock, Monitor, ShoppingBag, Ticket, Users } from 'lucide-react';
 import type { PublicListing, SimulationStep } from '../../../api';
 import { formatMoney, hostingPriceLabel } from '../../../lib/money';
+import SellerInfo from '../../../components/market/SellerInfo';
 import { cn } from '../../../lib/utils';
 import { cloudPrice, initials, planTitle, tierPriceText } from './format';
 
@@ -85,6 +86,8 @@ function OrderBody({ listing, tier, promo, code, wantsHosting, periodLabel, copi
                     )}
                 </dl>
             )}
+
+            <SellerInfo seller={listing.seller} fallbackName={listing.manager.name} className="border-t border-border pt-4" />
 
             <ul className="space-y-1.5 border-t border-border pt-4 text-xs text-muted-foreground">
                 {promo ? <li className="flex items-center gap-1.5"><Lock className="size-3.5" /> Sem cartão de crédito</li>
