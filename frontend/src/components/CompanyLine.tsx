@@ -5,7 +5,7 @@ import { cn } from '../lib/utils';
 export default function CompanyLine({ className }: { className?: string }) {
     return (
         <p className={cn('text-xs text-muted-foreground', className)}>
-            {COMPANY.brand} é operado por {COMPANY.legalName}, CNPJ {COMPANY.cnpj}.{' '}
+            {COMPANY.brand} é operado por {COMPANY.legalName}, CNPJ {COMPANY.cnpj}. {COMPANY.address}.{' '}
             <a href={`mailto:${COMPANY.email}`} className="hover:text-foreground">{COMPANY.email}</a>
         </p>
     );

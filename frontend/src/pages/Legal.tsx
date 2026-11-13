@@ -41,9 +41,9 @@ export function PrivacyPage() {
         <LegalDoc title="Política de Privacidade">
             <Section n={1} title="Quem somos">
                 <p>
-                    O Trademetric Mirror é operado por <strong>{COMPANY.legalName}</strong>, CNPJ {COMPANY.cnpj}
-                    {' '}("Trademetric"). Somos o controlador dos dados pessoais tratados na plataforma, nos termos da Lei
-                    Geral de Proteção de Dados (Lei 13.709/2018).
+                    O Trademetric Mirror é operado por <strong>{COMPANY.legalName}</strong>, CNPJ {COMPANY.cnpj}, com sede na
+                    {' '}{COMPANY.address} ("Trademetric"). Somos o controlador dos dados pessoais tratados na plataforma, nos
+                    termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).
                 </p>
                 <p>Para qualquer assunto sobre os seus dados, escreva para <Mail />. É o nosso canal de atendimento ao titular.</p>
             </Section>
@@ -172,8 +172,8 @@ export function TermsPage() {
         <LegalDoc title="Termos de Uso">
             <Section n={1} title="Quem somos">
                 <p>
-                    O Trademetric Mirror ("Mirror") é operado por <strong>{COMPANY.legalName}</strong>, CNPJ {COMPANY.cnpj}
-                    {' '}("Trademetric"). Atendimento: <Mail />.
+                    O Trademetric Mirror ("Mirror") é operado por <strong>{COMPANY.legalName}</strong>, CNPJ {COMPANY.cnpj},
+                    com sede na {COMPANY.address} ("Trademetric"). Atendimento: <Mail />.
                 </p>
                 <p>Ao criar uma conta, você declara que leu e aceita estes Termos e a <Link to={PRIVACY_PATH} className={link}>Política de Privacidade</Link>.</p>
             </Section>

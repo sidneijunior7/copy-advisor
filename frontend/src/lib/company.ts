@@ -4,6 +4,7 @@ export const COMPANY = {
     brand: 'Trademetric',
     legalName: 'Sidnei da Silva Santos Junior LTDA',
     cnpj: '64.539.704/0001-10',
+    address: 'Rua Pais Leme, 215, conj. 1713, Pinheiros, São Paulo/SP, CEP 05424-150',
     email: 'trademetric@trademetric.com.br', // Support and the data holder's channel
 } as const;
 
