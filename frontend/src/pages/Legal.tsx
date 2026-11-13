@@ -79,7 +79,6 @@ export function PrivacyPage() {
                 <List>
                     <li><strong>O responsável pelo portfólio que você assina</strong> (chamado de gestor na plataforma) vê o seu nome, o seu e-mail, o número da sua conta MetaTrader 5, a situação da sua licença e da conexão, e as cópias que falharam nessa conta. Não vê o seu CPF, a sua senha nem o seu saldo.</li>
                     <li><strong>Prestadores de serviço</strong> que tratam dados em nosso nome: a Supabase, que hospeda o banco de dados em São Paulo; a Stripe, que processa os pagamentos; e serviços de hospedagem de servidores, de envio de e-mails e de monitoramento técnico.</li>
-                    <li><strong>Google:</strong> as fontes usadas no site são carregadas dos servidores do Google, que por isso recebe o endereço IP do seu navegador.</li>
                     <li><strong>Autoridades</strong>, como a Comissão de Valores Mobiliários, a Autoridade Nacional de Proteção de Dados e o Poder Judiciário, quando houver obrigação legal ou ordem.</li>
                     <li><strong>Estatísticas públicas:</strong> a página de um portfólio pode mostrar como os seguidores copiaram, sempre de forma agregada e só a partir de um número mínimo de contas, sem identificar ninguém.</li>
                 </List>
@@ -88,9 +87,9 @@ export function PrivacyPage() {
 
             <Section n={5} title="Transferência para fora do Brasil">
                 <p>
-                    Alguns prestadores tratam dados fora do Brasil, em especial a Stripe (pagamentos) e o Google (arquivos de
-                    fonte do site). Essas transferências se apoiam nos contratos de proteção de dados desses prestadores.
-                    Você pode pedir informações sobre elas pelo canal da seção 1.
+                    Alguns prestadores tratam dados fora do Brasil, em especial a Stripe, que processa os pagamentos. Essas
+                    transferências se apoiam nos contratos de proteção de dados desses prestadores. Você pode pedir informações
+                    sobre elas pelo canal da seção 1.
                 </p>
             </Section>
 

@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/league-spartan": "^5.3.0",
     "axios": "^1.13.4",
     "clsx": "^2.1.1",
     "framer-motion": "^12.29.2",

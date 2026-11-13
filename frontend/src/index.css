@@ -1,4 +1,18 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=League+Spartan:wght@400;500;600;700;800&display=swap');
+/* The fonts ship with the site (latin subset, which has every Portuguese accent): no visitor's address goes to a
+   font service */
+@import '@fontsource/inter/latin-300.css';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+@import '@fontsource/jetbrains-mono/latin-600.css';
+@import '@fontsource/league-spartan/latin-400.css';
+@import '@fontsource/league-spartan/latin-500.css';
+@import '@fontsource/league-spartan/latin-600.css';
+@import '@fontsource/league-spartan/latin-700.css';
+@import '@fontsource/league-spartan/latin-800.css';
 
 @tailwind base;
 @tailwind components;
