@@ -36,6 +36,13 @@ class User(Base):
     advisor = Column(String(120), nullable=True) # Investment advisor/office name when the client has one
     advisor_unknown = Column(Boolean, nullable=False, default=False) # True when the client picked "Não sei"
     terms_accepted_at = Column(DateTime, nullable=True) # Sign-up showed the Terms of Use and the Privacy Policy
+    terms_version = Column(String(16), nullable=True) # Which version of those texts was on screen
+    terms_ip = Column(String(45), nullable=True) # Where the acceptance came from: with the date and the version, its proof
+    closure_requested_at = Column(DateTime, nullable=True) # The holder asked to close the account and erase the data
+    closed_at = Column(DateTime, nullable=True) # Closed (privacy.close): no login, credentials gone
+    # A closed account's email, name and CPF, kept apart for the legal period (privacy.KEEP_CLOSED) so that the
+    # unique email and CPF are free for a new sign-up; dropped by privacy.purge
+    closed_identity = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -217,6 +224,17 @@ class CheckoutLead(Base):
     stopped_at = Column(DateTime, nullable=True) # Asked for no more emails
 
     listing = relationship("Listing")
+
+class AccessLog(Base):
+    """When an account was used and from which address: the access records an application provider must keep for six
+    months (Marco Civil da Internet, art. 15), under restricted access. Deleted after privacy.ACCESS_LOG_DAYS."""
+    __tablename__ = "access_logs"
+
+    id = Column(BigIntPK, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    event = Column(String(16), nullable=False) # signup, login, refresh
+    ip = Column(String(45), nullable=False)
+    created_at = Column(DateTime, nullable=False, index=True)
 
 class PromoCode(Base):
     """A launch campaign's code: whoever has it gets the listing's portfolio free for some days, once (promos.py)."""

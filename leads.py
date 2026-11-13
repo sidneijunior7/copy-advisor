@@ -2,7 +2,8 @@
 Checkout leads: the email a visitor gives right after the contract simulator, before creating an account. If the
 visitor stops there, the simulation goes to that email an hour later, and one reminder a day after; nothing goes
 once the visitor subscribes or uses a code (marketplace.convert_leads), already copies the portfolio, or follows
-the link that stops the emails. A lead is a few days old at most: after that it is never written to again.
+the link that stops the emails. A lead older than MAX_AGE gets nothing, and privacy.purge deletes it after
+privacy.LEAD_DAYS.
 """
 import datetime
 import secrets

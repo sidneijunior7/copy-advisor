@@ -280,3 +280,34 @@ def send_checkout_lead(lead: models.CheckoutLead, which: int, step: Optional[dic
     lines += ["", "Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.",
               "", f"Não quer mais receber estes emails? {stop}"]
     send(lead.email, subject, "\n".join(lines) + "\n")
+
+
+def privacy_address() -> str:
+    """Where the holders' requests about their data arrive: the channel the Privacy Policy names."""
+    return os.getenv("PRIVACY_EMAIL", "trademetric@trademetric.com.br")
+
+
+def send_closure_request(user: models.User, days: int):
+    """The holder asked to close the account: the privacy channel is told, and the holder gets the deadline."""
+    send(privacy_address(), f"Pedido de encerramento de conta: usuário {user.id}",
+         f"{user.name or user.email} ({user.email}), usuário {user.id}, pediu o encerramento da conta e a eliminação "
+         f"dos dados em {user.closure_requested_at:%d/%m/%Y %H:%M} UTC.\n\n"
+         f"O prazo de resposta é de {days} dias. Cancele antes as assinaturas ativas na Stripe e encerre a conta em "
+         f"{public_url()}/dev (Privacidade).\n")
+    send(user.email, "Recebemos o seu pedido de encerramento de conta",
+         f"Olá{', ' + user.name if user.name else ''}.\n\n"
+         "Recebemos o seu pedido para encerrar a conta no Trademetric Mirror e eliminar os seus dados. "
+         f"Vamos concluir em até {days} dias e avisar por este email.\n\n"
+         "O que acontece: o acesso e as credenciais são apagados; as cópias param de abrir operações novas; os "
+         "registros que a lei manda guardar ficam arquivados pelo prazo legal e depois são eliminados.\n\n"
+         f"Se não foi você, ou se mudou de ideia, cancele o pedido em {public_url()}/client/subscriptions ou responda "
+         f"para {privacy_address()}.\n")
+
+
+def send_account_closed(email: str, name: Optional[str]):
+    send(email, "Sua conta no Trademetric Mirror foi encerrada",
+         f"Olá{', ' + name if name else ''}.\n\n"
+         "A sua conta foi encerrada, como você pediu. O acesso e as credenciais foram apagados. Os registros que a "
+         "lei manda guardar ficam arquivados pelo prazo legal e depois são eliminados, como diz a Política de "
+         f"Privacidade: {public_url()}/privacidade\n\n"
+         f"Dúvidas: {privacy_address()}\n")

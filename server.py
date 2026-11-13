@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Optional, Tuple
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import func
@@ -42,6 +43,7 @@ import payments
 import performance
 import promos
 import leads
+import privacy
 
 observability.setup("api")
 logger = logging.getLogger(__name__)
@@ -316,6 +318,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=watch_hosting_queue, args=(stop,), name="hosting-queue", daemon=True).start()
     threading.Thread(target=watch_promo_endings, args=(stop,), name="promo-endings", daemon=True).start()
     threading.Thread(target=watch_checkout_leads, args=(stop,), name="checkout-leads", daemon=True).start()
+    threading.Thread(target=watch_privacy, args=(stop,), name="privacy", daemon=True).start()
     yield
     stop.set()
     relay.join(2)
@@ -398,6 +401,28 @@ def send_lead_emails(now: datetime.datetime):
         db.close()
     if emails:
         logger.info(f"Checkout leads: {len(emails)} email(s) to visitors who stopped halfway")
+
+
+def watch_privacy(stop: threading.Event):
+    """Deletes what is past the time the Privacy Policy gives it (privacy.purge)."""
+    while not stop.wait(privacy.WATCH_SECONDS):
+        purge_expired_data(datetime.datetime.utcnow())
+
+
+def purge_expired_data(now: datetime.datetime) -> Optional[dict]:
+    db = database.SessionLocal()
+    try:
+        counts = privacy.purge(db, now)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Privacy purge failed: {type(e).__name__}: {str(e)[:200]}")
+        return None
+    finally:
+        db.close()
+    if any(counts.values()):
+        logger.info(f"Privacy purge: {counts}")
+    return counts
 
 
 async def database_unavailable(request: Request, exc: Exception):
@@ -710,12 +735,15 @@ def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestFor
     
     access_token = auth.create_access_token(data={"sub": user.email, "role": user.role})
     logger.info(f"Login successful for user: {user.email}")
+    privacy.log_access(db, user.id, "login", client_ip(request), datetime.datetime.utcnow())
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/token/refresh", response_model=Token)
-def refresh_access_token(token: str = Depends(oauth2_scheme), current_user: models.User = Depends(get_current_user)):
+def refresh_access_token(request: Request, token: str = Depends(oauth2_scheme),
+                         current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """A new token for a still-valid one. The session still ends SESSION_MAX_HOURS after the login."""
     auth_time = auth.decode_token(token).get("auth_time")
+    privacy.log_access(db, current_user.id, "refresh", client_ip(request), datetime.datetime.utcnow())
     access_token = auth.create_access_token(data={"sub": current_user.email, "role": current_user.role},
                                             session_start=auth_time)
     return {"access_token": access_token, "token_type": "bearer"}
@@ -1142,6 +1170,7 @@ class RegisterRequest(BaseModel):
     advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
     advisor_unknown: bool = False
     terms_accepted: bool = False  # The sign-up screens show the Terms of Use and the Privacy Policy
+    terms_version: Optional[str] = Field(default=None, max_length=16, pattern=r"^\d+(\.\d+)*$")  # The one on screen
 
 
 class ClaimRequest(BaseModel):
@@ -1193,12 +1222,14 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     if cpf is not None and db.query(models.User.id).filter(models.User.cpf == cpf).first():
         raise HTTPException(status_code=409, detail="Este CPF já está cadastrado")
     user = models.User(email=email, name=(data.name or "").strip() or None, password_hash=auth.get_password_hash(data.password),
-                       cpf=cpf, role="CLIENT", status="active", terms_accepted_at=datetime.datetime.utcnow())
+                       cpf=cpf, role="CLIENT", status="active", terms_accepted_at=datetime.datetime.utcnow(),
+                       terms_version=data.terms_version or privacy.TERMS_VERSION, terms_ip=ip[:45])
     marketplace.apply_broker(user, marketplace.BrokerIn(broker=data.broker, broker_other=data.broker_other,
                                                         advisor=data.advisor, advisor_unknown=data.advisor_unknown))
     db.add(user)
     db.commit()
     logger.info(f"Client {user.id} signed up")
+    privacy.log_access(db, user.id, "signup", ip, datetime.datetime.utcnow())
     if mailer.enabled():
         token = mailer.issue_token(db, user, "verify", datetime.datetime.utcnow())
         db.commit()
@@ -1759,7 +1790,8 @@ def my_account(current_user: models.User = Depends(get_current_user)):
             "youtube_url": current_user.youtube_url, "instagram_url": current_user.instagram_url,
             "cpf": current_user.cpf, "broker": current_user.broker, "broker_other": current_user.broker_other,
             "advisor": current_user.advisor, "advisor_unknown": bool(current_user.advisor_unknown),
-            "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled()}
+            "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled(),
+            "closure_requested_at": current_user.closure_requested_at}
 
 @app.put("/me/profile")
 def update_profile(data: marketplace.Profile, current_user: models.User = Depends(get_current_user),
@@ -1773,6 +1805,76 @@ def update_profile(data: marketplace.Profile, current_user: models.User = Depend
     db.commit()
     marketplace.clear_cache()
     return my_account(current_user)
+
+# --- Privacy (privacy.py): the holder's own data ---
+
+# Exports per user per day: each one reads the whole history of the account
+export_limiter = FailureLimiter(int(os.getenv("EXPORT_MAX_PER_DAY", "10")), 86400)
+CLOSURE_DAYS = 15  # The answer the Privacy Policy promises (LGPD, art. 19)
+
+@app.get("/me/export")
+def export_my_data(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Everything the Mirror holds about the user, as a file (LGPD, art. 18, II and V)."""
+    if export_limiter.blocked(f"export:{current_user.id}"):
+        raise HTTPException(status_code=429, detail="Muitos pedidos hoje. Tente de novo amanhã")
+    export_limiter.fail(f"export:{current_user.id}")
+    data = privacy.export(db, current_user, datetime.datetime.utcnow())
+    logger.info(f"User {current_user.id} exported their data")
+    return JSONResponse(content=jsonable_encoder(data),
+                        headers={"Content-Disposition": 'attachment; filename="meus-dados-trademetric-mirror.json"'})
+
+@app.post("/me/closure-request")
+def request_account_closure(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The holder asks to close the account and erase the data. A person does it (subscriptions may need a refund),
+    within CLOSURE_DAYS; asking again changes nothing."""
+    if current_user.role == "TDM_DEV": raise HTTPException(status_code=403)
+    if current_user.closure_requested_at is None:
+        current_user.closure_requested_at = datetime.datetime.utcnow()
+        db.commit()
+        logger.info(f"User {current_user.id} asked to close the account")
+        mailer.send_closure_request(current_user, CLOSURE_DAYS)
+    return {"closure_requested_at": current_user.closure_requested_at, "days": CLOSURE_DAYS}
+
+@app.delete("/me/closure-request")
+def withdraw_account_closure(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.closure_requested_at is not None:
+        current_user.closure_requested_at = None
+        db.commit()
+        logger.info(f"User {current_user.id} withdrew the request to close the account")
+    return {"closure_requested_at": None}
+
+@app.get("/admin/closure-requests")
+def list_closure_requests(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The accounts waiting to be closed, the oldest first, each with what is in the way."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    users = (db.query(models.User)
+             .filter(models.User.closure_requested_at.isnot(None), models.User.closed_at.is_(None))
+             .order_by(models.User.closure_requested_at).all())
+    return [{"id": u.id, "email": u.email, "name": u.name, "role": u.role,
+             "requested_at": u.closure_requested_at,
+             "due_at": u.closure_requested_at + datetime.timedelta(days=CLOSURE_DAYS),
+             "blockers": privacy.blockers(db, u)} for u in users]
+
+@app.post("/admin/users/{user_id}/close")
+def close_account(user_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Closes a client's account (privacy.close): access and credentials go now, the legal records after their time."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    user = db.get(models.User, user_id)
+    if user is None: raise HTTPException(status_code=404)
+    email, name = user.email, user.name
+    try:
+        counts = privacy.close(db, user, datetime.datetime.utcnow())
+        db.commit()
+    except privacy.CloseError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    except payments.PaymentError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status, detail=str(e))
+    logger.info(f"Account {user_id} closed by admin {current_user.id}: {counts}")
+    notify_hub()
+    mailer.send_account_closed(email, name)
+    return {"closed": True, "removed": counts}
 
 @app.put("/me/broker")
 def update_broker(data: marketplace.BrokerIn, current_user: models.User = Depends(get_current_user),
