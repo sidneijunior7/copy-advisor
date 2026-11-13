@@ -1,26 +1,29 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Cloud, Lock, MailCheck, Monitor, Ticket, Users } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Cloud, CreditCard, MailCheck, Monitor, Ticket, Users } from 'lucide-react';
 import type { PublicListing, SimulationStep, Subscription } from '../../../api';
 import ResendLinkButton from '../../../components/ResendLinkButton';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Field';
 import { formatMoney, hostingPriceLabel } from '../../../lib/money';
-import { CLOUD_BILLED_APART, cloudPrice, lotsLabel, tierPriceText } from './format';
+import { cn } from '../../../lib/utils';
+import { CLOUD_BILLED_APART, cloudPrice, planTitle, tierPriceText } from './format';
 import { StepCta, StepHeader } from './parts';
 
 const RISK_TEXT = 'Entendo que operar envolve risco de perda, que resultados passados não garantem resultados futuros '
     + 'e que a cópia replica as operações do gestor na minha conta.';
 
+// A choice and its price. On a phone the text takes the whole width and the price goes under it: side by side the
+// text was squeezed into a column one word wide
 function Row({ label, value, detail, aside, onEdit }: { label: string; value: ReactNode; detail?: ReactNode; aside?: ReactNode; onEdit?: () => void }) {
     return (
-        <div className="flex items-center justify-between gap-4 p-4">
+        <div className="flex flex-col gap-1.5 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">{label}</p>
                 <div className="font-semibold">{value}</div>
                 {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
                 {aside && <span className="text-sm font-semibold">{aside}</span>}
                 {onEdit && <Button size="sm" variant="ghost" onClick={onEdit}>Alterar</Button>}
             </div>
@@ -28,11 +31,13 @@ function Row({ label, value, detail, aside, onEdit }: { label: string; value: Re
     );
 }
 
-function RiskAck({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+// The confirmation the button needs. On a phone it rides in the fixed bar, right over the button it unlocks
+function RiskAck({ checked, onChange, compact }: { checked: boolean; onChange: (v: boolean) => void; compact: boolean }) {
     return (
-        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-4 text-sm">
+        <label className={cn('flex cursor-pointer items-start gap-3',
+            compact ? 'text-xs leading-snug' : 'rounded-xl border border-border bg-card p-4 text-sm')}>
             <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
-                className="mt-0.5 size-5 shrink-0 accent-[hsl(var(--primary))]" />
+                className={cn('shrink-0 accent-[hsl(var(--primary))]', compact ? 'mt-0 size-5' : 'mt-0.5 size-5')} />
             <span>{RISK_TEXT}</span>
         </label>
     );
@@ -51,7 +56,6 @@ function Copiers({ count }: { count: number | null }) {
 export type SummaryProps = {
     listing: PublicListing;
     tier: SimulationStep;
-    currency: string;
     periodLabel: (days: number) => string;
     wantsHosting: boolean | null;
     copiers: number | null;
@@ -96,13 +100,13 @@ export function PaySummary(p: SummaryProps) {
 
     return (
         <section className="panel space-y-6 p-5 sm:p-8">
-            <StepHeader badge="Pagamento" icon={<Lock className="size-3" />} title="Revise e confirme">
+            <StepHeader title="Revise e confirme">
                 Você vai copiar <strong className="text-foreground">{listing.title}</strong>.
             </StepHeader>
 
             <div className="divide-y divide-border rounded-2xl border border-border bg-secondary/20">
-                <Row label="Plano" value={tier.name === lotsLabel(tier.lots) ? tier.name : `${lotsLabel(tier.lots)} (${tier.name})`}
-                    detail={`Capital sugerido: ${formatMoney(tier.recommended_capital, tier.currency || p.currency)}`}
+                <Row label="Plano" value={planTitle(tier)}
+                    detail={`Capital sugerido: ${formatMoney(tier.recommended_capital, tier.currency)}`}
                     aside={tierPriceText(tier, periodLabel)} onEdit={() => p.onEdit('contracts')} />
                 {offered && wantsHosting != null && (
                     <Row label="Onde a cópia roda"
@@ -116,8 +120,8 @@ export function PaySummary(p: SummaryProps) {
                 )}
             </div>
 
-            {/* What is paid, when, and what comes after */}
-            <dl className="space-y-2 rounded-2xl border border-border p-4 text-sm">
+            {/* The totals are in the order beside the steps on a wide screen; here only where that column is not */}
+            <dl className="space-y-2 rounded-2xl border border-border p-4 text-sm lg:hidden">
                 {consult ? (
                     <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Preço</dt><dd className="text-right">Sob consulta: o gestor responde com o valor</dd></div>
                 ) : listing.pay_online ? (
@@ -133,19 +137,25 @@ export function PaySummary(p: SummaryProps) {
                 )}
                 {cloud && listing.hosting_price && (
                     <div className="flex justify-between gap-3 border-t border-border pt-2">
-                        <dt className="text-muted-foreground">Nuvem, cobrada ao conectar a conta</dt><dd>{hostingPriceLabel(listing.hosting_price)}</dd>
+                        <dt className="text-muted-foreground">Nuvem, à parte</dt><dd>{hostingPriceLabel(listing.hosting_price)}</dd>
                     </div>
                 )}
             </dl>
+            {consult && <p className="hidden text-sm text-muted-foreground lg:block">Preço sob consulta: o gestor responde com o valor.</p>}
 
-            <RiskAck checked={p.risk} onChange={p.onRisk} />
+            {listing.pay_online && (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <CreditCard className="size-4 shrink-0" /> Pagamento com cartão de crédito, na página segura da Stripe.
+                </p>
+            )}
 
             <StepCta loading={p.busy} disabled={!p.risk} onClick={p.onSubscribe}
+                above={compact => <RiskAck checked={p.risk} onChange={p.onRisk} compact={compact} />}
                 note={<div className="space-y-1">
-                    {listing.pay_online && <p><Lock className="mr-1 inline size-3" />Pagamento seguro pela Stripe. Renovação automática: cancele quando quiser em Minha conta → Assinaturas, sem multa.</p>}
+                    {listing.pay_online && <p>Renovação automática: cancele quando quiser em Minha conta → Assinaturas, sem multa.</p>}
                     {!listing.pay_online && listing.checkout_url && <p>O pagamento abre na página do gestor, em outra aba.</p>}
-                    {!p.risk && <p>Marque a confirmação acima para continuar.</p>}
-                    <p><Copiers count={p.copiers} /></p>
+                    {!p.risk && <p className="hidden sm:block">Marque a confirmação acima para continuar.</p>}
+                    <p className="lg:hidden"><Copiers count={p.copiers} /></p>
                 </div>}>
                 {ctaText} {!p.busy && <ArrowRight />}
             </StepCta>
@@ -159,7 +169,7 @@ export function PaySummary(p: SummaryProps) {
                                 <Input id="checkout-promo" value={code} onChange={e => setCode(e.target.value)} placeholder="Digite seu código" className="font-mono uppercase" autoComplete="off" />
                                 <Button type="submit" variant="outline" loading={p.busy} disabled={!code.trim() || !p.risk}>Usar</Button>
                             </div>
-                            {!p.risk && <p className="text-xs text-muted-foreground">Marque a confirmação de risco acima para usar o código.</p>}
+                            {!p.risk && <p className="text-xs text-muted-foreground">Marque a confirmação de risco para usar o código.</p>}
                         </form>
                     ) : (
                         <button type="button" onClick={() => setCodeOpen(true)} className="flex min-h-11 w-full items-center justify-center gap-2 text-sm font-medium text-primary hover:underline">
@@ -179,7 +189,7 @@ export function PromoSummary({ listing, code, onCode, email, unverified, risk, o
 }) {
     return (
         <section className="panel space-y-6 p-5 sm:p-8">
-            <StepHeader badge="Ativar" icon={<Ticket className="size-3" />} title={`Ative seu acesso grátis a ${listing.title}`}>
+            <StepHeader title={`Ative seu acesso grátis a ${listing.title}`}>
                 Sem cartão. Os dias grátis começam quando você conectar sua conta MT5.
             </StepHeader>
 
@@ -196,9 +206,8 @@ export function PromoSummary({ listing, code, onCode, email, unverified, risk, o
                 </div>
             )}
 
-            <RiskAck checked={risk} onChange={onRisk} />
-
             <StepCta loading={busy} disabled={!risk || unverified || !code.trim()} onClick={onRedeem}
+                above={compact => <RiskAck checked={risk} onChange={onRisk} compact={compact} />}
                 note={<button type="button" onClick={onPreferPay} className="min-h-9 font-medium text-primary underline-offset-4 hover:underline">Prefiro assinar agora</button>}>
                 Ativar meu acesso grátis {!busy && <ArrowRight />}
             </StepCta>

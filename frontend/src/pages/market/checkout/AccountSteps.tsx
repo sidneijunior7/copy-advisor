@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, CreditCard, Eye, EyeOff, Lock, Mail, User as UserIcon } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Lock, Mail, User as UserIcon } from 'lucide-react';
 import TermsNotice from '../../../components/TermsNotice';
 import { Button } from '../../../components/ui/Button';
 import { Field, Input } from '../../../components/ui/Field';
@@ -12,11 +12,23 @@ export const CPF_REASON = 'Usamos para identificar o titular da assinatura. Não
 
 const linkClass = 'font-medium text-primary underline-offset-4 hover:underline';
 
+type FieldError = { field: string; message: string } | null;
+
 // A CPF that already has an account: the two ways forward, instead of a dead end on the last screen
 export type CpfTaken = { onOtherEmail: () => void };
 
 function Panel({ children }: { children: ReactNode }) {
     return <section className="panel space-y-6 p-5 sm:p-8">{children}</section>;
+}
+
+// Which email the account is for, with the way back to change it, on every sign-up screen
+function ForEmail({ email, onOtherEmail, children }: { email: string; onOtherEmail: () => void; children?: ReactNode }) {
+    return (
+        <>
+            {children}Para <strong className="text-foreground">{email}</strong>.{' '}
+            <button type="button" onClick={onOtherEmail} className={`min-h-9 ${linkClass}`}>Usar outro email</button>
+        </>
+    );
 }
 
 function PasswordInput({ id, value, onChange, autoComplete, autoFocus }: {
@@ -47,17 +59,24 @@ function CpfTakenBox({ taken }: { taken: CpfTaken }) {
     );
 }
 
-export function EmailStep({ email, onEmail, error, busy, promo, onSubmit }: {
-    email: string; onEmail: (v: string) => void; error: string | null; busy: boolean; promo: boolean; onSubmit: (e: FormEvent) => void;
+// The email is asked right after the simulator: the card shows what will be sent to it, so the request has a reason
+export function EmailStep({ email, onEmail, error, busy, promo, preview, onSubmit }: {
+    email: string; onEmail: (v: string) => void; error: string | null; busy: boolean; promo: boolean; preview?: ReactNode;
+    onSubmit: (e: FormEvent) => void;
 }) {
     return (
         <Panel>
-            <StepHeader badge={promo ? 'Seu acesso' : 'Sua simulação'} icon={<Mail className="size-3" />}
-                title={promo ? 'Qual é o seu email?' : 'Para qual email enviamos a sua simulação?'}>
+            <StepHeader title={promo ? 'Qual é o seu email?' : 'Para qual email enviamos a sua simulação?'}>
                 {promo
                     ? 'Se você já tem conta no Trademetric Mirror, a gente reconhece.'
-                    : 'Se você parar no meio, enviamos a simulação para ele. Se já tem conta no Mirror, a gente reconhece.'}
+                    : 'Se você parar no meio, ela chega no seu email. Se já tem conta no Mirror, a gente reconhece.'}
             </StepHeader>
+            {!promo && preview && (
+                <div className="mx-auto max-w-md rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
+                    <p className="text-xs font-medium text-muted-foreground">Sua simulação</p>
+                    {preview}
+                </div>
+            )}
             <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
                 <Field label="Email" htmlFor="checkout-email" error={error ?? undefined}>
                     <Input id="checkout-email" type="email" autoComplete="email" inputMode="email" value={email}
@@ -76,9 +95,8 @@ export function LoginStep({ email, password, onPassword, error, busy, onOtherEma
 }) {
     return (
         <Panel>
-            <StepHeader badge="Conta encontrada" icon={<CheckCircle2 className="size-3" />} title="Que bom te ver de novo!">
-                <p>Você já tem cadastro com <strong className="text-foreground">{email}</strong>. Digite sua senha para continuar.</p>
-                <button type="button" onClick={onOtherEmail} className={`mt-1 min-h-9 text-xs ${linkClass}`}>Usar outro email</button>
+            <StepHeader title="Que bom te ver de novo!">
+                <ForEmail email={email} onOtherEmail={onOtherEmail}>Você já tem conta. </ForEmail>
             </StepHeader>
             <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
                 <Field label="Sua senha no Mirror" htmlFor="checkout-login-password" error={error ?? undefined}>
@@ -93,36 +111,24 @@ export function LoginStep({ email, password, onPassword, error, busy, onOtherEma
     );
 }
 
-export function NameStep({ email, name, onName, error, onSubmit }: {
-    email: string; name: string; onName: (v: string) => void; error: string | null; onSubmit: (e: FormEvent) => void;
+// A phone: the name and the password on one screen, the CPF on the next. Two screens for the sign-up, not three
+export function NameStep({ email, name, onName, password, onPassword, error, onOtherEmail, onSubmit }: {
+    email: string; name: string; onName: (v: string) => void; password: string; onPassword: (v: string) => void;
+    error: FieldError; onOtherEmail: () => void; onSubmit: (e: FormEvent) => void;
 }) {
+    const of = (field: string) => (error?.field === field ? error.message : undefined);
     return (
         <Panel>
-            <StepHeader badge="Sua conta" icon={<UserIcon className="size-3" />} title="Como podemos chamar você?">
-                Criando seu acesso para <strong className="text-foreground">{email}</strong>.
+            <StepHeader title="Crie sua conta">
+                <ForEmail email={email} onOtherEmail={onOtherEmail} />
             </StepHeader>
             <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
-                <Field label="Seu nome completo" htmlFor="checkout-name" error={error ?? undefined}>
+                <Field label="Seu nome completo" htmlFor="checkout-name" error={of('name')}>
                     <Input id="checkout-name" autoComplete="name" value={name} onChange={e => onName(e.target.value)}
                         placeholder="Ex.: João Silva" icon={<UserIcon />} className="h-12 text-base" autoFocus />
                 </Field>
-                <Button type="submit" size="lg" className="w-full">Continuar <ArrowRight /></Button>
-            </form>
-        </Panel>
-    );
-}
-
-export function PasswordStep({ name, password, onPassword, error, onSubmit }: {
-    name: string; password: string; onPassword: (v: string) => void; error: string | null; onSubmit: (e: FormEvent) => void;
-}) {
-    return (
-        <Panel>
-            <StepHeader badge="Sua conta" icon={<Lock className="size-3" />} title="Crie uma senha">
-                Prazer, <strong className="text-foreground">{name.trim().split(' ')[0]}</strong>! Você vai usá-la para acompanhar suas cópias.
-            </StepHeader>
-            <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
-                <Field label="Crie sua senha" htmlFor="checkout-register-password" hint={`Mínimo de ${PASSWORD_MIN} caracteres.`} error={error ?? undefined}>
-                    <PasswordInput id="checkout-register-password" value={password} onChange={onPassword} autoComplete="new-password" autoFocus />
+                <Field label="Crie uma senha" htmlFor="checkout-register-password" hint={`Mínimo de ${PASSWORD_MIN} caracteres.`} error={of('password')}>
+                    <PasswordInput id="checkout-register-password" value={password} onChange={onPassword} autoComplete="new-password" />
                 </Field>
                 <Button type="submit" size="lg" className="w-full">Continuar <ArrowRight /></Button>
             </form>
@@ -135,9 +141,7 @@ export function CpfStep({ cpf, onCpf, error, taken, busy, onSubmit }: {
 }) {
     return (
         <Panel>
-            <StepHeader badge="Sua conta" icon={<CreditCard className="size-3" />} title="Por último, qual é o seu CPF?">
-                {CPF_REASON}
-            </StepHeader>
+            <StepHeader title="Por último, o seu CPF">{CPF_REASON}</StepHeader>
             <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
                 <Field label="CPF" htmlFor="checkout-cpf" error={taken ? undefined : error ?? undefined}>
                     <Input id="checkout-cpf" inputMode="numeric" autoComplete="off" value={cpf} onChange={e => onCpf(formatCpf(e.target.value))}
@@ -152,16 +156,16 @@ export function CpfStep({ cpf, onCpf, error, taken, busy, onSubmit }: {
 }
 
 // A wide screen asks the three at once: fewer screens between the simulator and the payment
-export function DetailsStep({ email, name, onName, password, onPassword, cpf, onCpf, error, taken, busy, onSubmit }: {
+export function DetailsStep({ email, name, onName, password, onPassword, cpf, onCpf, error, taken, busy, onOtherEmail, onSubmit }: {
     email: string; name: string; onName: (v: string) => void; password: string; onPassword: (v: string) => void;
-    cpf: string; onCpf: (v: string) => void; error: { field: string; message: string } | null;
-    taken: CpfTaken | null; busy: boolean; onSubmit: (e: FormEvent) => void;
+    cpf: string; onCpf: (v: string) => void; error: FieldError; taken: CpfTaken | null; busy: boolean;
+    onOtherEmail: () => void; onSubmit: (e: FormEvent) => void;
 }) {
-    const of = (field: 'name' | 'password' | 'cpf') => (error?.field === field ? error.message : undefined);
+    const of = (field: string) => (error?.field === field ? error.message : undefined);
     return (
         <Panel>
-            <StepHeader badge="Sua conta" icon={<UserIcon className="size-3" />} title="Crie sua conta">
-                Para <strong className="text-foreground">{email}</strong>. Com ela você acompanha suas cópias.
+            <StepHeader title="Crie sua conta">
+                <ForEmail email={email} onOtherEmail={onOtherEmail} />
             </StepHeader>
             <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4" noValidate>
                 <Field label="Seu nome completo" htmlFor="checkout-name" error={of('name')}>

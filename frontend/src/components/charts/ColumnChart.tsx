@@ -6,6 +6,7 @@ interface ColumnChartProps {
     ariaLabel: string;
     formatValue: (v: number) => string;
     height?: number;
+    positiveColor?: string; // Defaults to the charts' positive hue; a page in another palette passes its own
 }
 
 const MARGIN = { top: 12, right: 8, bottom: 28, left: 52 };
@@ -14,7 +15,7 @@ const RADIUS = 4;
 
 // A column per period growing from zero: above it gained (positive hue), below it lost (negative hue). The
 // column is its own hover and focus target, the whole height of its band
-export default function ColumnChart({ data, ariaLabel, formatValue, height = 220 }: ColumnChartProps) {
+export default function ColumnChart({ data, ariaLabel, formatValue, height = 220, positiveColor = 'var(--viz-positive)' }: ColumnChartProps) {
     const [ref, width] = useWidth<HTMLDivElement>();
     const [active, setActive] = useState<number | null>(null);
     if (data.length === 0) return null;
@@ -71,7 +72,7 @@ export default function ColumnChart({ data, ariaLabel, formatValue, height = 220
                             {d.value !== 0 && (
                                 <path
                                     d={column(cx, d.value)}
-                                    fill={d.value > 0 ? 'var(--viz-positive)' : 'var(--viz-negative)'}
+                                    fill={d.value > 0 ? positiveColor : 'var(--viz-negative)'}
                                     style={{ filter: active === i ? 'brightness(1.15)' : undefined }}
                                 />
                             )}
@@ -90,7 +91,7 @@ export default function ColumnChart({ data, ariaLabel, formatValue, height = 220
                 >
                     <p className="mb-1 text-muted-foreground">{hovered.label}</p>
                     <p className="flex items-center gap-2">
-                        <span className="inline-block h-0.5 w-3 rounded-full" style={{ background: hovered.value >= 0 ? 'var(--viz-positive)' : 'var(--viz-negative)' }} />
+                        <span className="inline-block h-0.5 w-3 rounded-full" style={{ background: hovered.value >= 0 ? positiveColor : 'var(--viz-negative)' }} />
                         <strong className="font-semibold text-foreground">{formatValue(hovered.value)}</strong>
                     </p>
                 </div>

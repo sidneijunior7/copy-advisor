@@ -508,6 +508,7 @@ export type SimulationStep = {
     simulated_profit: number;
     max_drawdown: number;
     popular?: boolean; // The plan most clients paid for, once enough did
+    unit?: 'contrato' | 'lote'; // Set by the checkout: B3 trades contracts, the other markets lots
 };
 
 export type PortfolioSimulation = {

@@ -1,23 +1,19 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Minus, Pencil, Plus, ShieldAlert, Sparkles, TrendingUp, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Pencil } from 'lucide-react';
 import type { PortfolioSimulation, SimulationStep } from '../../../api';
 import ColumnChart from '../../../components/charts/ColumnChart';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Field';
 import { formatMonth } from '../../../lib/labels';
-import { formatMoney } from '../../../lib/money';
+import { formatMoney, periodLabel as periodName } from '../../../lib/money';
 import { riskOf } from '../../../lib/risk';
 import { cn } from '../../../lib/utils';
-import { lotsLabel, periodWords, tierPriceText } from './format';
-import { StepCta, StepHeader } from './parts';
+import { lotsLabel, perContractFalls, periodWords, planTitle, radioKeys, signedMoney } from './format';
+import { RadioDot, StepCta, StepHeader } from './parts';
 
-// Above this share of the capital, the manager's suggested capital is called a minimum, never "with room to spare"
-const TIGHT_CAPITAL_PCT = 50;
-
-// Signed money as one text node: the sign never wraps away from the number
-const signedMoney = (value: number, currency: string) =>
-    `${value > 0 ? '+' : value < 0 ? '−' : ''} ${formatMoney(Math.abs(value), currency)}`;
+// Past this share of the capital, the drop is shown in the warning colour
+const HEAVY_DROP_PCT = 50;
 
 // Whole reais typed the Brazilian way: 5.000 or 5000; cents are ignored
 const parseCapital = (text: string) => Number(text.split(',')[0].replace(/\D/g, ''));
@@ -26,7 +22,40 @@ const maskCapital = (text: string) => {
     return n > 0 ? n.toLocaleString('pt-BR') : '';
 };
 
-export default function ContractsStep({ steps, tierIdx, onTier, simulation, currency, customCapital, onCapital, periodLabel, onContinue }: {
+const COLS: Record<number, string> = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2' };
+
+// One plan as a card: what it is, what it costs and the capital it asks. On a phone a compact row, on a wide screen
+// a column, like a pricing table
+function PlanCard({ tier, selected, tabbable, perContract, onSelect }: {
+    tier: SimulationStep; selected: boolean; tabbable: boolean; perContract: string | null; onSelect: () => void;
+}) {
+    const free = tier.price === 0;
+    return (
+        <button type="button" role="radio" aria-checked={selected} tabIndex={tabbable ? 0 : -1} onClick={onSelect}
+            className={cn(
+                'relative flex w-full items-center gap-3 rounded-xl border-2 p-3.5 text-left transition-all sm:flex-col sm:items-start sm:gap-2 sm:p-4',
+                selected ? 'border-primary bg-primary/5 shadow-sm' : 'border-border bg-card hover:border-primary/40',
+            )}>
+            {tier.popular && (
+                <span className="absolute -top-2.5 left-3 rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Mais escolhido</span>
+            )}
+            <RadioDot selected={selected} className="sm:absolute sm:right-3 sm:top-3" />
+            <span className="min-w-0 flex-1 sm:pr-6">
+                <span className="block font-semibold">{planTitle(tier)}</span>
+                <span className="block text-xs text-muted-foreground">Capital sugerido<br />{formatMoney(tier.recommended_capital, tier.currency)}</span>
+            </span>
+            <span className="shrink-0 text-right sm:text-left">
+                <span className="block whitespace-nowrap text-base font-bold sm:text-2xl">
+                    {tier.price == null ? 'Sob consulta' : free ? 'Gratuito' : formatMoney(tier.price, tier.currency)}
+                    {tier.price != null && !free && <span className="text-xs font-normal text-muted-foreground"> /{periodName(tier.days)}</span>}
+                </span>
+                {perContract && <span className="block text-xs text-muted-foreground">{perContract}</span>}
+            </span>
+        </button>
+    );
+}
+
+export default function ContractsStep({ steps, tierIdx, onTier, simulation, currency, customCapital, onCapital, onContinue }: {
     steps: SimulationStep[];
     tierIdx: number;
     onTier: (idx: number) => void;
@@ -34,13 +63,12 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
     currency: string;
     customCapital: number | null;
     onCapital: (capital: number | null) => void;
-    periodLabel: (days: number) => string;
     onContinue: () => void;
 }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState('');
     const tier = steps[tierIdx];
-    const lots = lotsLabel(tier.lots);
+    const lots = lotsLabel(tier.lots, tier.unit);
     const days = simulation?.days ?? 0;
     const period = days > 0 ? periodWords(days) : null;
 
@@ -49,145 +77,116 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
     const ddPct = capital > 0 ? Math.round((tier.max_drawdown / capital) * 1000) / 10 : null;
     const overCapital = ddPct != null && ddPct > 100;
     const risk = riskOf(ddPct);
-    const tightCapital = tier.recommended_capital > 0 && (tier.max_drawdown / tier.recommended_capital) * 100 > TIGHT_CAPITAL_PCT;
-    const months = (simulation?.months ?? []).map(m => ({ label: formatMonth(m.month), value: Math.round(m.net * tier.lots * 100) / 100 }));
     // What the plan would have cost over the same period: the result above is before it
     const fees = tier.price && tier.price > 0 && days > 0 ? tier.price * (days / (tier.days || 30)) : 0;
-    const base = steps[0];
-    const perContract = (t: SimulationStep) => (t.price && t.price > 0 && t.lots > 1 && t !== base
-        ? `${formatMoney(t.price / t.lots, t.currency)} por contrato` : null);
+    const showPerContract = perContractFalls(steps);
+
+    // The period starts and ends in the middle of a month: those columns are partial, and say so
+    const now = new Date();
+    const start = new Date(now.getTime() - days * 86_400_000);
+    const months = simulation?.months ?? [];
+    const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const partial = (i: number) => (i === 0 && months.length > 1 && start.getDate() !== 1) || (i === months.length - 1 && months[i].month === thisMonth);
+    const columns = months.map((m, i) => ({
+        label: `${formatMonth(m.month)}${partial(i) ? '*' : ''}`,
+        value: Math.round(m.net * tier.lots * 100) / 100,
+    }));
+    const anyPartial = months.some((_, i) => partial(i));
 
     const applyCapital = () => {
         const n = parseCapital(draft);
         setEditing(false);
         if (!(n > 0)) return;
         onCapital(n);
-        // Start on the biggest size that fits the capital the client has
+        // Start on the biggest plan that fits the capital the client has
         const fits = steps.map((s, i) => [s, i] as const).filter(([s]) => s.recommended_capital <= n);
         onTier(fits.length ? fits[fits.length - 1][1] : 0);
     };
 
     return (
         <section className="panel space-y-6 p-5 sm:p-8">
-            <StepHeader badge="Monte o seu plano" icon={<Sparkles className="size-3" />} title="Quantos contratos você quer copiar?">
-                Mude a quantidade e veja o resultado que o portfólio teve{period ? ` nos últimos ${period}` : ''}, o capital sugerido e o risco.
+            <StepHeader title="Escolha o seu plano">
+                Veja como cada plano teria ido{period ? ` nos últimos ${period}` : ''}, com o risco e o capital que ele pede.
             </StepHeader>
 
-            <div className="mx-auto flex max-w-md flex-col items-center gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
-                <div className="flex w-full items-center justify-between gap-4">
-                    <button type="button" aria-label="Diminuir contratos" disabled={tierIdx <= 0} onClick={() => onTier(tierIdx - 1)}
-                        className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-border bg-card shadow-sm transition-all hover:border-primary hover:bg-primary/10 active:scale-95 disabled:pointer-events-none disabled:opacity-40">
-                        <Minus className="size-5" />
-                    </button>
-                    <div className="min-w-0 text-center">
-                        <p className="text-3xl font-extrabold tracking-tight sm:text-4xl">{lots}</p>
-                        <p className="mt-0.5 text-xs font-medium text-primary">{tier.name !== lots && `${tier.name} · `}{tierPriceText(tier, periodLabel)}</p>
-                        {perContract(tier) && <p className="text-xs text-muted-foreground">{perContract(tier)}</p>}
-                    </div>
-                    <button type="button" aria-label="Aumentar contratos" disabled={tierIdx >= steps.length - 1} onClick={() => onTier(tierIdx + 1)}
-                        className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-primary/50 bg-primary text-primary-foreground shadow-md shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95 disabled:pointer-events-none disabled:opacity-40">
-                        <Plus className="size-5" />
-                    </button>
-                </div>
-                {steps.length > 1 && (
-                    <div className="flex flex-wrap justify-center gap-1.5 pt-1" role="group" aria-label="Opções de contratos">
-                        {steps.map((s, idx) => (
-                            <button key={`${s.lots}-${idx}`} type="button" onClick={() => onTier(idx)} aria-pressed={idx === tierIdx}
-                                className={cn('inline-flex min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition-all',
-                                    idx === tierIdx ? 'bg-primary text-primary-foreground shadow-sm'
-                                        : 'border border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground')}>
-                                {lotsLabel(s.lots)}
-                                {s.popular && <span className={cn('rounded-full px-1.5 text-[10px]', idx === tierIdx ? 'bg-primary-foreground/20' : 'bg-primary/10 text-primary')}>Mais escolhido</span>}
-                            </button>
-                        ))}
-                    </div>
-                )}
+            <div role="radiogroup" aria-label="Planos" onKeyDown={radioKeys}
+                className={cn('grid grid-cols-1 gap-3 pt-1', COLS[steps.length] ?? 'sm:grid-cols-3')}>
+                {steps.map((s, i) => (
+                    <PlanCard key={`${s.lots}-${i}`} tier={s} selected={i === tierIdx} tabbable={i === tierIdx} onSelect={() => onTier(i)}
+                        perContract={showPerContract && i > 0 && s.price ? `${formatMoney(s.price / s.lots, s.currency)} por ${s.unit ?? 'contrato'}` : null} />
+                ))}
             </div>
 
-            {/* Profit and risk side by side on a phone, so the risk is never below the fold; the capital spans the row */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4" aria-live="polite">
-                <div className={cn('rounded-xl border-2 p-3 sm:p-4',
-                    tier.simulated_profit >= 0 ? 'border-success/40 bg-gradient-to-br from-success/15 via-success/5 to-transparent' : 'border-destructive/40 bg-destructive/5')}>
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                        <TrendingUp className={cn('size-4 shrink-0', tier.simulated_profit >= 0 ? 'text-success' : 'text-destructive')} />
-                        {period ? `Resultado em ${period}` : 'Resultado no período'}
-                    </p>
-                    <p className={cn('mt-2 whitespace-nowrap text-xl font-extrabold tracking-tight sm:text-3xl', tier.simulated_profit >= 0 ? 'text-success' : 'text-destructive')}>
-                        {signedMoney(tier.simulated_profit, currency)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {simulation && simulation.trades > 0 ? `${simulation.trades} operações fechadas com ${lots}` : `Projeção proporcional para ${lots}`}
-                    </p>
-                </div>
-
-                <div className={cn('rounded-xl border-2 p-3 sm:p-4', overCapital ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-secondary/40')}>
-                    <div className="flex flex-wrap items-center justify-between gap-1.5">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <ShieldAlert className="size-4 shrink-0 text-warning" /> Maior queda
-                        </span>
-                        {risk && !overCapital && <Badge variant={risk.variant}>{risk.label}</Badge>}
+            {/* Result and drop with the same weight: the profit keeps its colour, not a louder box */}
+            <div className="rounded-xl border border-border bg-secondary/20 p-4 sm:p-5" aria-live="polite">
+                <p className="text-sm font-semibold">{period ? `Como foram os últimos ${period} com ${lots}` : `Resultado com ${lots}`}</p>
+                <div className="mt-3 grid grid-cols-2 divide-x divide-border">
+                    <div className="min-w-0 pr-3 sm:pr-5">
+                        <p className="text-xs text-muted-foreground">Resultado</p>
+                        <p className={cn('mt-1 whitespace-nowrap text-[clamp(1rem,4.3vw,1.5rem)] font-bold tracking-tight sm:text-3xl',
+                            tier.simulated_profit >= 0 ? 'text-success' : 'text-destructive')}>
+                            {signedMoney(tier.simulated_profit, currency)}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                            {simulation && simulation.trades > 0 ? `${simulation.trades} operações fechadas` : 'Projeção proporcional'}
+                        </p>
                     </div>
-                    <p className="mt-2 whitespace-nowrap text-xl font-extrabold tracking-tight sm:text-3xl">
-                        {signedMoney(-tier.max_drawdown, currency)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {overCapital ? 'Maior que o capital da conta' : ddPct != null ? `${ddPct.toLocaleString('pt-BR')}% de ${formatMoney(capital, currency)}` : 'No período'}
-                    </p>
+                    <div className="min-w-0 pl-3 sm:pl-5">
+                        <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                            Maior queda {risk && !overCapital && <Badge variant={risk.variant}>{risk.label}</Badge>}
+                        </p>
+                        <p className="mt-1 whitespace-nowrap text-[clamp(1rem,4.3vw,1.5rem)] font-bold tracking-tight sm:text-3xl">
+                            {signedMoney(-tier.max_drawdown, currency)}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">Do topo ao fundo no período</p>
+                    </div>
                 </div>
-
-                <div className="order-last col-span-2 rounded-xl border border-border bg-secondary/40 p-3 sm:order-none sm:col-span-1 sm:p-4">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                        <Wallet className="size-4 shrink-0 text-primary" /> {tightCapital ? 'Capital mínimo sugerido pelo gestor' : 'Capital recomendado'}
+                <div className="mt-4 flex flex-col gap-3 border-t border-border pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <p>
+                        {customCapital
+                            ? <>Seu capital: <strong>{formatMoney(capital, currency)}</strong>. </>
+                            : <>Capital sugerido pelo gestor: <strong>{formatMoney(capital, currency)}</strong>. </>}
+                        {overCapital
+                            ? <span className="font-medium text-destructive">A maior queda passaria do saldo.</span>
+                            : ddPct != null && <>A maior queda {customCapital ? 'seria' : 'foi'}{' '}
+                                <strong className={cn(ddPct > HEAVY_DROP_PCT && 'text-warning')}>{ddPct.toLocaleString('pt-BR')}%</strong> dele.</>}
                     </p>
-                    <p className="mt-2 whitespace-nowrap text-xl font-bold tracking-tight sm:text-3xl">{formatMoney(tier.recommended_capital, currency)}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {tightCapital ? `Para ${lots}. A queda histórica já passou da metade dele` : `Para operar ${lots} com folga`}
-                    </p>
+                    {editing ? (
+                        <form onSubmit={e => { e.preventDefault(); applyCapital(); }} className="flex shrink-0 items-center gap-2">
+                            <label htmlFor="checkout-capital" className="sr-only">Seu capital na corretora, em reais</label>
+                            <Input id="checkout-capital" type="text" inputMode="numeric" value={draft} onChange={e => setDraft(maskCapital(e.target.value))}
+                                placeholder="Ex.: 10.000" className="h-9 w-32 text-sm" autoFocus />
+                            <Button size="sm" type="submit">Aplicar</Button>
+                        </form>
+                    ) : (
+                        <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            {customCapital != null && (
+                                <Button size="sm" variant="ghost" onClick={() => onCapital(null)}>Usar o sugerido</Button>
+                            )}
+                            <Button size="sm" variant="outline" onClick={() => { setDraft(maskCapital(String(Math.round(capital)))); setEditing(true); }}>
+                                <Pencil /> Informar meu capital
+                            </Button>
+                        </div>
+                    )}
                 </div>
             </div>
 
             {overCapital && (
                 <p role="alert" className="flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-                    Com esse capital, a maior queda histórica seria maior do que o saldo da conta. Escolha menos contratos ou aumente o capital.
+                    Com esse capital, a maior queda histórica seria maior do que o saldo da conta. Escolha um plano menor ou aumente o capital.
                 </p>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-secondary/20 px-4 py-3 text-xs">
-                <p className="font-medium">
-                    Risco calculado para um capital de <strong className="text-primary">{formatMoney(capital, currency)}</strong>
-                    {customCapital ? ' (o seu)' : ' (o sugerido)'}
-                </p>
-                {editing ? (
-                    <form onSubmit={e => { e.preventDefault(); applyCapital(); }} className="flex items-center gap-2">
-                        <label htmlFor="checkout-capital" className="sr-only">Seu capital na corretora, em reais</label>
-                        <Input id="checkout-capital" type="text" inputMode="numeric" value={draft} onChange={e => setDraft(maskCapital(e.target.value))}
-                            placeholder="Ex.: 10.000" className="h-9 w-32 text-sm" autoFocus />
-                        <Button size="sm" type="submit">Aplicar</Button>
-                    </form>
-                ) : (
-                    <div className="flex flex-wrap items-center gap-2">
-                        {customCapital != null && (
-                            <button type="button" onClick={() => onCapital(null)}
-                                className="min-h-9 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 font-medium text-primary hover:bg-primary/20">
-                                Usar o sugerido
-                            </button>
-                        )}
-                        <button type="button" onClick={() => { setDraft(maskCapital(String(Math.round(capital)))); setEditing(true); }}
-                            className="inline-flex min-h-9 items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 font-medium hover:border-primary/40">
-                            <Pencil className="size-3" /> Informar meu capital
-                        </button>
-                    </div>
-                )}
-            </div>
-
-            {months.length > 0 && (
+            {columns.length > 0 && (
                 <div className="space-y-2 rounded-xl border border-border bg-card p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-semibold">Mês a mês com {lots}{period ? `, últimos ${period}` : ''}</p>
+                        <p className="text-sm font-semibold">Mês a mês com {lots}</p>
                         <span className="text-xs text-muted-foreground">Operações reais fechadas</span>
                     </div>
-                    <ColumnChart data={months} ariaLabel={`Resultado mensal simulado para ${lots}`} formatValue={v => formatMoney(v, currency)} height={170} />
+                    <ColumnChart data={columns} ariaLabel={`Resultado mensal simulado para ${lots}`} formatValue={v => formatMoney(v, currency)}
+                        height={170} positiveColor="hsl(var(--success))" />
+                    {anyPartial && <p className="text-xs text-muted-foreground">* Mês incompleto: o período começa ou termina no meio dele.</p>}
                 </div>
             )}
 

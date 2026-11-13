@@ -1,7 +1,9 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, Cloud, Wrench } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, ArrowRight, ChevronDown, Cloud, Wrench } from 'lucide-react';
 import type { HostingPrice } from '../../../api';
 import { Badge } from '../../../components/ui/Badge';
-import { CLOUD_BILLED_APART, cloudPrice, radioKeys } from './format';
+import { formatMoney, periodLabel } from '../../../lib/money';
+import { CLOUD_BILLED_APART, radioKeys } from './format';
 import { ChoiceCard, StepCta, StepHeader } from './parts';
 
 const MANUAL_INSTALL_STEPS = [
@@ -13,54 +15,67 @@ const MANUAL_INSTALL_STEPS = [
     'Manter o computador ou a VPS ligados durante todo o pregão',
 ];
 
-// Nothing comes chosen: the client picks how the copy runs, and both options look alike until then
+// Nothing comes chosen: the client picks how the copy runs. Both cards are short and the same height, so on a
+// phone the two fit on the first screen and neither looks like the wrong one
 export default function HostingStep({ value, onChange, price, onContinue }: {
     value: boolean | null; onChange: (wants: boolean) => void; price: HostingPrice | null | undefined; onContinue: () => void;
 }) {
+    const [showSteps, setShowSteps] = useState(false);
+    const stepsOpen = showSteps || value === false;
     return (
         <section className="panel space-y-6 p-5 sm:p-8">
-            <StepHeader badge="Como rodar" icon={<Cloud className="size-3" />} title="Onde a sua cópia vai rodar?">
-                O MetaTrader 5 precisa ficar aberto para copiar. Escolha se ele roda na nossa nuvem ou no seu computador.
+            <StepHeader title="Onde a sua cópia vai rodar?">
+                O MetaTrader 5 precisa ficar aberto para copiar as operações.
             </StepHeader>
 
-            <div role="radiogroup" aria-label="Onde a cópia vai rodar" onKeyDown={radioKeys} className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <ChoiceCard selected={value === true} onSelect={() => onChange(true)} tabbable={value !== false}>
-                    <div className="flex flex-wrap items-center gap-2 pr-7">
-                        <Badge variant="primary"><Cloud className="size-3" /> Recomendado</Badge>
-                        <Badge variant="muted">{cloudPrice(price)}</Badge>
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-bold">Na nuvem da Trademetric</h2>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                            Rodamos o MetaTrader 5 e o replicador para você, com o seu computador desligado.
-                        </p>
-                    </div>
-                    <ul className="space-y-2 text-sm">
-                        {['Nada para instalar', 'Funciona com o seu computador desligado', 'Depois de assinar, você só informa o acesso da conta MT5'].map(item => (
-                            <li key={item} className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" /> {item}</li>
-                        ))}
-                    </ul>
-                    {price && <p className="text-xs text-muted-foreground">{CLOUD_BILLED_APART}.</p>}
+            <div role="radiogroup" aria-label="Onde a cópia vai rodar" onKeyDown={radioKeys} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <ChoiceCard selected={value === true} onSelect={() => onChange(true)} tabbable={value !== false} className="h-full">
+                    <span className="pr-7"><Badge variant="primary"><Cloud className="size-3" /> Recomendado</Badge></span>
+                    <span className="block">
+                        <span className="block text-lg font-bold">Na nuvem da Trademetric</span>
+                        <span className="mt-0.5 block text-sm text-muted-foreground">
+                            Rodamos o MetaTrader 5 para você, com o seu computador desligado. Nada para instalar.
+                        </span>
+                    </span>
+                    <span className="mt-auto block pt-1">
+                        {price ? (
+                            <>
+                                <span className="text-xl font-bold">+ {formatMoney(price.price, price.currency)}</span>
+                                <span className="text-sm text-muted-foreground"> /{periodLabel(price.days)}</span>
+                                <span className="block text-xs text-muted-foreground">{CLOUD_BILLED_APART}</span>
+                            </>
+                        ) : <span className="text-xl font-bold">Incluída no plano</span>}
+                    </span>
                 </ChoiceCard>
 
-                <ChoiceCard selected={value === false} onSelect={() => onChange(false)} tabbable={value === false}>
-                    <div className="flex flex-wrap items-center gap-2 pr-7">
-                        <Badge variant="muted"><Wrench className="size-3" /> Instalação própria</Badge>
-                        <Badge variant="muted">Grátis</Badge>
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-bold">No meu computador ou VPS</h2>
-                        <p className="mt-1 text-sm text-muted-foreground">Você instala e mantém o replicador. Os passos:</p>
-                    </div>
-                    <ol className="space-y-1.5 text-xs text-muted-foreground">
+                <ChoiceCard selected={value === false} onSelect={() => onChange(false)} tabbable={value === false} className="h-full">
+                    <span className="pr-7"><Badge variant="muted"><Wrench className="size-3" /> Instalação própria</Badge></span>
+                    <span className="block">
+                        <span className="block text-lg font-bold">No meu computador ou VPS</span>
+                        <span className="mt-0.5 block text-sm text-muted-foreground">
+                            Você instala o replicador e deixa o MetaTrader aberto durante o pregão.
+                        </span>
+                    </span>
+                    <span className="mt-auto block pt-1 text-xl font-bold">Grátis</span>
+                </ChoiceCard>
+            </div>
+
+            <div className="rounded-xl border border-border">
+                <button type="button" onClick={() => setShowSteps(v => !v)} aria-expanded={stepsOpen}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm font-medium">
+                    O que a instalação própria exige? (6 passos)
+                    <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${stepsOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {stepsOpen && (
+                    <ol className="space-y-1.5 border-t border-border px-4 py-3 text-sm text-muted-foreground">
                         {MANUAL_INSTALL_STEPS.map((item, i) => (
-                            <li key={item} className="flex items-start gap-2">
-                                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-[10px] font-bold text-foreground">{i + 1}</span>
+                            <li key={item} className="flex items-start gap-2.5">
+                                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-[11px] font-bold text-foreground">{i + 1}</span>
                                 {item}
                             </li>
                         ))}
                     </ol>
-                </ChoiceCard>
+                )}
             </div>
 
             {value === false && (

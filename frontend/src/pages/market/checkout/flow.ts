@@ -6,8 +6,8 @@ export type StepId =
     | 'email'
     | 'hosting'
     | 'login_password'
-    | 'name'
-    | 'register_password'
+    | 'name' // On a phone: the name and the password
+    | 'register_password' // Old address of the password screen, now part of 'name': it lands there
     | 'cpf'
     | 'details' // Name, password and CPF on one screen: a wide screen has room for them
     | 'summary';
@@ -29,14 +29,14 @@ export type FlowOptions = {
     loggedIn: boolean;
     hosting: boolean; // The cloud has room: "Como rodar" is a real choice
     emailExists: boolean | null; // Known after the email step
-    compact: boolean; // A phone: one question per screen
+    compact: boolean; // A phone: the sign-up in two screens instead of one
 };
 
 // The screens, in order, for who is in the checkout now
 export function buildFlow(o: FlowOptions): StepId[] {
     const account: StepId[] = o.loggedIn ? []
         : o.emailExists === true ? ['login_password']
-            : o.compact ? ['name', 'register_password', 'cpf'] : ['details'];
+            : o.compact ? ['name', 'cpf'] : ['details'];
     if (o.promo) return [...(o.loggedIn ? [] : ['email' as StepId]), ...account, 'summary'];
     return [
         'contracts',

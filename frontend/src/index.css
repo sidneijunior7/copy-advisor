@@ -78,7 +78,8 @@
         --popover: 0 0% 100%;
         --popover-foreground: 200 20% 10%;
 
-        --primary: 162 72% 38%;
+        /* 28% lightness: white text on it and it as text on the page both pass WCAG AA (5.2:1 and 5.0:1); 38% gave 3.1:1 */
+        --primary: 162 72% 28%;
         --primary-foreground: 0 0% 100%;
 
         --secondary: 200 10% 92%;
@@ -93,18 +94,18 @@
         --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 100%;
 
-        --success: 162 72% 38%;
+        --success: 162 72% 28%;
         --success-foreground: 0 0% 100%;
 
         --warning: 45 93% 47%;
         --warning-foreground: 200 20% 10%;
 
-        --profit: 162 72% 38%;
+        --profit: 162 72% 28%;
         --loss: 0 72% 51%;
 
         --border: 200 10% 85%;
         --input: 200 10% 85%;
-        --ring: 162 72% 38%;
+        --ring: 162 72% 28%;
 
         --chart-1: 162 72% 38%;
         --chart-2: 162 72% 30%;
@@ -120,12 +121,12 @@
 
         --sidebar-background: 0 0% 97%;
         --sidebar-foreground: 200 20% 15%;
-        --sidebar-primary: 162 72% 38%;
+        --sidebar-primary: 162 72% 28%;
         --sidebar-primary-foreground: 0 0% 100%;
         --sidebar-accent: 200 10% 92%;
         --sidebar-accent-foreground: 200 20% 10%;
         --sidebar-border: 200 10% 88%;
-        --sidebar-ring: 162 72% 38%;
+        --sidebar-ring: 162 72% 28%;
     }
 }
 
