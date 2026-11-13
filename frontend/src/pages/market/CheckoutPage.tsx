@@ -6,10 +6,12 @@ import api, {
     type ClientLicense, type Me, type MyLicenses, type PortfolioSimulation, type PublicFollowerStats,
     type PublicListing, type SimulationStep, type Subscription,
 } from '../../api';
+import CompanyLine from '../../components/CompanyLine';
 import EmptyState from '../../components/EmptyState';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../context/AuthContext';
 import { cleanCpf, isValidCpf } from '../../lib/cpf';
+import { LEGAL_VERSION } from '../../lib/company';
 import { formatMoney, periodLabel } from '../../lib/money';
 import { openCheckout } from '../../lib/stripe';
 import { track } from '../../lib/track';
@@ -332,7 +334,7 @@ export default function CheckoutPage() {
         setCpfTaken(false);
         try {
             const res = await api.post<{ access_token: string }>('/register', {
-                email: email.trim().toLowerCase(), password, name: name.trim(), cpf: cleanCpf(cpf), terms_accepted: true,
+                email: email.trim().toLowerCase(), password, name: name.trim(), cpf: cleanCpf(cpf), terms_accepted: true, terms_version: LEGAL_VERSION,
             });
             if (promo) {
                 // The confirmation link may open in another tab: it offers the way back here
@@ -485,6 +487,7 @@ export default function CheckoutPage() {
 
                     <footer className="space-y-1 border-t border-border pt-5 text-xs text-muted-foreground">
                         <p>Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.</p>
+                        <CompanyLine />
                         <p className="space-x-3">
                             <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">Termos de Uso</a>
                             <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">Privacidade</a>

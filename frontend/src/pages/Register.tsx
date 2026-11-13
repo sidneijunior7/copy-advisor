@@ -8,6 +8,7 @@ import AuthShell from '../components/AuthShell';
 import TermsNotice from '../components/TermsNotice';
 import { Button } from '../components/ui/Button';
 import { Field, Input } from '../components/ui/Field';
+import { LEGAL_VERSION } from '../lib/company';
 import { apiError, safeNext } from '../lib/utils';
 
 type RegisterForm = { email: string; password: string };
@@ -25,7 +26,7 @@ export default function Register() {
 
     const onSubmit = async (data: RegisterForm) => {
         try {
-            const res = await api.post('/register', { email: data.email.trim(), password: data.password, terms_accepted: true });
+            const res = await api.post('/register', { email: data.email.trim(), password: data.password, terms_accepted: true, terms_version: LEGAL_VERSION });
             login(res.data.access_token);
             navigate(next);
         } catch (err) {

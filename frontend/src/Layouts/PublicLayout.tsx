@@ -1,6 +1,7 @@
 import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
+import CompanyLine from '../components/CompanyLine';
 import { Button } from '../components/ui/Button';
 import { PRIVACY_PATH, TERMS_PATH } from '../components/TermsNotice';
 
@@ -33,6 +34,7 @@ export default function PublicLayout() {
             </main>
             <footer className="border-t border-border px-4 py-6 text-center text-xs text-muted-foreground">
                 <p>Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.</p>
+                <CompanyLine className="mt-1" />
                 <p className="mt-1">© {new Date().getFullYear()} Trademetric. Todos os direitos reservados.</p>
                 <p className="mt-1 space-x-3">
                     <Link to={TERMS_PATH} className="hover:text-foreground">Termos de Uso</Link>

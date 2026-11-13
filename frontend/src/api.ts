@@ -495,6 +495,7 @@ export type Me = {
     youtube_url: string | null; instagram_url: string | null;
     cpf?: string | null; broker?: BrokerChoice | null; broker_other?: string | null; advisor?: string | null; advisor_unknown?: boolean;
     email_verified: boolean; email_enabled: boolean;
+    closure_requested_at?: string | null; // The holder asked to close the account (privacy.py)
 };
 
 export type SimulationStep = {

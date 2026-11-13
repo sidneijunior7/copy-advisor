@@ -152,7 +152,7 @@ export function PaySummary(p: SummaryProps) {
             <StepCta loading={p.busy} disabled={!p.risk} onClick={p.onSubscribe}
                 above={compact => <RiskAck checked={p.risk} onChange={p.onRisk} compact={compact} />}
                 note={<div className="space-y-1">
-                    {listing.pay_online && <p>Renovação automática: cancele quando quiser em Minha conta → Assinaturas, sem multa.</p>}
+                    {listing.pay_online && <p>Renovação automática: cancele quando quiser na página Pagamentos da sua conta, sem multa.</p>}
                     {!listing.pay_online && listing.checkout_url && <p>O pagamento abre na página do gestor, em outra aba.</p>}
                     {!p.risk && <p className="hidden sm:block">Marque a confirmação acima para continuar.</p>}
                     <p className="lg:hidden"><Copiers count={p.copiers} /></p>

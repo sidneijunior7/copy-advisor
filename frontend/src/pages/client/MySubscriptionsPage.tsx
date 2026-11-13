@@ -6,6 +6,7 @@ import BillingCard from '../../components/client/BillingCard';
 import HostingBillingCard from '../../components/client/HostingBilling';
 import { HostingOfferList } from '../../components/client/HostingOffer';
 import MySubscriptions, { EmailReminder } from '../../components/client/MySubscriptions';
+import PrivacyCard from '../../components/client/PrivacyCard';
 import EmptyState from '../../components/EmptyState';
 import PageHeader from '../../components/PageHeader';
 import { Button } from '../../components/ui/Button';
@@ -96,6 +97,8 @@ export default function MySubscriptionsPage() {
             {data?.hosting_price && <HostingOfferList price={data.hosting_price} licenses={hostingCandidates(data)} />}
 
             <MySubscriptions />
+
+            <PrivacyCard />
         </div>
     );
 }
