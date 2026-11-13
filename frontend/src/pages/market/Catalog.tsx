@@ -25,7 +25,7 @@ const LAST = [NO_ASSET, NO_TRADES];
 const SORTS = {
     // Return for each point of the biggest fall: the top is not the one that risked the most
     recommended: {
-        label: 'Recomendados',
+        label: 'Retorno por risco',
         key: (l: PublicListing) => (l.stats.return_pct == null ? Infinity : -(l.stats.return_pct / Math.max(l.stats.max_drawdown_pct ?? 0, 5))),
     },
     return: { label: 'Maior retorno', key: (l: PublicListing) => -(l.stats.return_pct ?? -Infinity) },

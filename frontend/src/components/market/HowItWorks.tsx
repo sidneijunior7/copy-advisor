@@ -46,10 +46,10 @@ export function HowItWorks() {
             <div className="pointer-events-none relative mx-auto max-w-6xl px-4 md:absolute md:inset-0 md:flex md:items-center">
                 <div className="pointer-events-auto -mt-6 max-w-xl space-y-3 md:mt-0">
                     <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
-                        As operações dos nossos portfólios, copiadas automaticamente na sua conta
+                        As operações de traders, copiadas automaticamente na sua conta
                     </h1>
                     <p className="text-sm text-muted-foreground sm:text-base">
-                        Você escolhe o portfólio. Quando ele compra ou vende, a mesma ordem é feita na sua conta da corretora,
+                        Você escolhe o portfólio. Quando o trader compra ou vende, a mesma ordem é feita na sua conta da corretora,
                         no tamanho que você definir.
                     </p>
                     <div className="flex gap-2 pt-2 [&>a]:flex-1 sm:[&>a]:flex-none [&_button]:px-3 [&_button]:text-sm sm:[&_button]:px-8 sm:[&_button]:text-base">
