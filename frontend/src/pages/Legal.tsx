@@ -216,7 +216,7 @@ export function TermsPage() {
                     <li><strong>O mercado é volátil</strong> e pode mudar depressa, sobretudo em períodos de instabilidade.</li>
                     <li><strong>Resultados passados não garantem resultados futuros.</strong> Os números exibidos e as simulações do checkout são históricos, anteriores a custos como corretagem, emolumentos, slippage e a mensalidade.</li>
                     <li><strong>Cada portfólio tem os seus riscos.</strong> A página do portfólio mostra o histórico, a maior queda e o capital sugerido pelo responsável. Leia antes de assinar.</li>
-                    <li><strong>Sobre os portfólios:</strong> eles são desenvolvidos e operados pela própria Trademetric. O histórico exibido é o registrado na plataforma e não é garantia de resultado.</li>
+                    <li><strong>Sobre os portfólios:</strong> o histórico exibido é o registrado na plataforma e não é garantia de resultado.</li>
                 </List>
             </Section>
 
