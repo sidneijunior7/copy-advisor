@@ -41,6 +41,7 @@ import observability
 import payments
 import performance
 import promos
+import leads
 
 observability.setup("api")
 logger = logging.getLogger(__name__)
@@ -314,6 +315,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=dash_bridge.run_forever, args=(stop,), name="dash-bridge", daemon=True).start()
     threading.Thread(target=watch_hosting_queue, args=(stop,), name="hosting-queue", daemon=True).start()
     threading.Thread(target=watch_promo_endings, args=(stop,), name="promo-endings", daemon=True).start()
+    threading.Thread(target=watch_checkout_leads, args=(stop,), name="checkout-leads", daemon=True).start()
     yield
     stop.set()
     relay.join(2)
@@ -368,6 +370,34 @@ def send_promo_reminders(now: datetime.datetime):
         mailer.send_promo_ending(*email)
     if emails:
         logger.info(f"Promo reminders: {len(emails)} client(s) told their free days end soon")
+
+
+def watch_checkout_leads(stop: threading.Event):
+    """Emails the visitors who gave the email in the checkout and stopped before subscribing (leads.due)."""
+    while not stop.wait(leads.WATCH_SECONDS):
+        if mailer.enabled():
+            send_lead_emails(datetime.datetime.utcnow())
+
+
+def send_lead_emails(now: datetime.datetime):
+    db = database.SessionLocal()
+    try:
+        emails = []
+        for lead, which in leads.due(db, now):
+            sim = marketplace.public_simulation(db, lead.listing, marketplace.SIMULATION_DAYS, now)
+            step = next((s for s in sim["steps"] if lead.lots is not None and abs(s["lots"] - lead.lots) < 1e-9), None)
+            emails.append((lead, which, step, sim["days"], sim["currency"]))
+        db.commit()  # Counted before sending: a failed commit sends nothing, and the next round tries again
+        for email in emails:
+            mailer.send_checkout_lead(*email)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Checkout lead emails failed: {type(e).__name__}: {str(e)[:200]}")
+        return
+    finally:
+        db.close()
+    if emails:
+        logger.info(f"Checkout leads: {len(emails)} email(s) to visitors who stopped halfway")
 
 
 async def database_unavailable(request: Request, exc: Exception):
@@ -1108,8 +1138,10 @@ class RegisterRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=100, pattern=hosting.ONE_LINE)  # Filled in later
     cpf: Optional[str] = Field(default=None, max_length=20)
     broker: Optional[marketplace.BrokerChoice] = None
+    broker_other: Optional[str] = Field(default=None, max_length=60, pattern=hosting.ONE_LINE)
     advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
     advisor_unknown: bool = False
+    terms_accepted: bool = False  # The sign-up screens show the Terms of Use and the Privacy Policy
 
 
 class ClaimRequest(BaseModel):
@@ -1149,6 +1181,8 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     if auth.validate_password(data.password):
         raise HTTPException(status_code=422, detail=f"A senha precisa ter de {auth.PASSWORD_MIN_LENGTH} a "
                                                     f"{auth.PASSWORD_MAX_BYTES} caracteres")
+    if not data.terms_accepted:
+        raise HTTPException(status_code=422, detail="Aceite os Termos de Uso e a Política de Privacidade para criar a conta")
     try:
         cpf = auth.clean_cpf(data.cpf)
     except ValueError as e:
@@ -1159,8 +1193,9 @@ def register(data: RegisterRequest, request: Request, db: Session = Depends(get_
     if cpf is not None and db.query(models.User.id).filter(models.User.cpf == cpf).first():
         raise HTTPException(status_code=409, detail="Este CPF já está cadastrado")
     user = models.User(email=email, name=(data.name or "").strip() or None, password_hash=auth.get_password_hash(data.password),
-                       cpf=cpf, broker=data.broker, advisor=(data.advisor or "").strip() or None,
-                       advisor_unknown=bool(data.advisor_unknown), role="CLIENT", status="active")
+                       cpf=cpf, role="CLIENT", status="active", terms_accepted_at=datetime.datetime.utcnow())
+    marketplace.apply_broker(user, marketplace.BrokerIn(broker=data.broker, broker_other=data.broker_other,
+                                                        advisor=data.advisor, advisor_unknown=data.advisor_unknown))
     db.add(user)
     db.commit()
     logger.info(f"Client {user.id} signed up")
@@ -1202,6 +1237,7 @@ def license_extras(lics, db: Session) -> Dict[int, dict]:
         listing = listings.get(l.portfolio_id)
         plans = marketplace.active_plans(listing) if listing is not None and marketplace.pay_online(listing) else []
         out[l.id] = {"promo": free.get(l.id), "listing_slug": listing.slug if listing else None,
+                     "listing_markets": [m for m in (listing.markets or "").split(",") if m] if listing else [],
                      "wants_hosting": l.id in hosted_subs,
                      "renew_plans": [marketplace.plan_out(p, public=True) for p in plans]}
     return out
@@ -1721,8 +1757,8 @@ def reset_password(data: ResetIn, request: Request, db: Session = Depends(get_db
 def my_account(current_user: models.User = Depends(get_current_user)):
     return {"email": current_user.email, "name": current_user.name, "role": current_user.role, "bio": current_user.bio,
             "youtube_url": current_user.youtube_url, "instagram_url": current_user.instagram_url,
-            "cpf": current_user.cpf, "broker": current_user.broker, "advisor": current_user.advisor,
-            "advisor_unknown": bool(current_user.advisor_unknown),
+            "cpf": current_user.cpf, "broker": current_user.broker, "broker_other": current_user.broker_other,
+            "advisor": current_user.advisor, "advisor_unknown": bool(current_user.advisor_unknown),
             "email_verified": current_user.email_verified_at is not None, "email_enabled": mailer.enabled()}
 
 @app.put("/me/profile")
@@ -1736,6 +1772,15 @@ def update_profile(data: marketplace.Profile, current_user: models.User = Depend
         current_user.instagram_url = data.instagram_url
     db.commit()
     marketplace.clear_cache()
+    return my_account(current_user)
+
+@app.put("/me/broker")
+def update_broker(data: marketplace.BrokerIn, current_user: models.User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """The client's broker and advisor, asked when activating the copy."""
+    client_only(current_user)
+    marketplace.apply_broker(current_user, data)
+    db.commit()
     return my_account(current_user)
 
 def published_listing(slug: str, db: Session) -> models.Listing:
@@ -1796,15 +1841,14 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     link: that is asked when connecting the account, before anything copies."""
     client_only(current_user)
     listing = published_listing(slug, db)
+    if not data.risk_ack:
+        raise HTTPException(status_code=422, detail="Confirme que entende os riscos da cópia para continuar")
+    now = datetime.datetime.utcnow()
     plan = None
     if marketplace.pay_online(listing):
         plan = next((p for p in marketplace.active_plans(listing) if p.id == data.plan_id), None)
         if plan is None: raise HTTPException(status_code=422, detail="Escolha um dos planos do portfólio")
-    if data.broker is not None:
-        current_user.broker = data.broker
-    if data.advisor is not None or data.advisor_unknown is not None:
-        current_user.advisor = (data.advisor or "").strip() or None
-        current_user.advisor_unknown = bool(data.advisor_unknown)
+    marketplace.apply_broker(current_user, data)
     pending = db.query(models.Subscription).filter(models.Subscription.client_user_id == current_user.id,
                                                    models.Subscription.status == "pending")
     same = pending.filter(models.Subscription.listing_id == listing.id,
@@ -1812,6 +1856,8 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     if same is not None and plan is not None:
         same.plan = plan  # Back from an abandoned Checkout: pay that one, maybe on another plan
         same.wants_hosting = bool(data.wants_hosting)
+        same.risk_ack_at = now
+        marketplace.convert_leads(db, current_user.email, listing.id, now)
         db.commit()
         return marketplace.subscription_out(same, for_manager=False)
     if same is not None:
@@ -1828,15 +1874,50 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
     subscribe_limiter.fail(f"subscribe:{current_user.id}")
     sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
                               kind="renewal" if existing is not None else "new", plan=plan,
-                              wants_hosting=bool(data.wants_hosting),
-                              note=(data.note or "").strip() or None, created_at=datetime.datetime.utcnow())
+                              wants_hosting=bool(data.wants_hosting), risk_ack_at=now,
+                              note=(data.note or "").strip() or None, created_at=now)
     db.add(sub)
+    marketplace.convert_leads(db, current_user.email, listing.id, now)
     db.commit()
     db.refresh(sub)
     logger.info(f"Subscription {sub.id}: client {current_user.id} asked for listing {listing.id}")
     if listing.portfolio and listing.portfolio.owner and not marketplace.pay_online(listing):
         mailer.send_new_subscription(listing.portfolio.owner, sub)
     return marketplace.subscription_out(sub, for_manager=False)
+
+# Emails a network may hand in per hour: each one can get two emails, so it must not become a way to spam others
+lead_limiter = FailureLimiter(int(os.getenv("LEADS_MAX_PER_HOUR", "20")), 3600)
+
+@app.post("/api/marketplace/{slug}/lead")
+def checkout_lead(slug: str, data: marketplace.LeadIn, request: Request, db: Session = Depends(get_db)):
+    """The email the checkout asks right after the simulator. Public: the visitor has no account yet."""
+    ip = client_ip(request)
+    if lead_limiter.blocked(f"lead:{ip}"):
+        raise HTTPException(status_code=429, detail="Muitas tentativas a partir desta rede. Aguarde alguns minutos.")
+    email = data.email.strip().lower()
+    if not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=422, detail="Email inválido")
+    listing = published_listing(slug, db)
+    lead_limiter.fail(f"lead:{ip}")
+    try:
+        leads.record(db, listing, email, data.lots, data.wants_hosting, data.step, datetime.datetime.utcnow())
+        db.commit()
+    except IntegrityError:  # The same email twice at once: the other request saved it
+        db.rollback()
+    return {"ok": True}
+
+class LeadStopIn(BaseModel):
+    token: str = Field(min_length=10, max_length=64)
+
+@app.post("/leads/stop")
+def stop_lead_emails(data: LeadStopIn, request: Request, db: Session = Depends(get_db)):
+    """The link at the end of a checkout reminder."""
+    check_not_limited("token", request)
+    if not leads.stop(db, data.token, datetime.datetime.utcnow()):
+        failure_limiter.fail(f"token:{client_ip(request)}")
+        raise HTTPException(status_code=404, detail="Link inválido")
+    db.commit()
+    return {"message": "Pronto: você não recebe mais estes emails"}
 
 @app.post("/api/marketplace/{slug}/redeem")
 def redeem_promo(slug: str, data: promos.RedeemIn, request: Request, current_user: models.User = Depends(get_current_user),
@@ -1846,10 +1927,14 @@ def redeem_promo(slug: str, data: promos.RedeemIn, request: Request, current_use
     client_only(current_user)
     check_not_limited("promo", request)
     listing = published_listing(slug, db)
+    if not data.risk_ack:
+        raise HTTPException(status_code=422, detail="Confirme que entende os riscos da cópia para continuar")
     if mailer.enabled() and current_user.email_verified_at is None:  # A throwaway address must not use a campaign up
         raise HTTPException(status_code=403, detail="Confirme seu email para usar o código: o link está na sua caixa de entrada")
+    now = datetime.datetime.utcnow()
     try:
-        lic = promos.redeem(db, listing, current_user, data.code, datetime.datetime.utcnow())
+        lic = promos.redeem(db, listing, current_user, data.code, now, risk_ack_at=now)
+        marketplace.convert_leads(db, current_user.email, listing.id, now)
         db.commit()
     except promos.PromoError as e:
         db.rollback()
@@ -1883,7 +1968,9 @@ def renew_my_license(license_id: int, data: Optional[RenewIn] = None, current_us
     plans = marketplace.active_plans(listing)
     if plan_id is None and len(plans) == 1:  # A license from a launch code had no plan: the only one there is
         plan_id = plans[0].id
-    return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login, plan_id=plan_id), current_user, db)
+    # The same copy going on, not a new decision to copy: the checkout asked about the risk when it began
+    return subscribe(listing.slug, marketplace.SubscriptionIn(mt5_login=lic.client_mt5_login, plan_id=plan_id, risk_ack=True),
+                     current_user, db)
 
 @app.post("/me/subscriptions/{subscription_id}/checkout")
 def open_checkout(subscription_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

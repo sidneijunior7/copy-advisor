@@ -31,9 +31,11 @@ class User(Base):
     password_changed_at = Column(DateTime, nullable=True) # Sessions that began before it are over
     stripe_customer_id = Column(String(64), nullable=True) # The client's customer in Stripe (payments.py)
     cpf = Column(String(11), unique=True, index=True, nullable=True) # Digits only, collected during checkout
-    broker = Column(String(32), nullable=True) # Homologated broker chosen at checkout (XP, Clear, Rico, Genial, none)
+    broker = Column(String(32), nullable=True) # Broker the client copies on (XP, Clear, Rico, Genial, other, none)
+    broker_other = Column(String(60), nullable=True) # Its name when the client picked "other"
     advisor = Column(String(120), nullable=True) # Investment advisor/office name when the client has one
     advisor_unknown = Column(Boolean, nullable=False, default=False) # True when the client picked "Não sei"
+    terms_accepted_at = Column(DateTime, nullable=True) # Sign-up showed the Terms of Use and the Privacy Policy
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
@@ -188,11 +190,33 @@ class Subscription(Base):
     stripe_period_end = Column(DateTime) # The paid period's end, as Stripe last said
     stripe_cancel_at_period_end = Column(Boolean, nullable=False, default=False) # Cancelled: ends with the period
     wants_hosting = Column(Boolean, nullable=False, default=False) # Chosen in the checkout wizard: cloud hosting
+    risk_ack_at = Column(DateTime, nullable=True) # The client confirmed it understands the risk of copying
 
     listing = relationship("Listing")
     plan = relationship("ListingPlan")
     client = relationship("User")
     license = relationship("License")
+
+class CheckoutLead(Base):
+    """An email given in the checkout before an account: the simulation goes to it if the visitor stops halfway, and
+    one reminder after (server.watch_checkout_leads). Nothing goes once it subscribes or asks to stop."""
+    __tablename__ = "checkout_leads"
+    __table_args__ = (UniqueConstraint("email", "listing_id", name="uq_checkout_leads_email_listing"),)
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False, index=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False)
+    lots = Column(Float, nullable=True) # The contracts chosen in the simulator
+    wants_hosting = Column(Boolean, nullable=True)
+    step = Column(String(32), nullable=True) # The last checkout step the visitor reached
+    token = Column(String(64), nullable=False, unique=True) # In the emails' links: stop sending
+    reminders = Column(Integer, nullable=False, default=0) # Emails sent (server.LEAD_REMINDERS)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow) # Last seen in the checkout
+    converted_at = Column(DateTime, nullable=True) # Subscribed or used a code
+    stopped_at = Column(DateTime, nullable=True) # Asked for no more emails
+
+    listing = relationship("Listing")
 
 class PromoCode(Base):
     """A launch campaign's code: whoever has it gets the listing's portfolio free for some days, once (promos.py)."""

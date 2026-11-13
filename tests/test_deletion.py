@@ -43,9 +43,9 @@ def test_a_portfolio_goes_only_once_no_client_is_left(client):
     assert client.post(f"/portfolios/{portfolio_id}/listing/promos", headers=mgr,
                        json={"code": "SAIR", "free_days": 30}).status_code == 200
     cli, _ = client_headers(client)
-    lic = client.post(f"/api/marketplace/{listing['slug']}/redeem", headers=cli, json={"code": "SAIR"}).json()
+    lic = client.post(f"/api/marketplace/{listing['slug']}/redeem", headers=cli, json={"risk_ack": True, "code": "SAIR"}).json()
     waiting, _ = client_headers(client)
-    request = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=waiting, json={}).json()
+    request = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=waiting, json={"risk_ack": True}).json()
 
     _, intruder = make_manager()
     assert client.get(f"/portfolios/{portfolio_id}/deletion", headers=intruder).status_code == 404

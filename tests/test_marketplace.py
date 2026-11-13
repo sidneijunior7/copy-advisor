@@ -91,11 +91,11 @@ def test_subscription_approved_creates_the_linked_license_and_renewal_extends_it
     _, mgr, portfolio_id, listing = published(client, title=f"Assinatura {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
     login = uuid.uuid4().int % 10**8
-    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=mgr, json={"mt5_login": login}).status_code == 403
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login, "note": "Paguei"})
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=mgr, json={"risk_ack": True, "mt5_login": login}).status_code == 403
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": login, "note": "Paguei"})
     assert r.status_code == 200 and r.json()["status"] == "pending" and r.json()["kind"] == "new"
     assert r.json()["listing"]["checkout_url"] == LISTING["checkout_url"]
-    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login}).status_code == 409
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": login}).status_code == 409
 
     [pending] = client.get("/me/subscriptions", headers=mgr, params={"status_filter": "pending"}).json()
     assert pending["client"]["name"] == "Cliente" and pending["note"] == "Paguei"
@@ -121,9 +121,9 @@ def test_buy_without_the_account_and_connect_it_on_the_license(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Sem conta {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
     other, _ = client_headers(client)
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True})
     assert r.status_code == 200 and r.json()["mt5_login"] is None and r.json()["kind"] == "new"
-    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={}).status_code == 409
+    assert client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True}).status_code == 409
     client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={})
     [lic] = client.get("/me/licenses", headers=cli).json()["licenses"]
     assert lic["mt5_login"] is None and lic["valid"]
@@ -132,7 +132,7 @@ def test_buy_without_the_account_and_connect_it_on_the_license(client):
     assert client.post(f"/me/licenses/{lic['id']}/renew", headers=cli).status_code == 409
 
     login = uuid.uuid4().int % 10**8
-    taken = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"mt5_login": login}).json()
+    taken = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"risk_ack": True, "mt5_login": login}).json()
     client.post(f"/subscriptions/{taken['id']}/approve", headers=mgr, json={})
     assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login}).status_code == 409
     assert client.put(f"/me/licenses/{lic['id']}/account", headers=other, json={"mt5_login": login + 1}).status_code == 404
@@ -147,9 +147,9 @@ def test_a_master_account_is_neither_bought_for_nor_connected(client):
     cli, _ = client_headers(client)
     login = uuid.uuid4().int % 10**8
     master_runs_on(manager_id, login)
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": login})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": login})
     assert r.status_code == 409 and "conta de um Master" in r.json()["detail"]
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True})
     client.post(f"/subscriptions/{r.json()['id']}/approve", headers=mgr, json={})
     [lic] = client.get("/me/licenses", headers=cli).json()["licenses"]
     assert client.put(f"/me/licenses/{lic['id']}/account", headers=cli, json={"mt5_login": login}).status_code == 409
@@ -159,17 +159,17 @@ def test_reject_cancel_and_someone_elses_account(client):
     _, mgr, portfolio_id, listing = published(client, title=f"Recusa {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
     other, _ = client_headers(client)
-    a = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 111}).json()
-    b = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 222}).json()
+    a = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": 111}).json()
+    b = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": 222}).json()
     r = client.post(f"/subscriptions/{a['id']}/reject", headers=mgr, json={"note": "Conta errada"})
     assert r.json()["status"] == "rejected" and r.json()["decision_note"] == "Conta errada"
     assert client.post(f"/me/subscriptions/{b['id']}/cancel", headers=other).status_code == 404
     assert client.post(f"/me/subscriptions/{b['id']}/cancel", headers=cli).json()["status"] == "cancelled"
     assert client.post(f"/subscriptions/{b['id']}/approve", headers=mgr, json={}).status_code == 409
     # An account already licensed to another client cannot be taken over by asking for it
-    c = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 333}).json()
+    c = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": 333}).json()
     client.post(f"/subscriptions/{c['id']}/approve", headers=mgr, json={})
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"mt5_login": 333})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=other, json={"risk_ack": True, "mt5_login": 333})
     assert r.status_code == 409
 
 
@@ -178,9 +178,9 @@ def test_cancel_and_ask_again_is_limited_per_day(client, monkeypatch):
     cli, _ = client_headers(client)
     monkeypatch.setattr(server, "subscribe_limiter", server.FailureLimiter(2, 86400))
     for _ in range(2):
-        sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 444}).json()
+        sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": 444}).json()
         client.post(f"/me/subscriptions/{sub['id']}/cancel", headers=cli)
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"mt5_login": 444})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True, "mt5_login": 444})
     assert r.status_code == 429
 
 
@@ -207,7 +207,7 @@ def test_a_request_without_an_account_approved_twice_keeps_one_license(client):
     pending twice) extends its license instead of making another one."""
     _, _, portfolio_id, listing = published(client, title=f"Sem conta {uuid.uuid4().hex[:6]}")
     cli, _ = client_headers(client)
-    sub_id = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={}).json()["id"]
+    sub_id = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli, json={"risk_ack": True}).json()["id"]
     now = datetime.datetime.utcnow()
     with database.SessionLocal() as db:
         sub = db.get(models.Subscription, sub_id)
@@ -239,12 +239,12 @@ def test_checkout_email_check_cpf_onboarding_and_hosting_choice(client, fresh_li
 
     # Invalid CPFs are rejected at sign-up
     for bad_cpf in ("111.111.111-11", "123.456.789-00", "12345"):
-        r = client.post("/register", json={"email": email, "password": "s3nha-forte", "name": "João", "cpf": bad_cpf})
+        r = client.post("/register", json={"terms_accepted": True, "email": email, "password": "s3nha-forte", "name": "João", "cpf": bad_cpf})
         assert r.status_code == 422, bad_cpf
 
     cpf = _valid_cpf(str(uuid.uuid4().int)[:9])
     formatted_cpf = f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
-    r = client.post("/register", json={
+    r = client.post("/register", json={"terms_accepted": True,
         "email": email, "password": "s3nha-forte", "name": "João Silva",
         "cpf": formatted_cpf, "broker": "XP", "advisor": "EQI Investimentos", "advisor_unknown": False,
     })
@@ -253,7 +253,7 @@ def test_checkout_email_check_cpf_onboarding_and_hosting_choice(client, fresh_li
     assert client.post("/auth/email-check", json={"email": email.upper()}).json() == {"exists": True}
 
     # Duplicate CPF is rejected on another account
-    r_dup = client.post("/register", json={
+    r_dup = client.post("/register", json={"terms_accepted": True,
         "email": f"other_{uuid.uuid4().hex[:8]}@cliente.com", "password": "s3nha-forte", "cpf": cpf,
     })
     assert r_dup.status_code == 409
@@ -262,7 +262,7 @@ def test_checkout_email_check_cpf_onboarding_and_hosting_choice(client, fresh_li
     assert me["cpf"] == cpf and me["broker"] == "XP" and me["advisor"] == "EQI Investimentos" and not me["advisor_unknown"]
 
     # Subscribing through the checkout wizard records wants_hosting and updates broker/advisor when changed
-    sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=headers, json={
+    sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=headers, json={"risk_ack": True,
         "wants_hosting": True, "broker": "Clear", "advisor_unknown": True,
     }).json()
     assert sub["wants_hosting"] is True

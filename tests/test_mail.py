@@ -48,7 +48,7 @@ def test_buy_before_confirming_the_email_but_confirm_before_copying(client, outb
     [verify] = outbox
     assert verify["to"] == email and "/verificar-email?token=" in verify["body"]
     assert client.get("/me", headers=me).json()["email_verified"] is False
-    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"note": "Oi"})
+    r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"risk_ack": True, "note": "Oi"})
     assert r.status_code == 200 and r.json()["mt5_login"] is None
     notice = outbox[-1]
     assert notice["subject"].startswith("Novo pedido de assinatura") and "None" not in notice["body"] and "Oi" in notice["body"]

@@ -247,3 +247,36 @@ def send_decision(sub: models.Subscription):
     if sub.decision_note and sub.status == "approved":
         body += f"\nMensagem do gestor: {sub.decision_note}\n"
     send(client.email, subject, body)
+
+
+def _money(value: float, currency: str) -> str:
+    text = f"{abs(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    symbol = {"BRL": "R$", "USD": "US$"}.get(currency, currency)
+    return f"{'-' if value < 0 else ''}{symbol} {text}"
+
+
+def send_checkout_lead(lead: models.CheckoutLead, which: int, step: Optional[dict], days: int, currency: str):
+    """A visitor who gave the email in the checkout and stopped: 0, the simulation it made; 1, one reminder."""
+    listing = lead.listing
+    lots = step["lots"] if step else lead.lots
+    resume = f"{public_url()}/assinar/{listing.slug}" + (f"?contratos={lots:g}" if lots else "")
+    stop = f"{public_url()}/parar-emails?token={lead.token}"
+    contracts = f"{lots:g} {'contrato' if lots == 1 else 'contratos'}" if lots else None
+    if which == 0:
+        subject = f"Sua simulação de {listing.title}"
+        lines = [f"Você simulou {listing.title}{' com ' + contracts if contracts else ''} no Trademetric Mirror.", ""]
+        if step:
+            months = round(days / 30)
+            lines += [f"Nos últimos {months} meses, com {contracts}:",
+                      f"- Resultado das operações fechadas: {_money(step['simulated_profit'], currency)}",
+                      f"- Maior queda no período: {_money(-step['max_drawdown'], currency)}",
+                      f"- Capital sugerido pelo gestor: {_money(step['recommended_capital'], currency)}",
+                      "", "Antes de custos (corretagem, emolumentos, slippage e a mensalidade).", ""]
+        lines += [f"Para continuar de onde parou: {resume}"]
+    else:
+        subject = f"Ainda quer copiar {listing.title}?"
+        lines = [f"Você começou a assinar {listing.title}{' com ' + contracts if contracts else ''} e parou no meio.",
+                 "", f"Sua simulação continua aqui: {resume}"]
+    lines += ["", "Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.",
+              "", f"Não quer mais receber estes emails? {stop}"]
+    send(lead.email, subject, "\n".join(lines) + "\n")

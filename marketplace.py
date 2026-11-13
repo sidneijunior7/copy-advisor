@@ -16,6 +16,7 @@ import unicodedata
 from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import backtest
@@ -25,12 +26,13 @@ import models
 import performance
 
 MARKETS = ("B3", "Forex", "Cripto", "Índices", "Commodities")
-BROKERS = ("XP", "Clear", "Rico", "Genial", "none")
-BrokerChoice = Literal["XP", "Clear", "Rico", "Genial", "none"]
+BROKERS = ("XP", "Clear", "Rico", "Genial", "other", "none")
+BrokerChoice = Literal["XP", "Clear", "Rico", "Genial", "other", "none"]
 PUBLIC_DAYS = 90  # The period the catalog shows
 SIMULATION_DAYS = 180  # The default period for the checkout contract simulator
 CACHE_SECONDS = 300  # Public performance is computed at most this often per listing and period
 MAX_PENDING_PER_CLIENT = 10
+POPULAR_MIN = 3  # Paid subscriptions a plan needs before the simulator calls it the most chosen
 CURVE_POINTS = 40  # Sparkline of a catalog card
 
 SLUG = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -61,14 +63,46 @@ class ListingIn(BaseModel):
     show_backtest: bool = False  # The declared backtest from a linked Trademetric Dash portfolio
 
 
-class SubscriptionIn(BaseModel):
+class BrokerIn(BaseModel):
+    """Where the client's MT5 account is: asked when activating the copy, after paying."""
+    broker: Optional[BrokerChoice] = None
+    broker_other: Optional[str] = Field(default=None, max_length=60, pattern=hosting.ONE_LINE)  # With "other"
+    advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
+    advisor_unknown: Optional[bool] = None
+
+
+class SubscriptionIn(BrokerIn):
     mt5_login: Optional[int] = Field(default=None, gt=0, le=10**12)  # None: connected on the license afterwards
     plan_id: Optional[int] = None  # Required when the listing has plans
     note: Optional[str] = Field(default=None, max_length=500)
     wants_hosting: bool = False
-    broker: Optional[BrokerChoice] = None
-    advisor: Optional[str] = Field(default=None, max_length=120, pattern=hosting.ONE_LINE)
-    advisor_unknown: Optional[bool] = None
+    risk_ack: bool = False  # Required: the client read that copying can lose money
+
+
+class LeadIn(BaseModel):
+    """The email the checkout asks right after the simulator, before any account."""
+    email: str = Field(min_length=3, max_length=255)
+    lots: Optional[float] = Field(default=None, gt=0, le=1000)
+    wants_hosting: Optional[bool] = None
+    step: Optional[str] = Field(default=None, max_length=32, pattern=r"^[a-z_]+$")
+
+
+def apply_broker(user: models.User, data: BrokerIn):
+    """Only what the request brings changes: the checkout and the activation each send their part."""
+    if data.broker is not None:
+        user.broker = data.broker
+        user.broker_other = ((data.broker_other or "").strip() or None) if data.broker == "other" else None
+    if data.advisor is not None or data.advisor_unknown is not None:
+        user.advisor = (data.advisor or "").strip() or None
+        user.advisor_unknown = bool(data.advisor_unknown)
+
+
+def convert_leads(db: Session, email: str, listing_id: int, now: datetime.datetime):
+    """Whoever subscribed or used a code gets no more reminders about that listing."""
+    (db.query(models.CheckoutLead)
+     .filter(models.CheckoutLead.email == email.strip().lower(), models.CheckoutLead.listing_id == listing_id,
+             models.CheckoutLead.converted_at.is_(None))
+     .update({models.CheckoutLead.converted_at: now}, synchronize_session=False))
 
 
 class Decision(BaseModel):
@@ -223,6 +257,12 @@ def public_simulation(db: Session, listing: models.Listing, days: int, now: date
             unit_capital = round(max(s["max_drawdown"] * 3.0, 1000.0), 2)
         else:
             unit_capital = 1000.0
+        # The most chosen plan, only when enough clients paid for it: the badge must be true
+        counts = dict(db.query(models.Subscription.plan_id, func.count(models.Subscription.id))
+                      .filter(models.Subscription.listing_id == listing.id, models.Subscription.plan_id.isnot(None),
+                              models.Subscription.stripe_subscription_id.isnot(None))
+                      .group_by(models.Subscription.plan_id).all()) if plans else {}
+        popular = max(counts, key=counts.get) if counts and max(counts.values()) >= POPULAR_MIN else None
         if plans:
             steps = [{
                 "plan_id": p.id,
@@ -234,6 +274,7 @@ def public_simulation(db: Session, listing: models.Listing, days: int, now: date
                 "recommended_capital": round(unit_capital * p.max_lots, 2),
                 "simulated_profit": round(s["net"] * p.max_lots, 2),
                 "max_drawdown": round(s["max_drawdown"] * p.max_lots, 2),
+                "popular": p.id == popular,
             } for p in plans]
         else:
             tiers = sorted({base_lots, 1.0, 2.0, 3.0, 5.0, 10.0})

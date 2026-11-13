@@ -152,7 +152,7 @@ def paid_license(client, fake, plan=0, **body):
     mgr, listing = stripe_listing(client, fake)
     cli, _ = client_headers(client)
     sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli,
-                      json={"plan_id": listing["plans"][plan]["id"], **body}).json()
+                      json={"risk_ack": True, "plan_id": listing["plans"][plan]["id"], **body}).json()
     sid = client.post(f"/me/subscriptions/{sub['id']}/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
     event = fake.pay(sid)
     assert send(client, event).status_code == 200
@@ -199,11 +199,11 @@ def test_paying_approves_the_request_and_each_renewal_extends_the_license(client
     small, big = listing["plans"]
     cli, email = client_headers(client)
     url = f"/api/marketplace/{listing['slug']}/subscribe"
-    assert client.post(url, headers=cli, json={}).status_code == 422  # A plan first
-    sub = client.post(url, headers=cli, json={"plan_id": small["id"]}).json()
+    assert client.post(url, headers=cli, json={"risk_ack": True}).status_code == 422  # A plan first
+    sub = client.post(url, headers=cli, json={"risk_ack": True, "plan_id": small["id"]}).json()
     assert sub["listing"]["pay_online"] and sub["status"] == "pending"
     # Back from the Checkout, on another plan: the same request
-    again = client.post(url, headers=cli, json={"plan_id": big["id"]}).json()
+    again = client.post(url, headers=cli, json={"risk_ack": True, "plan_id": big["id"]}).json()
     assert again["id"] == sub["id"] and again["plan"]["id"] == big["id"]
     first = client.post(f"/me/subscriptions/{sub['id']}/checkout", headers=cli).json()["url"]
     second = client.post(f"/me/subscriptions/{sub['id']}/checkout", headers=cli).json()["url"]
@@ -308,7 +308,7 @@ def test_a_request_answered_by_hand_closes_its_checkout(client, fake):
     mgr, listing = stripe_listing(client, fake)
     cli, _ = client_headers(client)
     sub = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=cli,
-                      json={"plan_id": listing["plans"][0]["id"]}).json()
+                      json={"risk_ack": True, "plan_id": listing["plans"][0]["id"]}).json()
     sid = client.post(f"/me/subscriptions/{sub['id']}/checkout", headers=cli).json()["url"].rsplit("/", 1)[1]
     assert client.post(f"/subscriptions/{sub['id']}/reject", headers=mgr, json={}).status_code == 200
     assert fake.sessions[sid]["status"] == "expired"

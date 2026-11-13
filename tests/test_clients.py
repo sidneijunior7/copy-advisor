@@ -31,11 +31,12 @@ def fresh_limits(monkeypatch):
     server.failure_limiter.reset()
     server.signup_limiter.reset()
     server.email_check_limiter.reset()
+    server.lead_limiter.reset()
 
 
 def signup(client, email=None, password="s3nha-forte", name="Cliente"):
     email = email or f"{uuid.uuid4().hex[:10]}@cliente.com"
-    r = client.post("/register", json={"email": email, "password": password, "name": name})
+    r = client.post("/register", json={"terms_accepted": True, "email": email, "password": password, "name": name})
     return r, email
 
 

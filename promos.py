@@ -76,6 +76,7 @@ class PromoIn(PromoUpdate):
 
 class RedeemIn(BaseModel):
     code: str = Field(min_length=1, max_length=40)
+    risk_ack: bool = False  # Required, as when paying: free days copy real trades too
 
 
 # --- The manager's side ---
@@ -139,7 +140,8 @@ def has_usable(db: Session, listing: models.Listing, now: datetime.datetime) -> 
 
 # --- The client's side ---
 
-def redeem(db: Session, listing: models.Listing, user: models.User, code: str, now: datetime.datetime) -> models.License:
+def redeem(db: Session, listing: models.Listing, user: models.User, code: str, now: datetime.datetime,
+           risk_ack_at: Optional[datetime.datetime] = None) -> models.License:
     """The license of a code, still without account. Raises PromoError: 404 for a code the listing does not have
     (the caller counts it as a failed guess), 409 for one the client cannot use. The caller commits; two uses at
     once by the same client hit the unique constraint (IntegrityError)."""
@@ -171,7 +173,7 @@ def redeem(db: Session, listing: models.Listing, user: models.User, code: str, n
     db.add(lic)
     db.flush()
     db.add(models.Subscription(listing_id=listing.id, client_user_id=user.id, kind="promo", status="approved",
-                               license_id=lic.id, created_at=now, decided_at=now))
+                               license_id=lic.id, created_at=now, decided_at=now, risk_ack_at=risk_ack_at))
     db.add(models.PromoRedemption(promo_code_id=promo.id, portfolio_id=listing.portfolio_id, user_id=user.id,
                                   license_id=lic.id, free_days=promo.free_days, created_at=now))
     return lic

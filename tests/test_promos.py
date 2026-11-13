@@ -41,7 +41,7 @@ def codes(client, mgr, portfolio_id):
 
 
 def redeem(client, headers, slug, code):
-    return client.post(f"/api/marketplace/{slug}/redeem", headers=headers, json={"code": code})
+    return client.post(f"/api/marketplace/{slug}/redeem", headers=headers, json={"risk_ack": True, "code": code})
 
 
 def login():
@@ -134,7 +134,7 @@ def test_a_code_is_once_per_client_and_account_within_its_limits(client):
     # Someone who copies the portfolio already, a turned off code, an expired one, another listing's, none
     new_code(client, mgr, portfolio_id, code="SEMLIMITE")
     buyer, _ = client_headers(client)
-    sub = client.post(f"/api/marketplace/{slug}/subscribe", headers=buyer, json={}).json()
+    sub = client.post(f"/api/marketplace/{slug}/subscribe", headers=buyer, json={"risk_ack": True}).json()
     client.post(f"/subscriptions/{sub['id']}/approve", headers=mgr, json={})
     r = redeem(client, buyer, slug, "SEMLIMITE")
     assert r.status_code == 409 and "já tem uma licença" in r.json()["detail"]
