@@ -103,7 +103,7 @@ export default function ManagerMarketplace() {
         try {
             const res = await api.post<Listing>(`/portfolios/${item.portfolio.id}/listing/${publish ? 'publish' : 'unpublish'}`);
             replace(item.portfolio.id, res.data);
-            toast.success(publish ? 'Publicado no marketplace' : 'Saiu do marketplace', {
+            toast.success(publish ? 'Publicado na vitrine' : 'Saiu da vitrine', {
                 description: publish ? undefined : 'As licenças já vendidas continuam valendo.',
             });
         } catch (e) {
@@ -116,11 +116,11 @@ export default function ManagerMarketplace() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Marketplace"
+                title="Vitrine"
                 description="Publique seus portfólios para clientes novos. Eles veem o desempenho real e pedem a assinatura; você aprova em Assinaturas."
                 icon={<Store />}
             >
-                <Link to="/marketplace" target="_blank"><Button variant="outline" size="sm"><ExternalLink /> Ver o marketplace</Button></Link>
+                <Link to="/marketplace" target="_blank"><Button variant="outline" size="sm"><ExternalLink /> Ver a página pública</Button></Link>
             </PageHeader>
 
             <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">

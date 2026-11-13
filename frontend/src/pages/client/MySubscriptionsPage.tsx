@@ -64,7 +64,7 @@ export default function MySubscriptionsPage() {
                     <EmptyState
                         icon={<Store />}
                         title="Nenhuma assinatura paga online"
-                        description="Quando você assinar um portfólio no Marketplace com cartão, a assinatura aparece aqui."
+                        description="Quando você assinar um portfólio com cartão, a assinatura aparece aqui."
                     />
                 </div>
             ) : (

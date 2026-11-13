@@ -10,7 +10,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 // What goes with the portfolio, in one sentence
 const removes = (r: PortfolioDeletion['removes']) => [
-    r.listing && 'o anúncio do marketplace',
+    r.listing && 'o anúncio na vitrine',
     r.codes > 0 && plural(r.codes, 'código de lançamento', 'códigos de lançamento'),
     r.requests > 0 && plural(r.requests, 'pedido de assinatura', 'pedidos de assinatura'),
     r.licenses > 0 && plural(r.licenses, 'licença vencida ou revogada', 'licenças vencidas ou revogadas'),

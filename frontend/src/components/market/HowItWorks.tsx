@@ -46,14 +46,14 @@ export function HowItWorks() {
             <div className="pointer-events-none relative mx-auto max-w-6xl px-4 md:absolute md:inset-0 md:flex md:items-center">
                 <div className="pointer-events-auto -mt-6 max-w-xl space-y-3 md:mt-0">
                     <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
-                        As operações de gestores reais, copiadas automaticamente na sua conta
+                        As operações dos nossos portfólios, copiadas automaticamente na sua conta
                     </h1>
                     <p className="text-sm text-muted-foreground sm:text-base">
-                        Você escolhe quem copiar. Quando o gestor compra ou vende, a mesma ordem é feita na sua conta da corretora,
+                        Você escolhe o portfólio. Quando ele compra ou vende, a mesma ordem é feita na sua conta da corretora,
                         no tamanho que você definir.
                     </p>
                     <div className="flex gap-2 pt-2 [&>a]:flex-1 sm:[&>a]:flex-none [&_button]:px-3 [&_button]:text-sm sm:[&_button]:px-8 sm:[&_button]:text-base">
-                        <a href="#gestores"><Button size="lg" className="w-full sm:w-auto">Ver gestores <ArrowRight /></Button></a>
+                        <a href="#portfolios"><Button size="lg" className="w-full sm:w-auto">Ver portfólios <ArrowRight /></Button></a>
                         <a href="#duvidas"><Button size="lg" variant="ghost" className="w-full sm:w-auto">Dúvidas frequentes</Button></a>
                     </div>
                 </div>
@@ -106,7 +106,7 @@ export function Faq() {
                 ))}
             </div>
             <p className="text-center text-sm text-muted-foreground">
-                Pronto para começar? <a href="#gestores" className="font-medium text-primary underline-offset-4 hover:underline">Ver os gestores</a> e simule o seu plano.
+                Pronto para começar? <a href="#portfolios" className="font-medium text-primary underline-offset-4 hover:underline">Ver os portfólios</a> e simule o seu plano.
             </p>
         </section>
     );

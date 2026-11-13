@@ -242,7 +242,7 @@ def send_decision(sub: models.Subscription):
     else:
         body = (f"Seu pedido de {sub.listing.title}{account_of(sub)} foi recusado.\n"
                 + (f"\nMotivo: {sub.decision_note}\n" if sub.decision_note else "")
-                + f"\nDúvidas? Responda a quem vende o portfólio pelo marketplace: {public_url()}/marketplace/{sub.listing.slug}\n")
+                + f"\nDúvidas? Fale com quem vende o portfólio pela página dele: {public_url()}/marketplace/{sub.listing.slug}\n")
         subject = f"Pedido recusado: {sub.listing.title}"
     if sub.decision_note and sub.status == "approved":
         body += f"\nMensagem do gestor: {sub.decision_note}\n"

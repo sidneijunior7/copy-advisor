@@ -52,7 +52,7 @@ export default function AdminListings() {
 
     return (
         <div className="space-y-6">
-            <PageHeader title="Marketplace" description="Anúncios de todos os gestores. Suspender tira do ar; as licenças já vendidas continuam." icon={<Store />} />
+            <PageHeader title="Vitrine" description="Anúncios de todos os gestores. Suspender tira do ar; as licenças já vendidas continuam." icon={<Store />} />
             <Card flush>
                 {rows === null ? (
                     <p className="p-5 text-sm text-muted-foreground">Carregando...</p>

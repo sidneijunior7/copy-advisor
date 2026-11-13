@@ -193,7 +193,7 @@ export default function ListingPage() {
     if (missing) {
         return (
             <div className="panel">
-                <EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do marketplace." />
+                <EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do ar." />
             </div>
         );
     }
@@ -216,7 +216,7 @@ export default function ListingPage() {
     return (
         <div className="space-y-8 pb-20 lg:pb-0">
             <Link to="/marketplace" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="size-4" /> Marketplace
+                <ArrowLeft className="size-4" /> Portfólios
             </Link>
             <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3">
                 <div className="space-y-4 lg:col-span-2">

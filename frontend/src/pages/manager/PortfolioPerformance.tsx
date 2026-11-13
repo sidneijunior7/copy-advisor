@@ -73,7 +73,7 @@ export default function PortfolioPerformance() {
                     <div>
                         <h2 className="text-xl font-semibold">Backtest do Dash e resultado ao vivo</h2>
                         <p className="text-sm text-muted-foreground">
-                            Do portfólio vinculado ao Trademetric Dash. No marketplace, só aparece se o anúncio marcar "Mostrar o backtest do Trademetric Dash".
+                            Do portfólio vinculado ao Trademetric Dash. Na página pública do portfólio, só aparece se o anúncio marcar "Mostrar o backtest do Trademetric Dash".
                         </p>
                     </div>
                     <BacktestSection view={backtestView} />
@@ -84,7 +84,7 @@ export default function PortfolioPerformance() {
                     <div>
                         <h2 className="text-xl font-semibold">Como os seguidores copiaram</h2>
                         <p className="text-sm text-muted-foreground">
-                            O que as contas dos clientes conseguiram nas mesmas operações. No marketplace, só aparece a partir de um mínimo de seguidores.
+                            O que as contas dos clientes conseguiram nas mesmas operações. Na página pública do portfólio, só aparece a partir de um mínimo de seguidores.
                         </p>
                     </div>
                     <FollowerStatsView stats={followers} />

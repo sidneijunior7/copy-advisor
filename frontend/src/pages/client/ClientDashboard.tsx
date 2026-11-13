@@ -184,7 +184,7 @@ export default function ClientDashboard() {
                         <div className="flex flex-wrap gap-3 pt-2">
                             <Link to="/marketplace" className="w-full sm:w-auto">
                                 <Button size="lg" className="w-full shadow-lg shadow-primary/20">
-                                    <Store className="size-4" /> Ver gestores
+                                    <Store className="size-4" /> Ver portfólios
                                 </Button>
                             </Link>
                         </div>
@@ -194,7 +194,7 @@ export default function ClientDashboard() {
                 {/* Claim Access Code Section */}
                 <Card
                     title="Recebeu um código de acesso?"
-                    description="Se você assinou direto com um gestor, fora do Marketplace, informe o código que ele enviou."
+                    description="Se você assinou fora do site, informe o código que recebeu."
                     icon={<Ticket />}
                 >
                     <form onSubmit={handleClaim} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>

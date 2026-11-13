@@ -74,7 +74,7 @@ export default function ListingForm({ portfolioId, portfolioName, listing, onSav
                 show_backtest: data.show_backtest,
             });
             onSaved(res.data);
-            toast.success('Anúncio salvo', { description: res.data.status === 'published' ? 'Já aparece assim no marketplace.' : 'Publique quando estiver pronto.' });
+            toast.success('Anúncio salvo', { description: res.data.status === 'published' ? 'Já aparece assim na página de portfólios.' : 'Publique quando estiver pronto.' });
         } catch (e) {
             console.error(e);
             toast.error(apiError(e, 'Não foi possível salvar o anúncio. Confira os campos.'));

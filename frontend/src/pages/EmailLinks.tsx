@@ -149,7 +149,7 @@ export function StopEmails() {
         <AuthShell title="Emails da simulação" subtitle={state === 'checking' ? 'Um momento...' : ''}>
             {state === 'ok' && (
                 <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
-                    Pronto: você não recebe mais os emails sobre a simulação. <Link to="/marketplace" className={linkClass}>Ver o marketplace</Link></p>
+                    Pronto: você não recebe mais os emails sobre a simulação. <Link to="/marketplace" className={linkClass}>Ver os portfólios</Link></p>
             )}
             {state === 'failed' && (
                 <p className="flex items-start gap-2"><XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />

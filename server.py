@@ -2061,7 +2061,7 @@ def renew_my_license(license_id: int, data: Optional[RenewIn] = None, current_us
     listing = db.query(models.Listing).filter(models.Listing.portfolio_id == lic.portfolio_id,
                                               models.Listing.status == "published").first()
     if listing is None:
-        raise HTTPException(status_code=409, detail="Este portfólio não está no marketplace: renove com quem vendeu a licença")
+        raise HTTPException(status_code=409, detail="Este portfólio não está à venda no site: renove com quem vendeu a licença")
     account_required(lic)
     paid = stripe_subscriptions([lic.id], db).get(lic.id)
     if paid is not None and paid.stripe_status in payments.RENEWING:

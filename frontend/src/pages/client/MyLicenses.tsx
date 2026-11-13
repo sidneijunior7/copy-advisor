@@ -85,7 +85,7 @@ export default function MyLicenses() {
                     <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="space-y-3 border-t border-border p-4 sm:px-5">
-                    <p className="text-sm text-muted-foreground">Quem vendeu a cópia fora do Marketplace envia um código. Ele vale uma vez só.</p>
+                    <p className="text-sm text-muted-foreground">Quem vendeu a cópia fora do site envia um código. Ele vale uma vez só.</p>
                     <form onSubmit={handleSubmit(onClaim)} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
                         <div className="flex-1 space-y-2">
                             <Input
@@ -114,7 +114,7 @@ export default function MyLicenses() {
                     <EmptyState
                         icon={<KeyRound />}
                         title="Você ainda não copia ninguém"
-                        description="Escolha um gestor no Marketplace: depois de assinar, a cópia aparece aqui para você ativar."
+                        description="Escolha um portfólio em Portfólios: depois de assinar, a cópia aparece aqui para você ativar."
                         action={<Link to="/marketplace"><Button><Store /> Ver gestores</Button></Link>}
                     />
                 </div>

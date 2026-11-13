@@ -47,7 +47,7 @@ export default function MySubscriptions() {
 
     if (!rows || rows.length === 0) return null;
     return (
-        <Card title="Minhas assinaturas" description="Pedidos no marketplace. Pago online ou aprovado pelo gestor, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
+        <Card title="Minhas assinaturas" description="Pedidos de assinatura. Pago online ou aprovado pelo gestor, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
             <ul className="divide-y divide-border">
                 {rows.slice(0, 10).map(s => {
                     const status = SUBSCRIPTION_STATUS[s.status];

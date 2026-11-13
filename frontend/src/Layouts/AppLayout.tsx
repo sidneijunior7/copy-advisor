@@ -14,7 +14,7 @@ const CLIENT_TABS: NavItem[] = [
     { path: '/client', label: 'Início', icon: LayoutDashboard, end: true },
     { path: '/client/licenses', label: 'Minhas cópias', icon: KeyRound },
     { path: '/client/subscriptions', label: 'Pagamentos', icon: CreditCard },
-    { path: '/marketplace', label: 'Marketplace', icon: Store },
+    { path: '/marketplace', label: 'Portfólios', icon: Store },
 ];
 
 const navByRole: Record<string, NavSection[]> = {
@@ -38,7 +38,7 @@ const navByRole: Record<string, NavSection[]> = {
         {
             title: 'Vendas',
             items: [
-                { path: '/manager/marketplace', label: 'Marketplace', icon: Store },
+                { path: '/manager/marketplace', label: 'Vitrine', icon: Store },
                 { path: '/manager/subscriptions', label: 'Assinaturas', icon: Inbox },
             ],
         },
@@ -53,7 +53,7 @@ const navByRole: Record<string, NavSection[]> = {
         title: 'Administração',
         items: [
             { path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true },
-            { path: '/dev/marketplace', label: 'Marketplace', icon: Store },
+            { path: '/dev/marketplace', label: 'Vitrine', icon: Store },
             { path: '/dev/hosting', label: 'Hospedagem', icon: Server },
             { path: '/dev/education', label: 'Educacional', icon: GraduationCap },
         ],

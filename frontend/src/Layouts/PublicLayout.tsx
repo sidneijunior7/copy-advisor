@@ -14,7 +14,7 @@ export default function PublicLayout() {
                 <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4 sm:gap-4">
                     <Link to="/marketplace" className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
                         <span className="font-spartan text-xl font-bold leading-none sm:leading-normal">trademetric.</span>
-                        <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">Marketplace</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">Portfólios</span>
                     </Link>
                     <nav className="flex shrink-0 items-center gap-1 sm:gap-2">
                         <ThemeToggle />

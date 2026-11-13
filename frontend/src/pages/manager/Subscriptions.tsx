@@ -57,7 +57,7 @@ export default function Subscriptions() {
         <div className="space-y-6">
             <PageHeader
                 title="Assinaturas"
-                description="Pedidos do marketplace. Aprove quando o pagamento entrar: a licença é criada (ou renovada) já na conta do cliente."
+                description="Pedidos de assinatura. Aprove quando o pagamento entrar: a licença é criada (ou renovada) já na conta do cliente."
                 icon={<Inbox />}
             />
             <Card
@@ -75,7 +75,7 @@ export default function Subscriptions() {
                     <p className="px-5 pb-5 text-sm text-muted-foreground">Carregando...</p>
                 ) : shown.length === 0 ? (
                     <EmptyState icon={<Inbox />} title={filter === 'pending' ? 'Nenhum pedido esperando' : 'Nenhum pedido ainda'}
-                        description="Os pedidos chegam quando clientes assinam seus portfólios no marketplace." />
+                        description="Os pedidos chegam quando clientes assinam seus portfólios." />
                 ) : (
                     <Table stack>
                         <TableHeader>

@@ -195,10 +195,10 @@ export default function Catalog() {
     return (
         <div className="space-y-6 sm:space-y-8">
             {!user && <HowItWorks />}
-            <div id="gestores" className="flex scroll-mt-24 items-center justify-between gap-3">
+            <div id="portfolios" className="flex scroll-mt-24 items-center justify-between gap-3">
                 {user
-                    ? <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Gestores para copiar</h1>
-                    : <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Gestores para copiar</h2>}
+                    ? <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Portfólios para copiar</h1>
+                    : <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Portfólios para copiar</h2>}
                 <div className="flex shrink-0 gap-2 sm:hidden">
                     <IconSelect icon={<Filter />} label="Mercado" active={!!market} value={market} onChange={e => setMarket(e.target.value)}>
                         <option value="">Todos os mercados</option>
@@ -226,14 +226,14 @@ export default function Catalog() {
             )}
 
             {listings === null ? (
-                failed ? <p className="text-sm text-muted-foreground">Não foi possível carregar o marketplace.</p> : (
+                failed ? <p className="text-sm text-muted-foreground">Não foi possível carregar os portfólios.</p> : (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Carregando os portfólios">
                         {[0, 1, 2].map(i => <Skeleton key={i} className="h-80 rounded-xl" />)}
                     </div>
                 )
             ) : shown.length === 0 ? (
                 <div className="panel">
-                    <EmptyState icon={<Store />} title="Nenhum portfólio aqui ainda" description="Volte em breve: novos gestores publicam portfólios com frequência." />
+                    <EmptyState icon={<Store />} title="Nenhum portfólio aqui ainda" description="Volte em breve: novos portfólios estão a caminho." />
                 </div>
             ) : shelves.length > 1 ? (
                 <div className="space-y-8">

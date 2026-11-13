@@ -275,7 +275,7 @@ export default function CheckoutPage() {
     };
 
     if (missing) {
-        return <div className="px-4 py-10"><EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do marketplace." /></div>;
+        return <div className="px-4 py-10"><EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do ar." /></div>;
     }
     if (!listing || !tier) return <CheckoutSkeleton />;
 

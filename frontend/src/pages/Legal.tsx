@@ -179,8 +179,8 @@ export function TermsPage() {
 
             <Section n={2} title="O que é o serviço">
                 <p>
-                    O Mirror replica, na sua conta MetaTrader 5, as operações de um portfólio de estratégias que você escolhe no
-                    marketplace. A cópia é automática: quando o responsável pelo portfólio abre ou fecha uma operação, a mesma
+                    O Mirror replica, na sua conta MetaTrader 5, as operações de um portfólio de estratégias que você escolhe na
+                    plataforma. A cópia é automática: quando o responsável pelo portfólio abre ou fecha uma operação, a mesma
                     ordem é enviada à sua conta, no limite de contratos do seu plano.
                 </p>
                 <List>
@@ -216,7 +216,7 @@ export function TermsPage() {
                     <li><strong>O mercado é volátil</strong> e pode mudar depressa, sobretudo em períodos de instabilidade.</li>
                     <li><strong>Resultados passados não garantem resultados futuros.</strong> Os números exibidos e as simulações do checkout são históricos, anteriores a custos como corretagem, emolumentos, slippage e a mensalidade.</li>
                     <li><strong>Cada portfólio tem os seus riscos.</strong> A página do portfólio mostra o histórico, a maior queda e o capital sugerido pelo responsável. Leia antes de assinar.</li>
-                    <li><strong>Sobre os portfólios:</strong> eles são publicados pelos seus responsáveis. A Trademetric exibe o histórico registrado na plataforma e pode suspender um portfólio, mas não garante nenhum resultado.</li>
+                    <li><strong>Sobre os portfólios:</strong> eles são desenvolvidos e operados pela própria Trademetric. O histórico exibido é o registrado na plataforma e não é garantia de resultado.</li>
                 </List>
             </Section>
 
