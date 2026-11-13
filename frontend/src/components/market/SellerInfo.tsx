@@ -1,6 +1,6 @@
-import { BadgeCheck, Store } from 'lucide-react';
+import { Store } from 'lucide-react';
 import type { Seller } from '../../api';
-import { cn, formatDate, parseUtc } from '../../lib/utils';
+import { cn } from '../../lib/utils';
 
 // Who sells the portfolio: the trader, not the platform (Decreto 7.962/2013, art. 2º). Next to the price on the
 // portfolio's page and in the order of the checkout. Until the trader fills the seller in, only the public name
