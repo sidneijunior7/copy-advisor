@@ -1895,15 +1895,75 @@ def update_seller(data: marketplace.SellerIn, current_user: models.User = Depend
         document = auth.clean_document(data.document)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    current_user.seller_name = data.name.strip()
+    name, credential = data.name.strip(), (data.credential or "").strip() or None
+    # A check holds for one person and one credential: changing who or which sends it back to the admin
+    changed = (name, document, credential) != (current_user.seller_name, current_user.seller_document,
+                                               current_user.analyst_credential)
+    current_user.seller_name = name
     current_user.seller_document = document
     current_user.seller_address = data.address.strip()
     current_user.seller_email = data.email.strip().lower()
-    current_user.analyst_credential = (data.credential or "").strip() or None
+    current_user.analyst_credential = credential
+    to_check = False
+    if credential is None:
+        current_user.credential_status = None
+    elif changed or current_user.credential_status is None:
+        current_user.credential_status, to_check = "pending", True
+    if credential is None or to_check:
+        current_user.credential_checked_at = current_user.credential_checked_by = current_user.credential_note = None
     db.commit()
     marketplace.clear_cache()
-    logger.info(f"Manager {current_user.id} updated the seller details")
+    logger.info(f"Manager {current_user.id} updated the seller details (credential {current_user.credential_status})")
+    if to_check:
+        admins = [u.email for u in db.query(models.User).filter(models.User.role == "TDM_DEV", models.User.status == "active")]
+        mailer.send_credential_to_check(admins, current_user)
     return my_account(current_user)
+
+@app.get("/admin/credentials")
+def list_credentials(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The traders' analyst credentials, the ones to check first, with what the admin needs to find them on APIMEC's
+    list."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    traders = (db.query(models.User)
+               .filter(models.User.role == "MANAGER", models.User.analyst_credential.isnot(None)).all())
+    order = {"pending": 0, "rejected": 1, "verified": 2}
+    traders.sort(key=lambda u: (order.get(u.credential_status, 0), (u.seller_name or u.email).lower()))
+    published = dict(db.query(models.Portfolio.user_id, func.count(models.Listing.id))
+                     .join(models.Listing, models.Listing.portfolio_id == models.Portfolio.id)
+                     .filter(models.Listing.status == "published").group_by(models.Portfolio.user_id).all())
+    return {"list_url": marketplace.CREDENTIAL_LIST, "traders": [{
+        "id": u.id, "email": u.email, "public_name": u.name, "seller_name": u.seller_name,
+        "document": marketplace.format_document(u.seller_document) if u.seller_document else None,
+        "credential": u.analyst_credential, "status": u.credential_status or "pending",
+        "checked_at": u.credential_checked_at, "note": u.credential_note, "published": published.get(u.id, 0),
+    } for u in traders]}
+
+@app.post("/admin/users/{user_id}/credential")
+def decide_credential(user_id: int, data: marketplace.CredentialDecision,
+                      current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The admin found the trader on APIMEC's list, or did not. Refusing (or revoking) takes its portfolios out of
+    the vitrine, as unpublishing does: licenses already sold keep working."""
+    if current_user.role != "TDM_DEV": raise HTTPException(status_code=403)
+    user = db.get(models.User, user_id)
+    if user is None or user.role != "MANAGER" or not user.analyst_credential:
+        raise HTTPException(status_code=404, detail="Trader sem credenciamento informado")
+    note = (data.note or "").strip() or None
+    if not data.verified and not note:
+        raise HTTPException(status_code=422, detail="Diga o motivo: o trader recebe por email")
+    now = datetime.datetime.utcnow()
+    user.credential_status = "verified" if data.verified else "rejected"
+    user.credential_checked_at, user.credential_checked_by, user.credential_note = now, current_user.id, note
+    withdrawn = 0
+    if not data.verified:
+        for listing in (db.query(models.Listing).join(models.Portfolio, models.Listing.portfolio_id == models.Portfolio.id)
+                        .filter(models.Portfolio.user_id == user.id, models.Listing.status == "published")):
+            listing.status, withdrawn = "draft", withdrawn + 1
+    db.commit()
+    marketplace.clear_cache()
+    logger.info(f"Credential of manager {user.id} {user.credential_status} by admin {current_user.id}"
+                f"{f'; {withdrawn} listing(s) withdrawn' if withdrawn else ''}")
+    mailer.send_credential_decision(user)
+    return {"status": user.credential_status, "checked_at": now, "note": note, "withdrawn": withdrawn}
 
 def published_listing(slug: str, db: Session) -> models.Listing:
     listing = db.query(models.Listing).filter(models.Listing.slug == slug, models.Listing.status == "published").first()
@@ -2305,6 +2365,9 @@ def publish_listing(portfolio_id: int, current_user: models.User = Depends(get_c
         raise HTTPException(status_code=409, detail="Preencha seu nome público no perfil antes de publicar")
     if not marketplace.seller_complete(current_user):  # The buyer has to see who sells (Decreto 7.962/2013)
         raise HTTPException(status_code=409, detail="Preencha os dados do vendedor na Vitrine antes de publicar")
+    blocker = marketplace.credential_blocker(current_user)  # Only credentialed traders are copied (Ofício 3/2025)
+    if blocker:
+        raise HTTPException(status_code=409, detail=blocker)
     listing.status = "published"
     listing.published_at = listing.published_at or datetime.datetime.utcnow()
     db.commit()

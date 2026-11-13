@@ -128,6 +128,32 @@ class SellerIn(BaseModel):
     credential: Optional[str] = Field(default=None, max_length=60, pattern=hosting.ONE_LINE)
 
 
+# APIMEC's public list of credentialed analysts (natural persons): name, certificate number and status, no search.
+# The admin checks a trader there before it can publish (Ofício-Circular CVM/SIN 3/2025: the platform must make sure
+# every trader copied is credentialed)
+CREDENTIAL_LIST = "https://www.apimecbrasil.com.br/autorregulacao/analistas-de-valores-mobiliarios-pessoa-natural/"
+
+
+class CredentialDecision(BaseModel):
+    verified: bool
+    note: Optional[str] = Field(default=None, max_length=255, pattern=hosting.ONE_LINE)  # Required to refuse
+
+
+def credential_verified(user: Optional[models.User]) -> bool:
+    return bool(user and user.analyst_credential and user.credential_status == "verified")
+
+
+def credential_blocker(user: models.User) -> Optional[str]:
+    """Why the trader cannot publish yet, in its own words, or None."""
+    if not user.analyst_credential:
+        return "Informe o seu credenciamento de analista nos dados do vendedor antes de publicar"
+    if user.credential_status == "rejected":
+        return "Seu credenciamento não foi confirmado: " + (user.credential_note or "fale com o suporte")
+    if user.credential_status != "verified":
+        return "Seu credenciamento de analista ainda está em conferência pela Trademetric"
+    return None
+
+
 def seller_complete(user: Optional[models.User]) -> bool:
     return bool(user and user.seller_name and user.seller_document and user.seller_address and user.seller_email)
 
@@ -143,16 +169,20 @@ def seller_own(user: models.User) -> Optional[dict]:
     if not any((user.seller_name, user.seller_document, user.seller_address, user.seller_email, user.analyst_credential)):
         return None
     return {"name": user.seller_name, "document": user.seller_document, "address": user.seller_address,
-            "email": user.seller_email, "credential": user.analyst_credential, "complete": seller_complete(user)}
+            "email": user.seller_email, "credential": user.analyst_credential, "complete": seller_complete(user),
+            "credential_status": user.credential_status, "credential_note": user.credential_note,
+            "credential_checked_at": user.credential_checked_at}
 
 
 def seller_public(user: Optional[models.User]) -> Optional[dict]:
-    """The seller as the buyer sees it, only once complete. The credential is the trader's own statement."""
+    """The seller as the buyer sees it, only once complete. The credential says whether the platform checked it."""
     if not seller_complete(user):
         return None
     return {"name": user.seller_name, "document": format_document(user.seller_document),
             "document_kind": "CNPJ" if len(user.seller_document) == 14 else "CPF",
-            "address": user.seller_address, "email": user.seller_email, "credential": user.analyst_credential}
+            "address": user.seller_address, "email": user.seller_email, "credential": user.analyst_credential,
+            "credential_verified": credential_verified(user),
+            "credential_checked_at": user.credential_checked_at if credential_verified(user) else None}
 
 
 class Profile(BaseModel):

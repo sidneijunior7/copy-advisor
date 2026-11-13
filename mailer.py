@@ -311,3 +311,26 @@ def send_account_closed(email: str, name: Optional[str]):
          "lei manda guardar ficam arquivados pelo prazo legal e depois são eliminados, como diz a Política de "
          f"Privacidade: {public_url()}/privacidade\n\n"
          f"Dúvidas: {privacy_address()}\n")
+
+
+def send_credential_to_check(admins: List[str], user: models.User):
+    """A trader typed or changed its analyst credential: an admin checks it on APIMEC's list."""
+    for to in admins:
+        send(to, f"Credenciamento para conferir: {user.seller_name or user.email}",
+             f"{user.seller_name or user.email} ({user.email}) informou o credenciamento de analista "
+             f"\"{user.analyst_credential}\".\n\nConfira o nome, o número e a situação na lista da APIMEC e registre em "
+             f"{public_url()}/dev (Credenciamentos).\n")
+
+
+def send_credential_decision(user: models.User):
+    if user.credential_status == "verified":
+        send(user.email, "Seu credenciamento foi conferido",
+             f"Olá{', ' + user.name if user.name else ''}.\n\nConferimos o seu credenciamento de analista "
+             f"({user.analyst_credential}) na lista da APIMEC. Você já pode publicar os seus portfólios na Vitrine: "
+             f"{public_url()}/manager/marketplace\n")
+    else:
+        send(user.email, "Não conseguimos confirmar o seu credenciamento",
+             f"Olá{', ' + user.name if user.name else ''}.\n\nNão conseguimos confirmar o credenciamento de analista "
+             f"informado ({user.analyst_credential}).\n\nMotivo: {user.credential_note}\n\n"
+             "Enquanto isso, os seus portfólios ficam fora da vitrine, e as licenças já vendidas continuam valendo. "
+             f"Corrija os dados do vendedor em {public_url()}/manager/marketplace e a conferência é feita de novo.\n")

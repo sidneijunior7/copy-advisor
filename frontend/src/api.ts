@@ -492,8 +492,15 @@ export type BrokerChoice = typeof BROKERS[number];
 
 // Who sells a trader's portfolios (Decreto 7.962/2013): what the buyer sees, and what the trader typed. The
 // credential is the trader's own statement until the platform checks it
-export type Seller = { name: string; document: string; document_kind: 'CPF' | 'CNPJ'; address: string; email: string; credential: string | null };
-export type SellerOwn = { name: string | null; document: string | null; address: string | null; email: string | null; credential: string | null; complete: boolean };
+export type Seller = {
+    name: string; document: string; document_kind: 'CPF' | 'CNPJ'; address: string; email: string; credential: string | null;
+    credential_verified: boolean; credential_checked_at: string | null; // Checked by the platform on APIMEC's list
+};
+export type CredentialStatus = 'pending' | 'verified' | 'rejected';
+export type SellerOwn = {
+    name: string | null; document: string | null; address: string | null; email: string | null; credential: string | null; complete: boolean;
+    credential_status: CredentialStatus | null; credential_note: string | null; credential_checked_at: string | null;
+};
 
 export type Me = {
     email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;

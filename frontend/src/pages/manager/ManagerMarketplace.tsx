@@ -13,6 +13,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Field, Input, Textarea } from '../../components/ui/Field';
 import { formatDocument } from '../../lib/cpf';
+import { formatDate, parseUtc } from '../../lib/utils';
 import { priceLabel } from '../../lib/money';
 import { apiError } from '../../lib/utils';
 
@@ -128,8 +129,8 @@ function SellerDetails({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
                 <Field label="E-mail de contato" htmlFor="seller-email" error={errors.email?.message} hint="Para os clientes falarem com você.">
                     <Input {...register('email', { required: 'Informe o e-mail', pattern: { value: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, message: 'E-mail inválido' } })} id="seller-email" type="email" />
                 </Field>
-                <Field label="Credenciamento de analista (opcional)" htmlFor="seller-credential" error={errors.credential?.message}
-                    hint="Ex.: CNPI 1234. Aparece como informado por você.">
+                <Field label="Credenciamento de analista na APIMEC" htmlFor="seller-credential" error={errors.credential?.message}
+                    hint={<CredentialHint seller={me.seller} />}>
                     <Input {...register('credential', { maxLength: { value: 60, message: 'Até 60 caracteres' } })} id="seller-credential" />
                 </Field>
                 <div className="flex justify-end">
@@ -138,6 +139,17 @@ function SellerDetails({ me, onSaved }: { me: Me; onSaved: (me: Me) => void }) {
             </form>
         </Card>
     );
+}
+
+// Where the credential's check stands: the trader publishes only once the platform found it on APIMEC's list
+function CredentialHint({ seller }: { seller: Me['seller'] }) {
+    const status = seller?.credential ? seller.credential_status : null;
+    if (status === 'verified') {
+        return <span className="text-success">Conferido{seller?.credential_checked_at ? ` em ${formatDate(parseUtc(seller.credential_checked_at))}` : ''}. Mudar o número, o nome ou o documento pede uma nova conferência.</span>;
+    }
+    if (status === 'rejected') return <span className="text-destructive">Não confirmado: {seller?.credential_note}. Corrija e salve para uma nova conferência.</span>;
+    if (status === 'pending') return <span className="text-warning">Em conferência pela Trademetric, na lista pública da APIMEC.</span>;
+    return <>O número do seu certificado (ex.: CNPI 1234). A Trademetric confere na lista pública da APIMEC antes de você publicar.</>;
 }
 
 // The manager's listings: one per portfolio, edited here and published when ready
@@ -181,10 +193,16 @@ export default function ManagerMarketplace() {
                 <Link to="/marketplace" target="_blank"><Button variant="outline" size="sm"><ExternalLink /> Ver a página pública</Button></Link>
             </PageHeader>
 
-            {me && !me.seller?.complete && (
+            {me && (!me.seller?.complete || me.seller.credential_status !== 'verified') && (
                 <p role="status" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
-                    <span>Preencha os <strong>dados do vendedor</strong> ao lado. Sem eles, o cliente não vê quem vende, e os portfólios não podem ser publicados.</span>
+                    <span>{!me.seller?.complete
+                        ? <>Preencha os <strong>dados do vendedor</strong> ao lado. Sem eles, o cliente não vê quem vende, e os portfólios não podem ser publicados.</>
+                        : !me.seller.credential
+                            ? <>Informe o seu <strong>credenciamento de analista</strong> nos dados do vendedor. Só traders credenciados publicam portfólios.</>
+                            : me.seller.credential_status === 'rejected'
+                                ? <>Seu credenciamento não foi confirmado: {me.seller.credential_note}. Corrija nos dados do vendedor.</>
+                                : <>Seu credenciamento está em conferência. Você publica portfólios assim que ele for confirmado.</>}</span>
                 </p>
             )}
 

@@ -45,8 +45,8 @@ def test_buy_before_confirming_the_email_but_confirm_before_copying(client, outb
     _, mgr, _, listing = published(client, title=f"Email {uuid.uuid4().hex[:6]}")
     r, email = signup(client)
     me = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    [verify] = outbox
-    assert verify["to"] == email and "/verificar-email?token=" in verify["body"]
+    [verify] = [m for m in outbox if m["to"] == email]  # Publishing the listing emailed the credential check too
+    assert "/verificar-email?token=" in verify["body"]
     assert client.get("/me", headers=me).json()["email_verified"] is False
     r = client.post(f"/api/marketplace/{listing['slug']}/subscribe", headers=me, json={"risk_ack": True, "note": "Oi"})
     assert r.status_code == 200 and r.json()["mt5_login"] is None

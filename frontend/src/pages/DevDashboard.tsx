@@ -10,6 +10,7 @@ import EmptyState from '../components/EmptyState';
 import KPICard from '../components/KPICard';
 import SlideRow from '../components/SlideRow';
 import ClosureRequests from '../components/ClosureRequests';
+import CredentialReview from '../components/CredentialReview';
 import PageHeader from '../components/PageHeader';
 import { Badge, type BadgeProps } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -83,6 +84,8 @@ export default function DevDashboard() {
                 <KPICard label="Ativos" value={activeCount} subValue="Com acesso liberado" icon={<UserCheck />} valueClassName="text-success" />
                 <KPICard label="Bloqueados" value={managers.length - activeCount} subValue="Congelados ou arquivados" icon={<Lock />} />
             </SlideRow>
+
+            <CredentialReview />
 
             <ClosureRequests />
 

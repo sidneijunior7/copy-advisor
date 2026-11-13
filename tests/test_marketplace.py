@@ -40,11 +40,22 @@ def set_seller(client, mgr, **changes):
     return r.json()
 
 
+def verified_seller(client, mgr):
+    """Seller details in, and the credential checked by an admin: what publishing needs."""
+    set_seller(client, mgr)
+    _, admin = make_manager(role="TDM_DEV")
+    trader_id = next(t["id"] for t in client.get("/admin/credentials", headers=admin).json()["traders"]
+                     if t["email"] == client.get("/me", headers=mgr).json()["email"])
+    r = client.post(f"/admin/users/{trader_id}/credential", headers=admin, json={"verified": True})
+    assert r.status_code == 200, r.text
+    return trader_id
+
+
 def published(client, title=LISTING["title"]):
     manager_id, mgr = make_manager()
     portfolio_id, _ = make_portfolio(manager_id, with_strategy=True)
     assert client.put("/me/profile", headers=mgr, json={"name": "Gestor Teste", "bio": "Opera índice"}).status_code == 200
-    set_seller(client, mgr)
+    verified_seller(client, mgr)
     r = client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr, json={**LISTING, "title": title})
     assert r.status_code == 200, r.text
     assert client.post(f"/portfolios/{portfolio_id}/listing/publish", headers=mgr).status_code == 200
@@ -322,7 +333,8 @@ def test_the_buyer_sees_who_sells_and_only_once_it_is_complete(client):
         assert client.put("/me/seller", headers=mgr, json={**SELLER, **bad}).status_code == 422, bad
     me = set_seller(client, mgr)
     assert me["seller"] == {"name": SELLER["name"], "document": "52998224725", "address": SELLER["address"],
-                            "email": "contato@trader.com", "credential": "CNPI 1234", "complete": True}
+                            "email": "contato@trader.com", "credential": "CNPI 1234", "complete": True,
+                            "credential_status": "pending", "credential_note": None, "credential_checked_at": None}
     # A company sells too, and the credential is optional
     assert set_seller(client, mgr, document="11.222.333/0001-81", credential=None)["seller"]["credential"] is None
     cli, _ = client_headers(client)
@@ -331,10 +343,69 @@ def test_the_buyer_sees_who_sells_and_only_once_it_is_complete(client):
 
     _, trader, _, listing = published(client, title=f"Vendedor {uuid.uuid4().hex[:6]}")
     detail = client.get(f"/api/marketplace/{listing['slug']}").json()
-    assert detail["seller"] == {"name": SELLER["name"], "document": "529.982.247-25", "document_kind": "CPF",
-                                "address": SELLER["address"], "email": "contato@trader.com", "credential": "CNPI 1234"}
+    seller = detail["seller"]
+    assert seller["credential_verified"] is True and seller["credential_checked_at"]
+    assert {k: v for k, v in seller.items() if not k.startswith("credential_")} == {
+        "name": SELLER["name"], "document": "529.982.247-25", "document_kind": "CPF",
+        "address": SELLER["address"], "email": "contato@trader.com", "credential": "CNPI 1234"}
     # Not in the catalog's list: the seller's document only where the buyer is about to contract
     catalog = client.get("/api/marketplace").json()
     assert all("seller" not in item for item in catalog)
     set_seller(client, trader, document="11.222.333/0001-81")
     assert client.get(f"/api/marketplace/{listing['slug']}").json()["seller"]["document"] == "11.222.333/0001-81"
+
+
+def test_only_a_checked_credential_publishes_and_a_refusal_takes_the_portfolios_down(client, monkeypatch):
+    import mailer
+    sent = []
+    monkeypatch.setattr(mailer, "send", lambda to, subject, body: sent.append((to, subject)))
+    manager_id, mgr = make_manager()
+    portfolio_id, _ = make_portfolio(manager_id, with_strategy=True)
+    assert client.put("/me/profile", headers=mgr, json={"name": "Trader Conferido"}).status_code == 200
+    assert client.put(f"/portfolios/{portfolio_id}/listing", headers=mgr,
+                      json={**LISTING, "title": f"Conferido {uuid.uuid4().hex[:6]}"}).status_code == 200
+    _, admin = make_manager(role="TDM_DEV")
+    admin_email = client.get("/me", headers=admin).json()["email"]
+    publish = lambda: client.post(f"/portfolios/{portfolio_id}/listing/publish", headers=mgr)  # noqa: E731
+
+    # Without a credential, and while it waits for the check
+    set_seller(client, mgr, credential=None)
+    assert client.get("/me", headers=mgr).json()["seller"]["credential_status"] is None
+    r = publish()
+    assert r.status_code == 409 and "Informe o seu credenciamento" in r.json()["detail"]
+    set_seller(client, mgr)
+    assert any(to == admin_email and "Credenciamento para conferir" in subject for to, subject in sent)
+    r = publish()
+    assert r.status_code == 409 and "em conferência" in r.json()["detail"]
+
+    listing = client.get("/admin/credentials", headers=admin).json()
+    assert listing["list_url"].startswith("https://www.apimecbrasil.com.br/")
+    row = next(t for t in listing["traders"] if t["id"] == manager_id)
+    assert row["status"] == "pending" and row["credential"] == "CNPI 1234" and row["document"] == "529.982.247-25"
+    assert client.get("/admin/credentials", headers=mgr).status_code == 403
+    assert client.post(f"/admin/users/{manager_id}/credential", headers=mgr, json={"verified": True}).status_code == 403
+    assert client.post(f"/admin/users/{manager_id}/credential", headers=admin, json={"verified": False}).status_code == 422
+
+    # Checked: it publishes, and the buyer sees it checked
+    r = client.post(f"/admin/users/{manager_id}/credential", headers=admin, json={"verified": True})
+    assert r.status_code == 200 and r.json()["status"] == "verified"
+    assert publish().status_code == 200
+    slug = next(i["listing"]["slug"] for i in client.get("/me/listings", headers=mgr).json() if i["portfolio"]["id"] == portfolio_id)
+    assert client.get(f"/api/marketplace/{slug}").json()["seller"]["credential_verified"] is True
+
+    # Editing the address keeps the check; another credential goes back to the admin, the portfolio stays up
+    set_seller(client, mgr, address="Avenida Paulista, 1000, São Paulo/SP")
+    assert client.get("/me", headers=mgr).json()["seller"]["credential_status"] == "verified"
+    set_seller(client, mgr, credential="CNPI 9999")
+    assert client.get("/me", headers=mgr).json()["seller"]["credential_status"] == "pending"
+    assert client.get(f"/api/marketplace/{slug}").json()["seller"]["credential_verified"] is False
+
+    # Refused: the reason goes to the trader, the portfolio leaves the vitrine, and it cannot come back
+    r = client.post(f"/admin/users/{manager_id}/credential", headers=admin,
+                    json={"verified": False, "note": "Número não consta na lista da APIMEC"})
+    assert r.status_code == 200 and r.json()["withdrawn"] == 1
+    assert client.get(f"/api/marketplace/{slug}").status_code == 404
+    trader_email = client.get("/me", headers=mgr).json()["email"]
+    assert any(to == trader_email and "Não conseguimos confirmar" in subject for to, subject in sent)
+    r = publish()
+    assert r.status_code == 409 and "Número não consta" in r.json()["detail"]

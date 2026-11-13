@@ -49,7 +49,13 @@ class User(Base):
     seller_document = Column(String(14), nullable=True) # CPF (11 digits) or CNPJ (14), digits only
     seller_address = Column(String(200), nullable=True)
     seller_email = Column(String(255), nullable=True) # Public contact for the buyers
-    analyst_credential = Column(String(60), nullable=True) # As the trader typed it (e.g. CNPI 1234): not checked yet
+    analyst_credential = Column(String(60), nullable=True) # As the trader typed it (e.g. CNPI 1234)
+    # The platform's check of that credential against APIMEC's public list (marketplace.CREDENTIAL_LIST): pending,
+    # verified or rejected. Changing the name, the document or the credential sends it back to pending
+    credential_status = Column(String(16), nullable=True)
+    credential_checked_at = Column(DateTime, nullable=True)
+    credential_checked_by = Column(Integer, nullable=True) # The admin who checked it
+    credential_note = Column(String(255), nullable=True) # Why it was refused, or what was seen when checked
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     strategies = relationship("Strategy", back_populates="owner")
