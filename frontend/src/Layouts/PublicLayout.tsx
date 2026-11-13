@@ -2,6 +2,7 @@ import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { Button } from '../components/ui/Button';
+import { PRIVACY_PATH, TERMS_PATH } from '../components/TermsNotice';
 
 // Pages anyone can open: the marketplace and the links sent by email
 export default function PublicLayout() {
@@ -33,6 +34,10 @@ export default function PublicLayout() {
             <footer className="border-t border-border px-4 py-6 text-center text-xs text-muted-foreground">
                 <p>Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.</p>
                 <p className="mt-1">© {new Date().getFullYear()} Trademetric. Todos os direitos reservados.</p>
+                <p className="mt-1 space-x-3">
+                    <Link to={TERMS_PATH} className="hover:text-foreground">Termos de Uso</Link>
+                    <Link to={PRIVACY_PATH} className="hover:text-foreground">Privacidade</Link>
+                </p>
             </footer>
         </div>
     );

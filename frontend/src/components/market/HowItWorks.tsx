@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronDown, Pause, Play } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Button } from '../ui/Button';
@@ -107,7 +106,7 @@ export function Faq() {
                 ))}
             </div>
             <p className="text-center text-sm text-muted-foreground">
-                Pronto para começar? <Link to="/cadastro" className="font-medium text-primary underline-offset-4 hover:underline">Crie sua conta em 10 segundos</Link>
+                Pronto para começar? <a href="#gestores" className="font-medium text-primary underline-offset-4 hover:underline">Ver os gestores</a> e simule o seu plano.
             </p>
         </section>
     );

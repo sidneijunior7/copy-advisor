@@ -6,6 +6,7 @@ import CopyField from '../CopyField';
 import OneTimeKey from '../OneTimeKey';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import BrokerQuestion from './BrokerQuestion';
 import ConnectAccount from './ConnectAccount';
 import HostingForm from './HostingForm';
 import { HostingBillingBody } from './HostingBilling';
@@ -186,7 +187,12 @@ export default function ActivationWizard({ license, data, onChanged, onDone }: {
             </div>
             <Stepper current={current} />
 
-            {current === 0 && <ConnectAccount license={license} onDone={onChanged} />}
+            {current === 0 && (
+                <div className="space-y-4">
+                    <BrokerQuestion markets={license.listing_markets ?? []} />
+                    <ConnectAccount license={license} onDone={onChanged} />
+                </div>
+            )}
 
             {current === 1 && mode === null && (
                 <div className={cn('grid grid-cols-1 gap-3', cloud && 'md:grid-cols-2')}>

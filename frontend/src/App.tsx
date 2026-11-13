@@ -6,9 +6,11 @@ import { ThemeProvider, useTheme } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './Layouts/AppLayout';
 import PublicLayout from './Layouts/PublicLayout';
+import CheckoutLayout from './Layouts/CheckoutLayout';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import { ForgotPassword, ResetPassword, VerifyEmail } from './pages/EmailLinks';
+import { ForgotPassword, ResetPassword, StopEmails, VerifyEmail } from './pages/EmailLinks';
+import { PrivacyPage, TermsPage } from './pages/Legal';
 import Catalog from './pages/market/Catalog';
 import ListingPage from './pages/market/ListingPage';
 import CheckoutPage from './pages/market/CheckoutPage';
@@ -79,11 +81,16 @@ function App() {
             <Route path="/recuperar-senha" element={<ForgotPassword />} />
             <Route path="/redefinir-senha" element={<ResetPassword />} />
             <Route path="/verificar-email" element={<VerifyEmail />} />
+            <Route path="/parar-emails" element={<StopEmails />} />
 
             {/* Public: anyone can open the marketplace */}
             <Route element={<PublicLayout />}>
               <Route path="/marketplace" element={<Catalog />} />
               <Route path="/marketplace/:slug" element={<ListingPage />} />
+              <Route path="/termos" element={<TermsPage />} />
+              <Route path="/privacidade" element={<PrivacyPage />} />
+            </Route>
+            <Route element={<CheckoutLayout />}>
               <Route path="/assinar/:slug" element={<CheckoutPage />} />
             </Route>
 

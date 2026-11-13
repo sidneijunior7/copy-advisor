@@ -10,12 +10,26 @@ import { apiError } from '../lib/utils';
 
 const linkClass = 'font-medium text-primary underline-offset-4 hover:underline';
 
+// Where a sign-up in the middle of a checkout goes back after confirming the email (CheckoutPage). In localStorage:
+// the link opens in another tab
+export const AFTER_VERIFY_KEY = 'tdm-after-verify';
+
+function afterVerify(): string | null {
+    try {
+        const path = localStorage.getItem(AFTER_VERIFY_KEY);
+        return path && path.startsWith('/assinar/') ? path : null;
+    } catch {
+        return null;
+    }
+}
+
 // The confirmation link of the sign-up email
 export function VerifyEmail() {
     const [params] = useSearchParams();
     const [state, setState] = useState<'checking' | 'ok' | 'failed'>('checking');
     const [message, setMessage] = useState('');
     const sent = useRef(false); // The link works once: StrictMode runs effects twice in development
+    const [back] = useState(afterVerify);
 
     useEffect(() => {
         if (sent.current) return;
@@ -27,10 +41,17 @@ export function VerifyEmail() {
 
     return (
         <AuthShell title="Confirmação de email" subtitle={state === 'checking' ? 'Confirmando...' : ''}>
-            {state === 'ok' && (
+            {state === 'ok' && (back ? (
+                <div className="space-y-4">
+                    <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" /> Email confirmado.</p>
+                    <Link to={back} onClick={() => { try { localStorage.removeItem(AFTER_VERIFY_KEY); } catch { /* Storage unavailable */ } }} className="block">
+                        <Button size="lg" className="w-full">Voltar para a assinatura</Button>
+                    </Link>
+                </div>
+            ) : (
                 <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
                     Email confirmado. <Link to="/dashboard" className={linkClass}>Ir para o painel</Link></p>
-            )}
+            ))}
             {state === 'failed' && (
                 <p className="flex items-start gap-2"><XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
                     {message} No painel, use "Reenviar link".</p>
@@ -105,6 +126,34 @@ export function ResetPassword() {
                     {errors.root && <p role="alert" className="text-sm text-destructive">{errors.root.message}</p>}
                     <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>Salvar senha</Button>
                 </form>
+            )}
+        </AuthShell>
+    );
+}
+
+// The link at the end of a checkout reminder: no more of those emails, for any portfolio
+export function StopEmails() {
+    const [params] = useSearchParams();
+    const [state, setState] = useState<'checking' | 'ok' | 'failed'>('checking');
+    const sent = useRef(false);
+
+    useEffect(() => {
+        if (sent.current) return;
+        sent.current = true;
+        api.post('/leads/stop', { token: params.get('token') ?? '' })
+            .then(() => setState('ok'))
+            .catch(() => setState('failed'));
+    }, [params]);
+
+    return (
+        <AuthShell title="Emails da simulação" subtitle={state === 'checking' ? 'Um momento...' : ''}>
+            {state === 'ok' && (
+                <p className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
+                    Pronto: você não recebe mais os emails sobre a simulação. <Link to="/marketplace" className={linkClass}>Ver o marketplace</Link></p>
+            )}
+            {state === 'failed' && (
+                <p className="flex items-start gap-2"><XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
+                    Este link não vale mais. Se o email voltar a chegar, use o link do email mais recente.</p>
             )}
         </AuthShell>
     );

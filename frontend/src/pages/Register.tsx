@@ -5,6 +5,7 @@ import { ArrowRight, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api';
 import AuthShell from '../components/AuthShell';
+import TermsNotice from '../components/TermsNotice';
 import { Button } from '../components/ui/Button';
 import { Field, Input } from '../components/ui/Field';
 import { apiError, safeNext } from '../lib/utils';
@@ -24,7 +25,7 @@ export default function Register() {
 
     const onSubmit = async (data: RegisterForm) => {
         try {
-            const res = await api.post('/register', { email: data.email.trim(), password: data.password });
+            const res = await api.post('/register', { email: data.email.trim(), password: data.password, terms_accepted: true });
             login(res.data.access_token);
             navigate(next);
         } catch (err) {
@@ -80,6 +81,7 @@ export default function Register() {
                     Criar conta
                     {!isSubmitting && <ArrowRight />}
                 </Button>
+                <TermsNotice />
             </form>
 
             <p className="text-center text-sm text-muted-foreground">

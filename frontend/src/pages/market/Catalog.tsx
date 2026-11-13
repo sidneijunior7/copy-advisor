@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { riskOf } from '../../lib/risk';
 import { IconSelect } from '../../components/ui/Field';
 import { formatMoney, priceLabel } from '../../lib/money';
+import { Skeleton } from './checkout/parts';
 import { cn } from '../../lib/utils';
 
 // From this many portfolios on screen, the catalog turns into one row per market
@@ -81,9 +82,14 @@ function ListingCard({ l, perLot = false }: { l: PublicListing; perLot?: boolean
                 </div>
                 <Sparkline values={l.stats.curve} label={`Resultado acumulado de ${l.title} em 90 dias`} height={56} />
             </div>
-            <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-3">
-                <p className="text-sm font-medium">{priceLabel(l)}</p>
-                <span className="inline-flex items-center gap-1 text-sm font-semibold text-primary group-hover:underline">
+            <div className="mt-auto flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-t border-border pt-3">
+                <div className="min-w-0">
+                    <p className="text-sm font-medium">{priceLabel(l)}</p>
+                    {l.min_capital != null && l.min_capital > 0 && (
+                        <p className="text-xs text-muted-foreground">Capital a partir de {formatMoney(l.min_capital, l.currency)}</p>
+                    )}
+                </div>
+                <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold text-primary group-hover:underline">
                     Ver e copiar <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
                 </span>
             </div>
@@ -220,7 +226,11 @@ export default function Catalog() {
             )}
 
             {listings === null ? (
-                <p className="text-sm text-muted-foreground">{failed ? 'Não foi possível carregar o marketplace.' : 'Carregando...'}</p>
+                failed ? <p className="text-sm text-muted-foreground">Não foi possível carregar o marketplace.</p> : (
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Carregando os portfólios">
+                        {[0, 1, 2].map(i => <Skeleton key={i} className="h-80 rounded-xl" />)}
+                    </div>
+                )
             ) : shown.length === 0 ? (
                 <div className="panel">
                     <EmptyState icon={<Store />} title="Nenhum portfólio aqui ainda" description="Volte em breve: novos gestores publicam portfólios com frequência." />

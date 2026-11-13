@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, MailCheck, Store, Ticket } from 'lucide-react';
-import { toast } from 'sonner';
+import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Cloud, Lock, Store, Ticket, Users } from 'lucide-react';
 import api, {
-    type BacktestView, type ClientLicense, type Me, type MyLicenses, type PortfolioPerformance, type PublicFollowerStats, type PublicListing,
+    type BacktestView, type ClientLicense, type MyLicenses, type PortfolioPerformance, type PublicFollowerStats, type PublicListing,
 } from '../../api';
 import AboutAuthor, { AuthorLinks } from '../../components/AboutAuthor';
 import BacktestSection from '../../components/BacktestSection';
@@ -11,7 +10,6 @@ import Sparkline from '../../components/charts/Sparkline';
 import EmptyState from '../../components/EmptyState';
 import FollowerStatsView from '../../components/FollowerStatsView';
 import PerformanceView from '../../components/PerformanceView';
-import ResendLinkButton from '../../components/ResendLinkButton';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { IconSelect, Input, Select } from '../../components/ui/Field';
@@ -19,90 +17,60 @@ import { useAuth } from '../../context/AuthContext';
 import { PERIODS } from '../../lib/labels';
 import { formatMoney, hostingPriceLabel, priceLabel } from '../../lib/money';
 import { riskOf } from '../../lib/risk';
-import { apiError, cn } from '../../lib/utils';
+import { track } from '../../lib/track';
+import { cn } from '../../lib/utils';
+import { Skeleton } from './checkout/parts';
 
-// A launch code: the portfolio free for some days, without a card. The license comes without the MT5 account, and
-// the days start when the client connects it, on the license's page
-function PromoBox({ slug, initial, me }: { slug: string; initial: string; me: Me | null }) {
+// The checkout's address, carrying a campaign's launch code when the visitor came with one
+const checkoutHref = (slug: string, code: string) => `/assinar/${slug}${code ? `?codigo=${encodeURIComponent(code)}` : ''}`;
+
+// A launch code typed here goes to the checkout, which makes the account and asks about the risk before using it
+function CodeEntry({ slug }: { slug: string }) {
     const navigate = useNavigate();
-    const [code, setCode] = useState(initial);
-    const [sending, setSending] = useState(false);
-
-    const redeem = async (e: FormEvent) => {
+    const [code, setCode] = useState('');
+    const go = (e: FormEvent) => {
         e.preventDefault();
-        setSending(true);
-        try {
-            const res = await api.post<ClientLicense>(`/api/marketplace/${slug}/redeem`, { code });
-            toast.success('Código aplicado', {
-                description: `Conecte sua conta MT5: seus ${res.data.promo?.free_days ?? ''} dias grátis começam quando ela estiver conectada.`,
-            });
-            navigate(`/client/licenses/${res.data.id}`);
-        } catch (err) {
-            toast.error(apiError(err, 'Não foi possível usar o código.'));
-        } finally {
-            setSending(false);
-        }
+        if (code.trim()) navigate(checkoutHref(slug, code.trim()));
     };
-
     return (
-        <form onSubmit={redeem} className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3" noValidate>
+        <form onSubmit={go} className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3" noValidate>
             <label htmlFor="promo-code" className="flex items-center gap-2 text-sm font-medium"><Ticket className="size-4 text-primary" /> Código de lançamento</label>
-            {me?.email_enabled && !me.email_verified ? (
-                <div className="space-y-2 text-sm">
-                    <p className="flex items-start gap-2 text-muted-foreground"><MailCheck className="mt-0.5 size-4 shrink-0 text-warning" />
-                        Confirme seu email para usar o código: o link está na sua caixa de entrada.</p>
-                    <ResendLinkButton />
-                </div>
-            ) : (
-                <div className="flex gap-2">
-                    <Input id="promo-code" value={code} onChange={e => setCode(e.target.value)} placeholder="Digite o código"
-                        className="font-mono uppercase" autoComplete="off" />
-                    <Button loading={sending} disabled={!code.trim()}>Usar</Button>
-                </div>
-            )}
+            <div className="flex gap-2">
+                <Input id="promo-code" value={code} onChange={e => setCode(e.target.value)} placeholder="Digite o código"
+                    className="font-mono uppercase" autoComplete="off" />
+                <Button variant="outline" disabled={!code.trim()}>Usar</Button>
+            </div>
             <p className="text-xs text-muted-foreground">Grátis por tempo limitado, sem cartão. Os dias começam quando você conecta sua conta MT5.</p>
         </form>
     );
 }
 
-function SubscribeBox({ listing }: { listing: PublicListing }) {
+// Next to the button that sells: the payment, the cancelling and who else copies
+function Trust({ listing, copiers }: { listing: PublicListing; copiers: string | null }) {
+    return (
+        <ul className="space-y-1 text-xs text-muted-foreground">
+            {listing.pay_online && <li className="flex items-center gap-1.5"><Lock className="size-3.5" /> Pagamento seguro pela Stripe. Cancele quando quiser, sem multa.</li>}
+            {copiers && <li className="flex items-center gap-1.5"><Users className="size-3.5" /> {copiers}</li>}
+        </ul>
+    );
+}
+
+function SubscribeBox({ listing, copiers }: { listing: PublicListing; copiers: string | null }) {
     const { user } = useAuth();
     const [params] = useSearchParams();
     const urlCode = params.get('codigo')?.trim() ?? ''; // From a campaign's link
-    const [me, setMe] = useState<Me | null>(null);
     const [mine, setMine] = useState<ClientLicense | null>(null); // A license of this portfolio the client has already
     const [codeOpen, setCodeOpen] = useState(false);
-    const checkoutHref = `/assinar/${listing.slug}${urlCode ? `?codigo=${encodeURIComponent(urlCode)}` : ''}`;
+    const href = checkoutHref(listing.slug, urlCode);
 
     useEffect(() => {
-        if (!user) return;
-        api.get<Me>('/me').then(res => setMe(res.data)).catch(e => console.error(e));
-        if (user.role === 'CLIENT') {
-            api.get<MyLicenses>('/me/licenses')
-                .then(res => setMine(res.data.licenses.find(l => l.listing_slug === listing.slug) ?? null))
-                .catch(e => console.error(e));
-        }
+        if (user?.role !== 'CLIENT') return;
+        api.get<MyLicenses>('/me/licenses')
+            .then(res => setMine(res.data.licenses.find(l => l.listing_slug === listing.slug) ?? null))
+            .catch(e => console.error(e));
     }, [user, listing.slug]);
 
-    if (!user) {
-        return (
-            <div className="space-y-2.5">
-                {urlCode && (
-                    <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
-                        <Ticket className="mt-0.5 size-4 shrink-0 text-primary" />
-                        <span>Você tem o código <strong className="font-mono">{urlCode.toUpperCase()}</strong>: monte seu plano para copiar grátis, sem cartão.</span>
-                    </p>
-                )}
-                <Link to={checkoutHref} className="block">
-                    <Button size="lg" className="w-full">Assinar este portfólio <ArrowRight /></Button>
-                </Link>
-                <p className="text-center text-xs text-muted-foreground">
-                    Simule contratos, retorno e escolha como rodar antes de criar sua conta.
-                </p>
-            </div>
-        );
-    }
-    if (user.role !== 'CLIENT') {
+    if (user && user.role !== 'CLIENT') {
         return <p className="text-sm text-muted-foreground">Entre com uma conta de cliente para assinar.</p>;
     }
     if (mine) {
@@ -111,24 +79,29 @@ function SubscribeBox({ listing }: { listing: PublicListing }) {
                 <p className="flex items-start gap-2 text-sm"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                     Você já tem este portfólio{mine.mt5_login != null ? ` na conta ${mine.mt5_login}` : ''}.</p>
                 <Link to={`/client/licenses/${mine.id}`} className="block"><Button size="lg" className="w-full">Ver minha cópia <ArrowRight /></Button></Link>
-                <Link to={checkoutHref} className="block"><Button variant="ghost" className="w-full">Assinar para outra conta MT5</Button></Link>
+                <Link to={href} className="block"><Button variant="ghost" className="w-full">Assinar para outra conta MT5</Button></Link>
             </div>
         );
     }
-    const promo = urlCode !== '' || listing.has_promo === true;
+    if (urlCode && listing.has_promo) {
+        return (
+            <div className="space-y-2.5">
+                <p className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+                    <Ticket className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <span>Você tem o código <strong className="font-mono">{urlCode.toUpperCase()}</strong>: copie grátis, sem cartão.</span>
+                </p>
+                <Link to={href} className="block"><Button size="lg" className="w-full">Ativar com o código <ArrowRight /></Button></Link>
+                <p className="text-center text-xs text-muted-foreground">Leva 1 minuto: seu email, uma senha e o CPF.</p>
+            </div>
+        );
+    }
     return (
         <div className="space-y-3">
-            {promo && urlCode && <PromoBox slug={listing.slug} initial={urlCode} me={me} />}
-            <Link to={checkoutHref} className="block">
-                <Button size="lg" className="w-full">
-                    Assinar este portfólio <ArrowRight />
-                </Button>
-            </Link>
-            <p className="text-center text-xs text-muted-foreground">
-                Escolha a quantidade de contratos e como prefere rodar na próxima etapa.
-            </p>
-            {promo && !urlCode && (codeOpen
-                ? <PromoBox slug={listing.slug} initial="" me={me} />
+            <Link to={href} className="block"><Button size="lg" className="w-full">Simular meu plano <ArrowRight /></Button></Link>
+            <p className="text-center text-xs text-muted-foreground">Escolha os contratos e veja o resultado e o risco antes de criar a conta.</p>
+            <Trust listing={listing} copiers={copiers} />
+            {listing.has_promo && (codeOpen
+                ? <CodeEntry slug={listing.slug} />
                 : <Button variant="ghost" className="w-full" onClick={() => setCodeOpen(true)}><Ticket /> Tenho um código de lançamento</Button>)}
         </div>
     );
@@ -170,6 +143,7 @@ function Headline({ listing }: { listing: PublicListing }) {
 
 export default function ListingPage() {
     const { slug } = useParams();
+    const [params] = useSearchParams();
     const [listing, setListing] = useState<PublicListing | null>(null);
     const [missing, setMissing] = useState(false);
     const [days, setDays] = useState(90);
@@ -182,6 +156,7 @@ export default function ListingPage() {
     const [boxVisible, setBoxVisible] = useState(false);
 
     useEffect(() => {
+        if (slug) track('listing_view', { slug });
         api.get<PublicListing>(`/api/marketplace/${slug}`)
             .then(res => setListing(res.data))
             .catch(e => { console.error(e); setMissing(true); });
@@ -222,7 +197,21 @@ export default function ListingPage() {
             </div>
         );
     }
-    if (!listing) return <p className="text-sm text-muted-foreground">Carregando...</p>;
+    if (!listing) {
+        return (
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-3" aria-busy="true" aria-label="Carregando o portfólio">
+                <div className="space-y-4 lg:col-span-2">
+                    <Skeleton className="h-5 w-24" /><Skeleton className="h-9 w-2/3" /><Skeleton className="h-4 w-1/3" /><Skeleton className="h-40" />
+                </div>
+                <Skeleton className="h-72" />
+            </div>
+        );
+    }
+    const href = checkoutHref(listing.slug, params.get('codigo')?.trim() ?? '');
+    const periodName = PERIODS.find(p => p.days === days)?.label.toLowerCase();
+    const copiers = followers?.enough && followers.followers
+        ? `${followers.followers.toLocaleString('pt-BR')} ${followers.followers === 1 ? 'conta copiou' : 'contas copiaram'}${periodName ? ` (${periodName})` : ''}`
+        : null;
 
     return (
         <div className="space-y-8 pb-20 lg:pb-0">
@@ -239,7 +228,7 @@ export default function ListingPage() {
                     </div>
                     {listing.summary && <p className="text-base text-muted-foreground sm:text-lg">{listing.summary}</p>}
                     {listing.manager.bio && (
-                        <p className="line-clamp-3 border-l-2 border-primary/40 pl-3 text-sm text-muted-foreground">{listing.manager.bio}</p>
+                        <p className="line-clamp-3 border-l-2 md:hidden border-primary/40 pl-3 text-sm text-muted-foreground">{listing.manager.bio}</p>
                     )}
                     <Headline listing={listing} />
                     {(listing.description || listing.strategies.length > 0 || listing.manager.bio) && (
@@ -282,11 +271,11 @@ export default function ListingPage() {
                             <Cloud className="mt-0.5 size-4 shrink-0 text-primary" />
                             <span>
                                 <strong>Sem instalar nada:</strong> + {hostingPriceLabel(listing.hosting_price)} para rodar na nossa nuvem,
-                                com o computador desligado. Opcional: você escolhe depois de assinar.
+                                com o computador desligado. Você escolhe na assinatura e paga à parte, quando conectar a conta.
                             </span>
                         </p>
                     )}
-                    <SubscribeBox listing={listing} />
+                    <SubscribeBox listing={listing} copiers={copiers} />
                     <p className="text-xs text-muted-foreground">Resultados passados não garantem resultados futuros. Operar envolve risco de perda.</p>
                 </aside>
             </div>
@@ -294,7 +283,7 @@ export default function ListingPage() {
             <div className={cn('fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 py-3 backdrop-blur transition-transform lg:hidden', boxVisible && 'translate-y-full')}>
                 <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
                     <p className="min-w-0 truncate font-semibold">{priceLabel(listing)}</p>
-                    <Link to={`/assinar/${listing.slug}`}><Button>Assinar este portfólio <ArrowRight /></Button></Link>
+                    <Link to={href}><Button>{params.get('codigo') && listing.has_promo ? 'Ativar com o código' : 'Simular meu plano'} <ArrowRight /></Button></Link>
                 </div>
             </div>
 

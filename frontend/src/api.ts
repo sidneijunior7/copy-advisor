@@ -262,6 +262,7 @@ export type ClientLicense = {
     // From a launch code: the free days start when the account is connected (started_at), and end at ends_at
     promo: { free_days: number; started_at: string | null; ends_at: string | null } | null;
     listing_slug: string | null; // The portfolio's page in the marketplace, while it is there
+    listing_markets?: string[]; // Its markets: the activation shows the B3 brokers only for the B3
     wants_hosting?: boolean; // Chosen during checkout: pre-selects cloud hosting in the activation wizard
     renew_plans: Plan[]; // What a renewal can be paid with in Stripe; empty when it is paid by hand
 };
@@ -486,13 +487,13 @@ export type BacktestView =
 // The marketplace shows the figures only past a minimum of followers and copies
 export type PublicFollowerStats = { enough: boolean; min_followers: number; min_copies: number } & Partial<FollowerStats>;
 
-export const BROKERS = ['XP', 'Clear', 'Rico', 'Genial', 'none'] as const;
+export const BROKERS = ['XP', 'Clear', 'Rico', 'Genial', 'other', 'none'] as const;
 export type BrokerChoice = typeof BROKERS[number];
 
 export type Me = {
     email: string; name: string | null; role: 'MANAGER' | 'CLIENT' | 'TDM_DEV'; bio: string | null;
     youtube_url: string | null; instagram_url: string | null;
-    cpf?: string | null; broker?: BrokerChoice | null; advisor?: string | null; advisor_unknown?: boolean;
+    cpf?: string | null; broker?: BrokerChoice | null; broker_other?: string | null; advisor?: string | null; advisor_unknown?: boolean;
     email_verified: boolean; email_enabled: boolean;
 };
 
@@ -506,6 +507,7 @@ export type SimulationStep = {
     recommended_capital: number;
     simulated_profit: number;
     max_drawdown: number;
+    popular?: boolean; // The plan most clients paid for, once enough did
 };
 
 export type PortfolioSimulation = {
