@@ -200,8 +200,8 @@ export default function ListingPage() {
     }
     if (!listing) {
         return (
-            <div className="grid grid-cols-1 gap-8 lg:grid-cols-3" aria-busy="true" aria-label="Carregando o portfólio">
-                <div className="space-y-4 lg:col-span-2">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]" aria-busy="true" aria-label="Carregando o portfólio">
+                <div className="space-y-4">
                     <Skeleton className="h-5 w-24" /><Skeleton className="h-9 w-2/3" /><Skeleton className="h-4 w-1/3" /><Skeleton className="h-40" />
                 </div>
                 <Skeleton className="h-72" />
@@ -219,8 +219,8 @@ export default function ListingPage() {
             <Link to="/marketplace" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="size-4" /> Portfólios
             </Link>
-            <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3">
-                <div className="space-y-4 lg:col-span-2">
+            <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[minmax(0,1fr)_360px] xl:gap-12 2xl:grid-cols-[minmax(0,1fr)_400px]">
+                <div className="space-y-4">
                     <div className="flex flex-wrap gap-1">{listing.markets.map(m => <Badge key={m} variant="primary">{m}</Badge>)}</div>
                     <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{listing.title}</h1>
                     <div className="flex items-center justify-between gap-3">
@@ -283,7 +283,7 @@ export default function ListingPage() {
             </div>
 
             <div className={cn('fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 py-3 backdrop-blur transition-transform lg:hidden', boxVisible && 'translate-y-full')}>
-                <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+                <div className="mx-auto flex max-w-[1760px] items-center justify-between gap-3">
                     <p className="min-w-0 truncate font-semibold">{priceLabel(listing)}</p>
                     <Link to={href}><Button>{params.get('codigo') && listing.has_promo ? 'Ativar com o código' : 'Simular meu plano'} <ArrowRight /></Button></Link>
                 </div>

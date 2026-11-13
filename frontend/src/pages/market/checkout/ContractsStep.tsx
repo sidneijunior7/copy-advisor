@@ -15,29 +15,35 @@ const HEAVY_DROP_PCT = 50;
 
 const COLS: Record<number, string> = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2' };
 
-// One plan as a card: what it is, what it costs and the capital it asks. On a phone a compact row, on a wide screen
-// a column, like a pricing table
-function PlanCard({ tier, selected, tabbable, perContract, aboveCapital, onSelect }: {
-    tier: SimulationStep; selected: boolean; tabbable: boolean; perContract: string | null; aboveCapital: boolean; onSelect: () => void;
+// One plan as a small card: what it is, the capital it asks and what it costs. The simulation above is the star of
+// the step; the cards only switch it. On a phone a compact row, on a wide screen a short column
+function PlanCard({ tier, selected, tabbable, perContract, aboveCapital, recommended, onSelect }: {
+    tier: SimulationStep; selected: boolean; tabbable: boolean; perContract: string | null; aboveCapital: boolean;
+    recommended: boolean; onSelect: () => void;
 }) {
     const free = tier.price === 0;
     return (
         <button type="button" role="radio" aria-checked={selected} tabIndex={tabbable ? 0 : -1} onClick={onSelect}
+            aria-description={recommended ? 'Recomendado para o seu capital' : undefined}
             className={cn(
-                'relative flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition-colors sm:flex-col sm:items-start sm:gap-2 sm:p-5',
+                'relative flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors sm:flex-col sm:items-start sm:gap-1',
+                (tier.popular || recommended) && 'mt-2 sm:mt-0',
                 selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:border-foreground/30',
             )}>
-            {tier.popular && (
-                <span className="absolute -top-2.5 left-3 rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Mais escolhido</span>
+            {(recommended || tier.popular) && (
+                <span className="absolute -top-2.5 left-2.5 flex gap-1">
+                    {recommended && <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">Recomendado para o seu capital</span>}
+                    {tier.popular && <span className="rounded-full border border-primary/40 bg-background px-2 py-0.5 text-[10px] font-semibold text-primary">Mais escolhido</span>}
+                </span>
             )}
-            <RadioDot selected={selected} className="sm:absolute sm:right-3 sm:top-3" />
-            <span className="min-w-0 flex-1 sm:pr-6">
-                <span className="block font-semibold">{planTitle(tier)}</span>
-                <span className="block text-xs text-muted-foreground">Capital sugerido<br />{formatMoney(tier.recommended_capital, tier.currency)}</span>
-                {aboveCapital && <span className="mt-0.5 block text-xs font-medium text-warning">Pede mais do que o seu capital</span>}
+            <RadioDot selected={selected} className="size-4 sm:absolute sm:right-2.5 sm:top-2.5" />
+            <span className="min-w-0 flex-1 sm:pr-5">
+                <span className="block text-sm font-semibold">{planTitle(tier)}</span>
+                <span className="block text-xs text-muted-foreground">Capital sugerido {formatMoney(tier.recommended_capital, tier.currency)}</span>
+                {aboveCapital && <span className="block text-xs font-medium text-warning">Pede mais do que o seu capital</span>}
             </span>
             <span className="shrink-0 text-right sm:text-left">
-                <span className="block whitespace-nowrap text-base font-bold sm:text-2xl">
+                <span className="block whitespace-nowrap text-sm font-bold sm:text-base">
                     {tier.price == null ? 'Sob consulta' : free ? 'Gratuito' : formatMoney(tier.price, tier.currency)}
                     {tier.price != null && !free && <span className="text-xs font-normal text-muted-foreground"> /{periodName(tier.days)}</span>}
                 </span>
@@ -130,6 +136,8 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
     const overCapital = ddPct != null && ddPct > 100;
     const risk = riskOf(ddPct);
     const showPerContract = perContractFalls(steps);
+    // The plan for the client's money: the biggest whose suggested capital fits it; none when even the smallest asks more
+    const recommendedIdx = steps.reduce((best, s, i) => (s.recommended_capital <= capital ? i : best), -1);
 
     // What the plan costs over the same period, and what is left of the result after it
     const gross = tier.simulated_profit;
@@ -163,18 +171,21 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
                 </Button>
             </div>
 
-            <div role="radiogroup" aria-label="Planos" onKeyDown={radioKeys}
-                className={cn('grid grid-cols-1 gap-3 pt-1', COLS[steps.length] ?? 'sm:grid-cols-3')}>
-                {steps.map((s, i) => (
-                    <PlanCard key={`${s.lots}-${i}`} tier={s} selected={i === tierIdx} tabbable={i === tierIdx} onSelect={() => onTier(i)}
-                        aboveCapital={s.recommended_capital > capital}
-                        perContract={showPerContract && i > 0 && s.price ? `${formatMoney(s.price / s.lots, s.currency)} por ${s.unit ?? 'contrato'}` : null} />
-                ))}
-            </div>
-
             <div aria-live="polite">
                 <HindsightCard capital={capital} result={net ?? gross} afterFees={net != null} drop={tier.max_drawdown}
                     start={days > 0 ? start : null} period={period} currency={currency} />
+            </div>
+
+            <div className="space-y-2">
+                <p className="text-sm font-semibold">Plano</p>
+                <div role="radiogroup" aria-label="Planos" onKeyDown={radioKeys}
+                    className={cn('grid grid-cols-1 gap-2.5 pt-1.5', COLS[steps.length] ?? 'sm:grid-cols-3')}>
+                    {steps.map((s, i) => (
+                        <PlanCard key={`${s.lots}-${i}`} tier={s} selected={i === tierIdx} tabbable={i === tierIdx} onSelect={() => onTier(i)}
+                            aboveCapital={s.recommended_capital > capital} recommended={i === recommendedIdx}
+                            perContract={showPerContract && i > 0 && s.price ? `${formatMoney(s.price / s.lots, s.currency)} por ${s.unit ?? 'contrato'}` : null} />
+                    ))}
+                </div>
             </div>
 
             <div className="rounded-xl bg-secondary/40 p-4 sm:p-6">
