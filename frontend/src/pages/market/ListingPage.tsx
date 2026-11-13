@@ -99,7 +99,7 @@ function SubscribeBox({ listing, copiers }: { listing: PublicListing; copiers: s
     return (
         <div className="space-y-3">
             <Link to={href} className="block"><Button size="lg" className="w-full">Simular meu plano <ArrowRight /></Button></Link>
-            <p className="text-center text-xs text-muted-foreground">Escolha os contratos e veja o resultado e o risco antes de criar a conta.</p>
+            <p className="text-center text-xs text-muted-foreground">Faça sua simulação antes de criar sua conta.</p>
             <Trust listing={listing} copiers={copiers} />
             {listing.has_promo && (codeOpen
                 ? <CodeEntry slug={listing.slug} />

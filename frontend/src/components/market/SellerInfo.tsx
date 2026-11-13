@@ -22,7 +22,7 @@ export default function SellerInfo({ seller, fallbackName, className }: {
                         : <p>Credenciamento informado pelo trader, ainda não conferido: {seller.credential}</p>)*/}
                 </>
             )}
-            <p>A Trademetric fornece a plataforma.</p>
+            <br /><p>A Trademetric fornece a plataforma.</p>
         </div>
     );
 }
