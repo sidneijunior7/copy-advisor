@@ -18,6 +18,7 @@ import { track } from '../../lib/track';
 import { apiError, cn } from '../../lib/utils';
 import { AFTER_VERIFY_KEY } from '../EmailLinks';
 import { CpfStep, DetailsStep, EmailStep, LoginStep, NameStep, PASSWORD_MIN } from './checkout/AccountSteps';
+import CapitalStep from './checkout/CapitalStep';
 import ContractsStep from './checkout/ContractsStep';
 import { periodWords, planTitle, signedMoney, unitOf } from './checkout/format';
 import HostingStep from './checkout/HostingStep';
@@ -225,7 +226,8 @@ export default function CheckoutPage() {
     const flow = useMemo(() => flowFor(emailExists, loggedIn), [flowFor, emailExists, loggedIn]);
     const stages = useMemo(() => buildStages({ promo, startedAsGuest, hosting: hostingOffered }), [promo, startedAsGuest, hostingOffered]);
 
-    const wanted = params.get('passo');
+    // A reminder's link names the contracts: it opens on the simulation, over the capital said before or the minimum
+    const wanted = params.get('passo') ?? (linkedIdx >= 0 ? 'contracts' : null);
     let step: StepId = resolveStep(wanted, flow, { loggedIn, hasEmail: EMAIL.test(email), promo });
     // A refresh forgets the password: its screen comes back before the CPF's
     if (step === 'cpf' && password.length < PASSWORD_MIN) step = 'name';
@@ -291,6 +293,18 @@ export default function CheckoutPage() {
     }
 
     const currency = simulation?.currency ?? listing.currency ?? 'BRL';
+    // The portfolio's minimum: the trader's, or the smallest plan's suggested capital
+    const minCapital = listing.min_capital && listing.min_capital > 0 ? listing.min_capital : (steps[0]?.recommended_capital ?? 0);
+    const capital = customCapital && customCapital > 0 ? customCapital : minCapital;
+
+    // The capital said: the simulation opens on the biggest plan that fits it
+    const handleCapital = (value: number) => {
+        setCustomCapital(value);
+        const fits = steps.map((s, i) => [s, i] as const).filter(([s]) => s.recommended_capital <= value);
+        setTierIdx(fits.length ? fits[fits.length - 1][1] : 0);
+        track('checkout_capital', { ...base, capital: value, below_min: value < minCapital });
+        goNext('capital');
+    };
 
     const handleEmail = async (e: FormEvent) => {
         e.preventDefault();
@@ -447,9 +461,13 @@ export default function CheckoutPage() {
                         </p>
                     )}
 
+                    {step === 'capital' && (
+                        <CapitalStep steps={steps} minCapital={minCapital} capital={customCapital} currency={currency} onSubmit={handleCapital} />
+                    )}
                     {step === 'contracts' && (
                         <ContractsStep steps={steps} tierIdx={tierIndex} onTier={setTierIdx} simulation={simulation} currency={currency}
-                            customCapital={customCapital} onCapital={setCustomCapital} onContinue={() => goNext('contracts')} />
+                            capital={capital} hostingPrice={hostingOffered ? listing.hosting_price ?? null : null}
+                            onEditCapital={() => goTo('capital')} onContinue={() => goNext('contracts')} />
                     )}
                     {step === 'email' && (
                         <EmailStep email={email} onEmail={v => { setEmail(v); setFieldError(null); }} error={fe('email')} busy={busy} promo={promo}
@@ -478,7 +496,7 @@ export default function CheckoutPage() {
                     {step === 'summary' && (promo ? (
                         <PromoSummary listing={listing} code={code} onCode={setCode} email={me?.email ?? email} unverified={unverified}
                             risk={risk} onRisk={setRisk} busy={busy} onRedeem={() => handleRedeem(code)}
-                            onPreferPay={() => navigate(`/assinar/${slug}?passo=contracts`)} />
+                            onPreferPay={() => navigate(`/assinar/${slug}?passo=capital`)} />
                     ) : (
                         <PaySummary listing={listing} tier={tier} periodLabel={periodLabel} wantsHosting={wantsHosting}
                             copiers={copiers} risk={risk} onRisk={setRisk} busy={busy} done={done} onEdit={goTo}

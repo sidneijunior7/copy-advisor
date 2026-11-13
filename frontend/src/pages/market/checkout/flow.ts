@@ -2,6 +2,7 @@
 // visitor reads as one thing ("Sua conta" is the email check, the password, the name and the CPF). The stages are
 // decided once, when the flow starts, so the total on screen never changes halfway
 export type StepId =
+    | 'capital' // How much the client means to invest: the simulation after it is said over this amount
     | 'contracts'
     | 'email'
     | 'hosting'
@@ -39,6 +40,7 @@ export function buildFlow(o: FlowOptions): StepId[] {
             : o.compact ? ['name', 'cpf'] : ['details'];
     if (o.promo) return [...(o.loggedIn ? [] : ['email' as StepId]), ...account, 'summary'];
     return [
+        'capital',
         'contracts',
         ...(o.loggedIn ? [] : ['email' as StepId]), // Right after the simulator: the simulation can be sent to it
         ...(o.hosting ? ['hosting' as StepId] : []),
@@ -55,7 +57,7 @@ export function buildStages(o: { promo: boolean; startedAsGuest: boolean; hostin
 
 export function stageOf(step: StepId, promo: boolean): StageId {
     if (step === 'summary') return promo ? 'activate' : 'payment';
-    if (step === 'contracts') return 'plan';
+    if (step === 'capital' || step === 'contracts') return 'plan';
     if (step === 'email') return promo ? 'account' : 'plan';
     if (step === 'hosting') return 'hosting';
     return 'account';

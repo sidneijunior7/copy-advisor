@@ -39,6 +39,13 @@ export const perContractFalls = (steps: SimulationStep[]) => {
 export const cloudPrice = (price: HostingPrice | null | undefined) => (price ? hostingPriceLabel(price) : 'Incluída');
 export const CLOUD_BILLED_APART = 'Cobrada à parte, ao conectar sua conta MT5';
 
+// Whole units typed the Brazilian way: 5.000 or 5000; cents are ignored
+export const parseCapital = (text: string) => Number(text.split(',')[0].replace(/\D/g, ''));
+export const maskCapital = (text: string) => {
+    const n = parseCapital(text);
+    return n > 0 ? n.toLocaleString('pt-BR') : '';
+};
+
 // Signed money as one text node: the sign never wraps away from the number
 export const signedMoney = (value: number, currency: string) =>
     `${value > 0 ? '+' : value < 0 ? '−' : ''} ${formatMoney(Math.abs(value), currency)}`;
