@@ -11,7 +11,7 @@ import { CLOUD_BILLED_APART, cloudPrice, planTitle, tierPriceText } from './form
 import { Step, StepCta, StepHeader } from './parts';
 
 const RISK_TEXT = 'Entendo que operar envolve risco de perda, que resultados passados não garantem resultados futuros '
-    + 'e que a cópia replica as operações do gestor na minha conta.';
+    + 'e que a cópia replica as operações do trader na minha conta.';
 
 // A choice and its price. On a phone the text takes the whole width and the price goes under it: side by side the
 // text was squeezed into a column one word wide
@@ -76,7 +76,7 @@ export function PaySummary(p: SummaryProps) {
     const cloud = offered && wantsHosting === true;
     const consult = tier.price == null;
     const ctaText = listing.pay_online ? 'Ir para o pagamento seguro'
-        : listing.checkout_url ? 'Continuar para o pagamento do gestor' : 'Enviar pedido ao gestor';
+        : listing.checkout_url ? 'Continuar para o pagamento do trader' : 'Enviar pedido ao trader';
 
     if (p.done) {
         return (
@@ -85,8 +85,8 @@ export function PaySummary(p: SummaryProps) {
                 <h1 className="text-2xl font-bold">Pedido de assinatura enviado!</h1>
                 <p className="mx-auto max-w-md text-sm text-muted-foreground">
                     {p.done.listing.checkout_url
-                        ? 'Conclua o pagamento na página que abriu em outra aba. Assim que o gestor confirmar, a cópia aparece em Minhas cópias.'
-                        : 'O gestor vai responder com as instruções de pagamento e liberar a sua cópia.'}
+                        ? 'Conclua o pagamento na página que abriu em outra aba. Assim que o trader confirmar, a cópia aparece em Minhas cópias.'
+                        : 'O trader vai responder com as instruções de pagamento e liberar a sua cópia.'}
                 </p>
                 {p.done.listing.checkout_url && (
                     <a href={p.done.listing.checkout_url} target="_blank" rel="noopener noreferrer" className="block">
@@ -123,7 +123,7 @@ export function PaySummary(p: SummaryProps) {
             {/* The totals are in the order beside the steps on a wide screen; here only where that column is not */}
             <dl className="space-y-2 text-sm lg:hidden">
                 {consult ? (
-                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Preço</dt><dd className="text-right">Sob consulta: o gestor responde com o valor</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Preço</dt><dd className="text-right">Sob consulta: o trader responde com o valor</dd></div>
                 ) : listing.pay_online ? (
                     <>
                         <div className="flex justify-between gap-3 text-base font-bold"><dt>Total hoje</dt><dd>{formatMoney(tier.price ?? 0, tier.currency)}</dd></div>
@@ -131,7 +131,7 @@ export function PaySummary(p: SummaryProps) {
                     </>
                 ) : (
                     <div className="flex justify-between gap-3 text-base font-bold">
-                        <dt>{listing.checkout_url ? 'Na página de pagamento do gestor' : 'Combinado com o gestor'}</dt>
+                        <dt>{listing.checkout_url ? 'Na página de pagamento do trader' : 'Combinado com o trader'}</dt>
                         <dd>{tierPriceText(tier, periodLabel)}</dd>
                     </div>
                 )}
@@ -141,7 +141,7 @@ export function PaySummary(p: SummaryProps) {
                     </div>
                 )}
             </dl>
-            {consult && <p className="hidden text-sm text-muted-foreground lg:block">Preço sob consulta: o gestor responde com o valor.</p>}
+            {consult && <p className="hidden text-sm text-muted-foreground lg:block">Preço sob consulta: o trader responde com o valor.</p>}
 
             {listing.pay_online && (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -153,7 +153,7 @@ export function PaySummary(p: SummaryProps) {
                 above={compact => <RiskAck checked={p.risk} onChange={p.onRisk} compact={compact} />}
                 note={<div className="space-y-1">
                     {listing.pay_online && <p>Renovação automática: cancele quando quiser na página Pagamentos da sua conta, sem multa.</p>}
-                    {!listing.pay_online && listing.checkout_url && <p>O pagamento abre na página do gestor, em outra aba.</p>}
+                    {!listing.pay_online && listing.checkout_url && <p>O pagamento abre na página do trader, em outra aba.</p>}
                     {!p.risk && <p className="hidden sm:block">Marque a confirmação acima para continuar.</p>}
                     <p className="lg:hidden"><Copiers count={p.copiers} /></p>
                 </div>}>

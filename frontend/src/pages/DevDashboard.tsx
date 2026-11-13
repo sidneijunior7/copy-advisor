@@ -37,7 +37,7 @@ export default function DevDashboard() {
             setManagers(res.data);
         } catch (e) {
             console.error(e);
-            toast.error('Não foi possível carregar os gestores.');
+            toast.error('Não foi possível carregar os traders.');
         } finally {
             setLoading(false);
         }
@@ -49,10 +49,10 @@ export default function DevDashboard() {
         try {
             await api.post('/admin/managers', { ...data, role: 'MANAGER' });
             reset();
-            toast.success(`Gestor ${data.email} criado`);
+            toast.success(`Trader ${data.email} criado`);
             refresh();
         } catch (err: any) {
-            setError('root', { message: apiError(err, 'Não foi possível criar o gestor.') });
+            setError('root', { message: apiError(err, 'Não foi possível criar o trader.') });
         }
     };
 
@@ -73,13 +73,13 @@ export default function DevDashboard() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Gestores"
-                description="Crie contas de gestor e controle quem pode operar na plataforma."
+                title="Traders"
+                description="Crie contas de trader e controle quem pode operar na plataforma."
                 icon={<ShieldCheck />}
             />
 
             <SlideRow className="md:grid-cols-3 md:gap-4">
-                <KPICard label="Gestores" value={managers.length} subValue="Contas cadastradas" icon={<Users />} />
+                <KPICard label="Traders" value={managers.length} subValue="Contas cadastradas" icon={<Users />} />
                 <KPICard label="Ativos" value={activeCount} subValue="Com acesso liberado" icon={<UserCheck />} valueClassName="text-success" />
                 <KPICard label="Bloqueados" value={managers.length - activeCount} subValue="Congelados ou arquivados" icon={<Lock />} />
             </SlideRow>
@@ -87,7 +87,7 @@ export default function DevDashboard() {
             <ClosureRequests />
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
-                <Card title="Novo gestor" icon={<Plus />}>
+                <Card title="Novo trader" icon={<Plus />}>
                     <form onSubmit={handleSubmit(onCreateManager)} className="space-y-4" noValidate>
                         <Field label="Email" htmlFor="manager-email" error={errors.email?.message}>
                             <Input
@@ -96,7 +96,7 @@ export default function DevDashboard() {
                                 type="email"
                                 autoComplete="off"
                                 icon={<Mail />}
-                                placeholder="gestor@exemplo.com"
+                                placeholder="trader@exemplo.com"
                             />
                         </Field>
                         <Field label="Senha inicial" htmlFor="manager-password" error={errors.password?.message}>
@@ -114,21 +114,21 @@ export default function DevDashboard() {
                             </div>
                         )}
                         <Button className="w-full" loading={isSubmitting}>
-                            {!isSubmitting && <Plus />} Criar gestor
+                            {!isSubmitting && <Plus />} Criar trader
                         </Button>
                     </form>
                 </Card>
 
-                <Card title="Contas de gestor" icon={<Users />} className="max-lg:order-first lg:col-span-2" flush>
+                <Card title="Contas de trader" icon={<Users />} className="max-lg:order-first lg:col-span-2" flush>
                     {loading ? (
                         <p className="px-5 pb-5 text-sm text-muted-foreground">Carregando...</p>
                     ) : managers.length === 0 ? (
-                        <EmptyState icon={<Users />} title="Nenhum gestor cadastrado" description="Crie a primeira conta de gestor ao lado." />
+                        <EmptyState icon={<Users />} title="Nenhum trader cadastrado" description="Crie a primeira conta de trader ao lado." />
                     ) : (
                         <Table stack>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Gestor</TableHead>
+                                    <TableHead>Trader</TableHead>
                                     <TableHead>Criado em</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead className="text-right">Acesso</TableHead>

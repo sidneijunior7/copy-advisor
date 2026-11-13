@@ -31,7 +31,7 @@ export default function ClientInstall() {
             />
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
-                <Card title="EA da cópia" description="Recebe na sua conta as operações do gestor que você assina." icon={<Users />} className="lg:col-span-2">
+                <Card title="EA da cópia" description="Recebe na sua conta as operações do trader que você assina." icon={<Users />} className="lg:col-span-2">
                     <div className="space-y-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <p className="text-sm">{slave ? <>Versão <strong>{slave.version}</strong></> : 'Carregando...'}</p>
@@ -51,7 +51,7 @@ export default function ClientInstall() {
                             <li>O gráfico mostra <strong>Hub: conectado</strong>, e a cópia aparece como <strong>Copiando</strong> aqui no painel.</li>
                         </ol>
                         <p className="text-sm text-muted-foreground">
-                            Prefere ver em vídeo? Os tutoriais do seu gestor estão em <Link to="/client/education" className={linkClass}>Educacional</Link>.
+                            Prefere ver em vídeo? Os tutoriais do seu trader estão em <Link to="/client/education" className={linkClass}>Educacional</Link>.
                         </p>
                     </div>
                 </Card>

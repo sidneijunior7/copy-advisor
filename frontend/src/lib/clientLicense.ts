@@ -96,7 +96,7 @@ export const nextStep = (l: ClientLicense): NextStep | null => {
     if (!l.connection) {
         return {
             title: 'O EA do seu computador está desconectado',
-            detail: 'Com o MetaTrader fechado, as operações do gestor não chegam à sua conta.',
+            detail: 'Com o MetaTrader fechado, as operações do trader não chegam à sua conta.',
             action: 'Ver como resolver',
             tone: 'warning',
         };

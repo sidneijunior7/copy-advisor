@@ -78,7 +78,7 @@ function OrderBody({ listing, tier, promo, code, wantsHosting, periodLabel, copi
                             <div className="flex justify-between gap-3 text-muted-foreground"><dt>Depois, a cada {periodLabel(tier.days)}</dt><dd>{formatMoney(tier.price ?? 0, tier.currency)}</dd></div>
                         </>
                     ) : (
-                        <div className="flex justify-between gap-3 font-bold"><dt>Pago ao gestor</dt><dd>{tierPriceText(tier, periodLabel)}</dd></div>
+                        <div className="flex justify-between gap-3 font-bold"><dt>Pago ao trader</dt><dd>{tierPriceText(tier, periodLabel)}</dd></div>
                     )}
                     {cloud && listing.hosting_price && (
                         <div className="flex justify-between gap-3 text-muted-foreground"><dt>Nuvem, à parte</dt><dd>{hostingPriceLabel(listing.hosting_price)}</dd></div>

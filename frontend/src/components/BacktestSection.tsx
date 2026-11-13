@@ -55,7 +55,7 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
         <div className="space-y-6">
             <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <Badge variant="warning">Backtest declarado</Badge>
-                Simulação enviada pelo gestor ao Trademetric Dash, não é resultado real.
+                Simulação enviada pelo trader ao Trademetric Dash, não é resultado real.
                 {b.strategies.length > 0 && <span>Estratégias: {b.strategies.join(', ')}.</span>}
             </p>
             <SlideRow className="md:grid-cols-3 xl:grid-cols-6">
@@ -72,10 +72,10 @@ export default function BacktestSection({ view }: { view: BacktestView }) {
                     <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                         <Badge variant={inc.verified === inc.trades ? 'success' : 'primary'}>Homologação no Dash</Badge>
                         {inc.verified === inc.trades
-                            ? 'Acompanhamento ao vivo da conta do gestor no Trademetric Dash, verificado pela OnTick.'
+                            ? 'Acompanhamento ao vivo da conta do trader no Trademetric Dash, verificado pela OnTick.'
                             : inc.verified > 0
-                                ? `Acompanhamento ao vivo da conta do gestor no Trademetric Dash: ${inc.verified} de ${inc.trades} operações verificadas pela OnTick, as outras informadas pelo EA do gestor.`
-                                : 'Acompanhamento ao vivo da conta do gestor no Trademetric Dash, informado pelo EA do gestor.'}
+                                ? `Acompanhamento ao vivo da conta do trader no Trademetric Dash: ${inc.verified} de ${inc.trades} operações verificadas pela OnTick, as outras informadas pelo EA do trader.`
+                                : 'Acompanhamento ao vivo da conta do trader no Trademetric Dash, informado pelo EA do trader.'}
                         {' '}{inc.official === inc.trades
                             ? 'Fazem parte do histórico: vieram antes da primeira cópia.'
                             : `As ${inc.official} de antes da primeira cópia fazem parte do histórico; depois dela, vale o que os clientes receberam.`}

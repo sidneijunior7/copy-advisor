@@ -52,7 +52,7 @@ const navByRole: Record<string, NavSection[]> = {
     TDM_DEV: [{
         title: 'Administração',
         items: [
-            { path: '/dev', label: 'Gestores', icon: ShieldCheck, end: true },
+            { path: '/dev', label: 'Traders', icon: ShieldCheck, end: true },
             { path: '/dev/marketplace', label: 'Vitrine', icon: Store },
             { path: '/dev/hosting', label: 'Hospedagem', icon: Server },
             { path: '/dev/education', label: 'Educacional', icon: GraduationCap },
@@ -75,7 +75,7 @@ const navByRole: Record<string, NavSection[]> = {
 };
 
 const roleLabels: Record<string, string> = {
-    MANAGER: 'Gestor',
+    MANAGER: 'Trader',
     TDM_DEV: 'Administrador',
     CLIENT: 'Cliente',
 };

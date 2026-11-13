@@ -221,7 +221,7 @@ def send_promo_ending(to: str, name: Optional[str], title: str, license_id: int,
             if charge_at_end else "Para continuar copiando depois disso, assine o portfólio.\n")
          + f"\nAssine em {public_url()}/client/licenses/{license_id}\n\n"
          "Se não assinar, a cópia para de abrir operações novas nessa data, e as que estiverem abertas "
-         "seguem o gestor até fechar.\n")
+         "seguem o trader até fechar.\n")
 
 
 def send_decision(sub: models.Subscription):
@@ -245,7 +245,7 @@ def send_decision(sub: models.Subscription):
                 + f"\nDúvidas? Fale com quem vende o portfólio pela página dele: {public_url()}/marketplace/{sub.listing.slug}\n")
         subject = f"Pedido recusado: {sub.listing.title}"
     if sub.decision_note and sub.status == "approved":
-        body += f"\nMensagem do gestor: {sub.decision_note}\n"
+        body += f"\nMensagem do trader: {sub.decision_note}\n"
     send(client.email, subject, body)
 
 
@@ -270,7 +270,7 @@ def send_checkout_lead(lead: models.CheckoutLead, which: int, step: Optional[dic
             lines += [f"Nos últimos {months} meses, com {contracts}:",
                       f"- Resultado das operações fechadas: {_money(step['simulated_profit'], currency)}",
                       f"- Maior queda no período: {_money(-step['max_drawdown'], currency)}",
-                      f"- Capital sugerido pelo gestor: {_money(step['recommended_capital'], currency)}",
+                      f"- Capital sugerido pelo trader: {_money(step['recommended_capital'], currency)}",
                       "", "Antes de custos (corretagem, emolumentos, slippage e a mensalidade).", ""]
         lines += [f"Para continuar de onde parou: {resume}"]
     else:

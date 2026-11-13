@@ -58,7 +58,7 @@ export default function AboutAuthor({ manager }: { manager: Manager }) {
                     </div>
                     {manager.bio
                         ? <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{manager.bio}</p>
-                        : <p className="text-sm text-muted-foreground">O gestor ainda não escreveu uma apresentação.</p>}
+                        : <p className="text-sm text-muted-foreground">O trader ainda não escreveu uma apresentação.</p>}
                     <AuthorLinks manager={manager} />
                 </div>
             </dialog>

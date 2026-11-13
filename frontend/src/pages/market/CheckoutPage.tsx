@@ -284,7 +284,7 @@ export default function CheckoutPage() {
         return (
             <div className="mx-auto max-w-xl px-4 py-10">
                 <EmptyState icon={<UserX />} title="Entre com uma conta de cliente para assinar"
-                    description="Esta conta é de gestor ou da plataforma. Para copiar um portfólio, use uma conta de cliente."
+                    description="Esta conta é de trader ou da plataforma. Para copiar um portfólio, use uma conta de cliente."
                     action={<Link to="/dashboard"><Button variant="outline">Ir para o meu painel</Button></Link>} />
             </div>
         );

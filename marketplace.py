@@ -191,7 +191,7 @@ def listing_out(listing: models.Listing) -> dict:
 
 def manager_profile(listing: models.Listing) -> dict:
     owner = listing.portfolio.owner if listing.portfolio else None
-    return {"name": (owner.name if owner else None) or "Gestor", "bio": owner.bio if owner else None,
+    return {"name": (owner.name if owner else None) or "Trader", "bio": owner.bio if owner else None,
             "youtube_url": owner.youtube_url if owner else None, "instagram_url": owner.instagram_url if owner else None}
 
 

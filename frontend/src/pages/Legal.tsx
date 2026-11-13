@@ -50,7 +50,7 @@ export function PrivacyPage() {
                 </p>
                 <p>
                     Os portfólios são publicados e vendidos por <strong>traders</strong> independentes, identificados na página
-                    de cada portfólio. Em algumas telas, o trader aparece como "gestor".
+                    de cada portfólio.
                 </p>
                 <List>
                     <li>A <strong>Trademetric é a controladora</strong> dos dados pessoais tratados para operar a plataforma, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).</li>
@@ -210,7 +210,7 @@ export function TermsPage() {
             <Section n={2} title="Quem é quem">
                 <List>
                     <li><strong>Cliente:</strong> você, que assina um portfólio e recebe as cópias na sua conta.</li>
-                    <li><strong>Trader:</strong> quem publica um portfólio na plataforma e vende a assinatura dele. Em algumas telas aparece como "gestor".</li>
+                    <li><strong>Trader:</strong> quem publica um portfólio na plataforma e vende a assinatura dele.</li>
                     <li><strong>Trademetric:</strong> a fornecedora da tecnologia que liga os dois.</li>
                 </List>
             </Section>

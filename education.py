@@ -181,7 +181,7 @@ def next_position(db: Session, column, *criteria) -> int:
 # --- The owner's side: a manager's own content, or Trademetric's (owner None) ---
 
 def owner_name(manager: Optional[models.User]) -> str:
-    return PLATFORM if manager is None else (manager.name or "Gestor")
+    return PLATFORM if manager is None else (manager.name or "Trader")
 
 
 def lesson_out(lesson: models.EduLesson, completed: Optional[bool] = None, done_by: Optional[int] = None) -> dict:

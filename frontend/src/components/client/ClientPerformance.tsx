@@ -54,13 +54,13 @@ export default function ClientPerformance({ license }: { license: ClientLicense 
                         <section className="space-y-3">
                             <h2 className="text-lg font-semibold">O portfólio no mesmo período</h2>
                             <p className="text-sm text-muted-foreground">
-                                Na conta do gestor, no tamanho dele. A diferença para o seu resultado vem do tamanho das suas
+                                Na conta do trader, no tamanho dele. A diferença para o seu resultado vem do tamanho das suas
                                 cópias, do limite de lotes, da sua corretora e das operações que não foram copiadas.
                             </p>
                             <PerformanceView
                                 stats={data.portfolio}
                                 emptyTitle="Nenhuma operação fechada no período"
-                                emptyDescription="O desempenho do portfólio aparece quando as operações fecham na conta do gestor."
+                                emptyDescription="O desempenho do portfólio aparece quando as operações fecham na conta do trader."
                             />
                         </section>
                     )}

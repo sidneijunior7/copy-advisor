@@ -45,7 +45,7 @@ export default function MySubscriptionsPage() {
         <div className="space-y-6">
             <PageHeader
                 title="Pagamentos"
-                description="O que você assina: o portfólio de cada gestor e a hospedagem de cada conta. Troque de plano, cancele ou retome quando quiser."
+                description="O que você assina: o portfólio de cada trader e a hospedagem de cada conta. Troque de plano, cancele ou retome quando quiser."
                 icon={<CreditCard />}
             >
                 {(paid.length > 0 || hosted.some(l => l.hosting!.billing.status)) && (

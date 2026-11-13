@@ -108,7 +108,7 @@ def blockers(db: Session, user: models.User) -> List[str]:
     """What has to be settled by a person before the account can be closed."""
     out = []
     if user.role != "CLIENT":
-        out.append("Só contas de cliente são encerradas por aqui: a de gestor tem portfólios e clientes ligados a ela")
+        out.append("Só contas de cliente são encerradas por aqui: a de trader tem portfólios e clientes ligados a ela")
     if user.closed_at is not None:
         out.append("A conta já está encerrada")
     live = (db.query(models.Subscription)

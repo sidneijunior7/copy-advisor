@@ -1466,7 +1466,7 @@ def connect_account(license_id: int, data: AccountIn, current_user: models.User 
     """The MT5 account of a license bought without one. Once set, only the manager changes it."""
     lic = own_license(license_id, current_user, db)
     if lic.client_mt5_login is not None:
-        raise HTTPException(status_code=409, detail="Esta licença já tem conta. Para trocar, fale com o gestor")
+        raise HTTPException(status_code=409, detail="Esta licença já tem conta. Para trocar, fale com o trader")
     if mailer.enabled() and current_user.email_verified_at is None:
         raise HTTPException(status_code=403, detail="Confirme seu email antes de conectar a conta: o link está na sua caixa de entrada")
     if db.query(models.License).filter(models.License.portfolio_id == lic.portfolio_id,
@@ -1972,7 +1972,7 @@ def subscribe(slug: str, data: marketplace.SubscriptionIn, current_user: models.
         raise HTTPException(status_code=409, detail="Esta conta MT5 já tem licença deste portfólio em outro cadastro")
     refuse_master_account(db, data.mt5_login)
     if subscribe_limiter.blocked(f"subscribe:{current_user.id}"):
-        raise HTTPException(status_code=429, detail="Pedidos demais hoje. Tente de novo amanhã ou fale com o gestor")
+        raise HTTPException(status_code=429, detail="Pedidos demais hoje. Tente de novo amanhã ou fale com o trader")
     subscribe_limiter.fail(f"subscribe:{current_user.id}")
     sub = models.Subscription(listing_id=listing.id, client_user_id=current_user.id, mt5_login=data.mt5_login,
                               kind="renewal" if existing is not None else "new", plan=plan,
@@ -2083,7 +2083,7 @@ def open_checkout(subscription_id: int, current_user: models.User = Depends(get_
     if sub is None or sub.client_user_id != current_user.id: raise HTTPException(status_code=404)
     if sub.status != "pending": raise HTTPException(status_code=409, detail="Este pedido já foi respondido")
     if sub.listing.status != "published" or not marketplace.pay_online(sub.listing):
-        raise HTTPException(status_code=409, detail="Este portfólio não aceita pagamento online. Fale com o gestor")
+        raise HTTPException(status_code=409, detail="Este portfólio não aceita pagamento online. Fale com o trader")
     if sub.plan is None or sub.plan.archived or sub.plan.listing_id != sub.listing_id:
         raise HTTPException(status_code=409, detail="Este plano não é mais vendido. Assine de novo pela página do portfólio")
     try:

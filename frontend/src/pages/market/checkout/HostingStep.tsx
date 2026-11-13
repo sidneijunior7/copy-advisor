@@ -81,7 +81,7 @@ export default function HostingStep({ value, onChange, price, onContinue }: {
             {value === false && (
                 <p className="flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 p-4 text-xs text-foreground sm:text-sm">
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
-                    Se o computador desligar, hibernar ou perder a internet com uma operação aberta, a sua conta não recebe a saída do gestor.
+                    Se o computador desligar, hibernar ou perder a internet com uma operação aberta, a sua conta não recebe a saída do trader.
                     Dá para mudar para a nuvem depois.
                 </p>
             )}

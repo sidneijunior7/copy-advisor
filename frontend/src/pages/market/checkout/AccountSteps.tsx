@@ -8,7 +8,7 @@ import { formatCpf } from '../../../lib/cpf';
 import { FormCta, Step, StepHeader } from './parts';
 
 export const PASSWORD_MIN = 8;
-export const CPF_REASON = 'Usamos para identificar o titular da assinatura. Não compartilhamos com o gestor.';
+export const CPF_REASON = 'Usamos para identificar o titular da assinatura. Não compartilhamos com o trader.';
 
 const linkClass = 'font-medium text-primary underline-offset-4 hover:underline';
 const FORM = 'max-w-xl space-y-4 2xl:max-w-2xl';
@@ -171,7 +171,7 @@ export function DetailsStep({ email, name, onName, password, onPassword, cpf, on
                     <Field label="Crie uma senha" htmlFor="checkout-register-password" hint={`Mínimo de ${PASSWORD_MIN} caracteres.`} error={of('password')}>
                         <PasswordInput id="checkout-register-password" value={password} onChange={onPassword} autoComplete="new-password" />
                     </Field>
-                    <Field label="CPF" htmlFor="checkout-cpf" hint="Identifica o titular. Não vai para o gestor." error={taken ? undefined : of('cpf')}>
+                    <Field label="CPF" htmlFor="checkout-cpf" hint="Identifica o titular. Não vai para o trader." error={taken ? undefined : of('cpf')}>
                         <Input id="checkout-cpf" inputMode="numeric" autoComplete="off" value={cpf} onChange={e => onCpf(formatCpf(e.target.value))}
                             placeholder="000.000.000-00" className="h-12 font-mono text-base tracking-wider" />
                     </Field>

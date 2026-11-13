@@ -234,7 +234,7 @@ export default function ListingPage() {
                     {(listing.description || listing.strategies.length > 0 || listing.manager.bio) && (
                         <details className="group rounded-lg border border-border bg-card">
                             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-sm font-medium">
-                                Sobre a estratégia e o gestor
+                                Sobre a estratégia e o trader
                                 <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
                             </summary>
                             <div className="space-y-4 border-t border-border p-4">
@@ -244,7 +244,7 @@ export default function ListingPage() {
                                 )}
                                 <div className="hidden space-y-3 md:block">
                                     <div>
-                                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Gestor</p>
+                                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Trader</p>
                                         <p className="mt-1 font-semibold">{listing.manager.name}</p>
                                         {listing.manager.bio && <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">{listing.manager.bio}</p>}
                                     </div>
@@ -291,7 +291,7 @@ export default function ListingPage() {
                 <div className="flex items-start justify-between gap-3 sm:items-center">
                     <div>
                         <h2 className="text-xl font-semibold">Desempenho real</h2>
-                        <p className="text-sm text-muted-foreground">As operações fechadas na conta do gestor, no tamanho dele.</p>
+                        <p className="text-sm text-muted-foreground">As operações fechadas na conta do trader, no tamanho dele.</p>
                         <p className="mt-1 text-xs font-medium sm:hidden">{PERIODS.find(p => p.days === days)?.label}</p>
                     </div>
                     <IconSelect icon={<CalendarDays />} label="Período" value={days} onChange={e => changeDays(Number(e.target.value))} className="sm:hidden">
@@ -306,7 +306,7 @@ export default function ListingPage() {
                 {stats && (
                     <div className={cn('transition-opacity', loading && 'opacity-60')}>
                         <PerformanceView stats={stats} emptyTitle="Sem operações fechadas no período"
-                            emptyDescription="Escolha um período maior, ou volte quando o gestor fechar as primeiras operações." />
+                            emptyDescription="Escolha um período maior, ou volte quando o trader fechar as primeiras operações." />
                     </div>
                 )}
             </section>
@@ -315,7 +315,7 @@ export default function ListingPage() {
                 <section className="space-y-4">
                     <div>
                         <h2 className="text-xl font-semibold">Backtest e resultado ao vivo</h2>
-                        <p className="text-sm text-muted-foreground">O que o gestor testou antes de operar, e se a conta real está se comportando como o teste previa.</p>
+                        <p className="text-sm text-muted-foreground">O que o trader testou antes de operar, e se a conta real está se comportando como o teste previa.</p>
                     </div>
                     <div className={cn('transition-opacity', loading && 'opacity-60')}>
                         <BacktestSection view={backtestView} />

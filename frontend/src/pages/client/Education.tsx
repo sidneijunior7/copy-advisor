@@ -460,7 +460,7 @@ export default function Education() {
                 <h1 className="flex items-center gap-2 font-spartan text-xl font-bold tracking-tight"><GraduationCap className="size-5 text-primary" /> Educacional</h1>
                 <div className="panel">
                     <EmptyState icon={<GraduationCap />} title="Nenhum conteúdo ainda"
-                        description="Quando o seu gestor publicar tutoriais e respostas às dúvidas mais comuns, eles aparecem aqui." />
+                        description="Quando o seu trader publicar tutoriais e respostas às dúvidas mais comuns, eles aparecem aqui." />
                 </div>
             </div>
         );

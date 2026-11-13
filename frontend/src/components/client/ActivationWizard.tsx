@@ -180,9 +180,9 @@ export default function ActivationWizard({ license, data, onChanged, onDone }: {
                     {current === 0 ? 'Vamos ativar sua cópia' : current === 1 ? 'Como você quer copiar?' : 'Tudo pronto!'}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                    {current === 0 ? 'São 2 passos rápidos, e depois as operações do gestor chegam sozinhas na sua conta.'
+                    {current === 0 ? 'São 2 passos rápidos, e depois as operações do trader chegam sozinhas na sua conta.'
                         : current === 1 ? 'Escolha onde o MetaTrader vai rodar. Dá para mudar depois.'
-                            : 'Sua conta está conectada e recebe as próximas operações do gestor.'}
+                            : 'Sua conta está conectada e recebe as próximas operações do trader.'}
                 </p>
             </div>
             <Stepper current={current} />
@@ -256,7 +256,7 @@ export default function ActivationWizard({ license, data, onChanged, onDone }: {
                     <div className="flex flex-col items-center gap-3 rounded-lg border border-success/30 bg-success/5 p-4 sm:flex-row">
                         <PartyPopper className="size-8 shrink-0 text-success" />
                         <p className="text-sm">
-                            Na próxima operação do gestor, a cópia aparece na aba <strong>Cópias</strong> e o resultado no seu painel.
+                            Na próxima operação do trader, a cópia aparece na aba <strong>Cópias</strong> e o resultado no seu painel.
                             Se quiser parar, é só desligar a chave no topo da página.
                         </p>
                     </div>

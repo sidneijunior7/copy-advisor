@@ -145,7 +145,7 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
                     <p>
                         {customCapital
                             ? <>Seu capital: <strong>{formatMoney(capital, currency)}</strong>. </>
-                            : <>Capital sugerido pelo gestor: <strong>{formatMoney(capital, currency)}</strong>. </>}
+                            : <>Capital sugerido pelo trader: <strong>{formatMoney(capital, currency)}</strong>. </>}
                         {overCapital
                             ? <span className="font-medium text-destructive">A maior queda passaria do saldo.</span>
                             : ddPct != null && <>A maior queda {customCapital ? 'seria' : 'foi'}{' '}

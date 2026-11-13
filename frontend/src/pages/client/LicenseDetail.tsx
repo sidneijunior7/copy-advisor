@@ -116,7 +116,7 @@ export default function LicenseDetail() {
                 return;
             }
             setRenewal(res.data);
-            toast.success('Pedido de renovação enviado', { description: 'O gestor estende a validade depois do pagamento.' });
+            toast.success('Pedido de renovação enviado', { description: 'O trader estende a validade depois do pagamento.' });
         } catch (e) {
             toast.error(apiError(e, 'Não foi possível pedir a renovação.'));
         } finally {

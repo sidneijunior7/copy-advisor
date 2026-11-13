@@ -44,7 +44,7 @@ export default function AdminListings() {
     const restore = async (row: AdminListing) => {
         try {
             update((await api.post<AdminListing>(`/admin/listings/${row.id}/restore`)).data);
-            toast.success('Anúncio liberado', { description: 'Voltou a rascunho: o gestor decide quando publicar.' });
+            toast.success('Anúncio liberado', { description: 'Voltou a rascunho: o trader decide quando publicar.' });
         } catch (e) {
             toast.error(apiError(e, 'Não foi possível liberar.'));
         }
@@ -52,7 +52,7 @@ export default function AdminListings() {
 
     return (
         <div className="space-y-6">
-            <PageHeader title="Vitrine" description="Anúncios de todos os gestores. Suspender tira do ar; as licenças já vendidas continuam." icon={<Store />} />
+            <PageHeader title="Vitrine" description="Anúncios de todos os traders. Suspender tira do ar; as licenças já vendidas continuam." icon={<Store />} />
             <Card flush>
                 {rows === null ? (
                     <p className="p-5 text-sm text-muted-foreground">Carregando...</p>
@@ -63,7 +63,7 @@ export default function AdminListings() {
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Anúncio</TableHead>
-                                <TableHead>Gestor</TableHead>
+                                <TableHead>Trader</TableHead>
                                 <TableHead>Situação</TableHead>
                                 <TableHead>Publicado em</TableHead>
                                 <TableHead className="text-right">Ações</TableHead>
@@ -79,7 +79,7 @@ export default function AdminListings() {
                                                 : <span className="font-medium">{r.title}</span>}
                                             <p className="font-mono text-xs text-muted-foreground">/{r.slug}</p>
                                         </TableCell>
-                                        <TableCell label="Gestor" className="text-sm">{r.manager}</TableCell>
+                                        <TableCell label="Trader" className="text-sm">{r.manager}</TableCell>
                                         <TableCell label="Situação">
                                             <Badge variant={STATUS[r.status].variant}>{STATUS[r.status].label}</Badge>
                                             {r.suspended_reason && <p className="mt-1 text-xs text-muted-foreground">{r.suspended_reason}</p>}
@@ -101,7 +101,7 @@ export default function AdminListings() {
                                             <TableCell colSpan={5} className="whitespace-normal pt-0">
                                                 <form onSubmit={e => { e.preventDefault(); suspend(); }}
                                                     className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 sm:flex-row sm:items-center">
-                                                    <Input autoFocus value={suspending.reason} maxLength={255} placeholder="Motivo (o gestor vê)"
+                                                    <Input autoFocus value={suspending.reason} maxLength={255} placeholder="Motivo (o trader vê)"
                                                         onChange={e => setSuspending({ ...suspending, reason: e.target.value })} className="h-9 flex-1" />
                                                     <div className="flex gap-1">
                                                         <Button size="sm" variant="destructive"><Ban /> Suspender</Button>

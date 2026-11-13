@@ -63,7 +63,7 @@ export default function HostingOffer({ price, stage = 'offer', onYes, onLater, a
                     </h2>
                     <p className="text-sm text-muted-foreground">
                         {stopped
-                            ? 'Agora o EA do seu computador não está conectado, e as operações do gestor não chegam à sua conta. Na nuvem, o MetaTrader fica ligado o tempo todo.'
+                            ? 'Agora o EA do seu computador não está conectado, e as operações do trader não chegam à sua conta. Na nuvem, o MetaTrader fica ligado o tempo todo.'
                             : 'O MetaTrader roda num servidor nosso, ligado o tempo todo. Pode desligar o computador: a cópia continua.'}
                     </p>
                 </div>

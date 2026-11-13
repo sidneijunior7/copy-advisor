@@ -47,7 +47,7 @@ export default function MySubscriptions() {
 
     if (!rows || rows.length === 0) return null;
     return (
-        <Card title="Minhas assinaturas" description="Pedidos de assinatura. Pago online ou aprovado pelo gestor, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
+        <Card title="Minhas assinaturas" description="Pedidos de assinatura. Pago online ou aprovado pelo trader, a licença aparece aqui embaixo." icon={<ShoppingBag />}>
             <ul className="divide-y divide-border">
                 {rows.slice(0, 10).map(s => {
                     const status = SUBSCRIPTION_STATUS[s.status];
@@ -63,7 +63,7 @@ export default function MySubscriptions() {
                                     {s.mt5_login != null && <>Conta {s.mt5_login} · </>}pedido em {formatDate(s.created_at)} ·{' '}
                                     {s.kind === 'promo' ? 'grátis' : s.plan ? `${s.plan.name}, ${formatMoney(s.plan.price, s.plan.currency)} / ${periodLabel(s.plan.days)}` : priceLabel(s.listing)}
                                 </p>
-                                {s.decision_note && <p className="text-xs text-muted-foreground">Gestor: {s.decision_note}</p>}
+                                {s.decision_note && <p className="text-xs text-muted-foreground">Trader: {s.decision_note}</p>}
                             </div>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Badge variant={status.variant}>{status.label}</Badge>

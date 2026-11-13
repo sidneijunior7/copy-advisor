@@ -165,7 +165,7 @@ def test_closing_an_account_ends_access_and_credentials_and_keeps_the_legal_reco
     assert client.post("/admin/users/999999/close", headers=admin).status_code == 404
     manager_id, _ = make_manager()
     r = client.post(f"/admin/users/{manager_id}/close", headers=admin)
-    assert r.status_code == 409 and "gestor" in r.json()["detail"]
+    assert r.status_code == 409 and "trader" in r.json()["detail"]
 
     # A subscription Stripe still renews is settled by a person first
     with database.SessionLocal() as db:

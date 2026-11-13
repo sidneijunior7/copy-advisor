@@ -3,8 +3,8 @@ import { type ReactNode } from 'react';
 // What each side came for: a client to copy someone, a manager to sell copies of his account
 const PITCH = {
     client: {
-        heading: <>Copie gestores<br /><span className="text-gradient">reais</span><br />na sua conta</>,
-        text: 'As operações do gestor chegam sozinhas no seu MetaTrader 5. Você acompanha tudo pelo painel e para quando quiser.',
+        heading: <>Copie traders<br /><span className="text-gradient">reais</span><br />na sua conta</>,
+        text: 'As operações do trader chegam sozinhas no seu MetaTrader 5. Você acompanha tudo pelo painel e para quando quiser.',
         highlights: [
             { value: 'Auto', label: 'Cópia sem você clicar' },
             { value: 'Sua', label: 'O dinheiro fica na sua corretora' },

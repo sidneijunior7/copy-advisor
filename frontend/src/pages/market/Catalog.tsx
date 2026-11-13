@@ -63,7 +63,7 @@ function ListingCard({ l, perLot = false }: { l: PublicListing; perLot?: boolean
                             {pct(l.stats.return_pct)}
                         </dd>
                     </div>
-                    <div title="O quanto a conta do gestor já caiu do topo nesse período">
+                    <div title="O quanto a conta do trader já caiu do topo nesse período">
                         <dt className="text-xs text-muted-foreground">Maior queda</dt>
                         <dd className="text-lg font-semibold">{l.stats.max_drawdown_pct == null ? '—' : pct(-l.stats.max_drawdown_pct)}</dd>
                     </div>

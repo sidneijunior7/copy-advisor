@@ -481,7 +481,7 @@ export default function Education() {
                 <PageHeader
                     title={data?.platform ? 'Educacional oficial' : 'Educacional'}
                     description={data?.platform
-                        ? 'Os tutoriais da Trademetric sobre como usar o Mirror. Aparecem para todos os clientes, antes do conteúdo dos gestores, com o selo Oficial.'
+                        ? 'Os tutoriais da Trademetric sobre como usar o Mirror. Aparecem para todos os clientes, antes do conteúdo dos traders, com o selo Oficial.'
                         : 'Tutoriais em vídeo, passo a passo e dúvidas frequentes sobre o seu produto, em Educacional no painel dos seus clientes.'}
                     icon={<GraduationCap />}
                 >

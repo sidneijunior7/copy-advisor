@@ -73,7 +73,7 @@ export default function MyLicenses() {
         <div className="space-y-6">
             <PageHeader
                 title="Minhas cópias"
-                description="Os gestores que você copia, a conta de cada um e se a cópia está funcionando agora."
+                description="Os traders que você copia, a conta de cada um e se a cópia está funcionando agora."
                 icon={<KeyRound />}
             />
 
@@ -81,7 +81,7 @@ export default function MyLicenses() {
 
             <details className="group panel">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-sm font-medium sm:px-5">
-                    <span className="flex items-center gap-2"><Ticket className="size-4 text-primary" /> Recebeu um código de acesso de um gestor?</span>
+                    <span className="flex items-center gap-2"><Ticket className="size-4 text-primary" /> Recebeu um código de acesso de um trader?</span>
                     <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="space-y-3 border-t border-border p-4 sm:px-5">
@@ -115,7 +115,7 @@ export default function MyLicenses() {
                         icon={<KeyRound />}
                         title="Você ainda não copia ninguém"
                         description="Escolha um portfólio em Portfólios: depois de assinar, a cópia aparece aqui para você ativar."
-                        action={<Link to="/marketplace"><Button><Store /> Ver gestores</Button></Link>}
+                        action={<Link to="/marketplace"><Button><Store /> Ver traders</Button></Link>}
                     />
                 </div>
             ) : (

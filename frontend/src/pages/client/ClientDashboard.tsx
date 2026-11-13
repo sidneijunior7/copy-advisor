@@ -175,10 +175,10 @@ export default function ClientDashboard() {
                             <Sparkles className="size-3.5" /> Bem-vindo à Trademetric
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-                            Escolha um gestor para copiar na sua conta
+                            Escolha um trader para copiar na sua conta
                         </h1>
                         <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                            Quando o gestor opera, a mesma ordem é feita no seu MetaTrader 5, no tamanho que você definir.
+                            Quando o trader opera, a mesma ordem é feita no seu MetaTrader 5, no tamanho que você definir.
                             Você acompanha tudo aqui e pausa quando quiser.
                         </p>
                         <div className="flex flex-wrap gap-3 pt-2">
@@ -453,7 +453,7 @@ export default function ClientDashboard() {
                     <div className="flex items-center justify-between">
                         <div>
                             <h2 className="text-lg font-semibold tracking-tight">Estratégias Hoje</h2>
-                            <p className="text-xs text-muted-foreground">As estratégias dos gestores que você copia</p>
+                            <p className="text-xs text-muted-foreground">As estratégias dos traders que você copia</p>
                         </div>
                         <Badge variant="primary" className="text-xs">{running_today.length}</Badge>
                     </div>

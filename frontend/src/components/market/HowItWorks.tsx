@@ -65,7 +65,7 @@ export function HowItWorks() {
 const FAQ = [
     {
         q: 'Posso perder dinheiro?',
-        a: 'Sim. A cópia repete as operações do gestor, e elas podem dar prejuízo. Veja a "Maior queda" de cada gestor: é o quanto a conta dele já caiu do topo. Comece com um valor que você aceita ver oscilar.',
+        a: 'Sim. A cópia repete as operações do trader, e elas podem dar prejuízo. Veja a "Maior queda" de cada trader: é o quanto a conta dele já caiu do topo. Comece com um valor que você aceita ver oscilar.',
     },
     {
         q: 'Do que eu preciso para começar?',
@@ -76,8 +76,8 @@ const FAQ = [
         a: 'Só se escolher copiar pelo seu computador. Com a hospedagem na nuvem, o MetaTrader roda num servidor nosso, ligado o tempo todo, por uma assinatura mensal à parte, por conta.',
     },
     {
-        q: 'O gestor tem acesso ao meu dinheiro?',
-        a: 'Não. O dinheiro fica na sua corretora, em seu nome. O gestor só envia as ordens de compra e venda; depósitos e saques continuam só com você.',
+        q: 'O trader tem acesso ao meu dinheiro?',
+        a: 'Não. O dinheiro fica na sua corretora, em seu nome. O trader só envia as ordens de compra e venda; depósitos e saques continuam só com você.',
     },
     {
         q: 'Posso parar ou cancelar?',
