@@ -10,7 +10,7 @@ import { formatMoney, periodLabel as periodName } from '../../../lib/money';
 import { riskOf } from '../../../lib/risk';
 import { cn } from '../../../lib/utils';
 import { lotsLabel, perContractFalls, periodWords, planTitle, radioKeys, signedMoney } from './format';
-import { RadioDot, StepCta, StepHeader } from './parts';
+import { RadioDot, Step, StepCta, StepHeader } from './parts';
 
 // Past this share of the capital, the drop is shown in the warning colour
 const HEAVY_DROP_PCT = 50;
@@ -33,8 +33,8 @@ function PlanCard({ tier, selected, tabbable, perContract, onSelect }: {
     return (
         <button type="button" role="radio" aria-checked={selected} tabIndex={tabbable ? 0 : -1} onClick={onSelect}
             className={cn(
-                'relative flex w-full items-center gap-3 rounded-xl border-2 p-3.5 text-left transition-all sm:flex-col sm:items-start sm:gap-2 sm:p-4',
-                selected ? 'border-primary bg-primary/5 shadow-sm' : 'border-border bg-card hover:border-primary/40',
+                'relative flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition-colors sm:flex-col sm:items-start sm:gap-2 sm:p-5',
+                selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:border-foreground/30',
             )}>
             {tier.popular && (
                 <span className="absolute -top-2.5 left-3 rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Mais escolhido</span>
@@ -104,7 +104,7 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
     };
 
     return (
-        <section className="panel space-y-6 p-5 sm:p-8">
+        <Step>
             <StepHeader title="Escolha o seu plano">
                 Veja como cada plano teria ido{period ? ` nos últimos ${period}` : ''}, com o risco e o capital que ele pede.
             </StepHeader>
@@ -118,7 +118,7 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
             </div>
 
             {/* Result and drop with the same weight: the profit keeps its colour, not a louder box */}
-            <div className="rounded-xl border border-border bg-secondary/20 p-4 sm:p-5" aria-live="polite">
+            <div className="rounded-xl bg-secondary/40 p-4 sm:p-6" aria-live="polite">
                 <p className="text-sm font-semibold">{period ? `Como foram os últimos ${period} com ${lots}` : `Resultado com ${lots}`}</p>
                 <div className="mt-3 grid grid-cols-2 divide-x divide-border">
                     <div className="min-w-0 pr-3 sm:pr-5">
@@ -179,7 +179,7 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
             )}
 
             {columns.length > 0 && (
-                <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+                <div className="space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-semibold">Mês a mês com {lots}</p>
                         <span className="text-xs text-muted-foreground">Operações reais fechadas</span>
@@ -190,12 +190,12 @@ export default function ContractsStep({ steps, tierIdx, onTier, simulation, curr
                 </div>
             )}
 
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
                 Antes de custos: corretagem, emolumentos, slippage{fees > 0 ? ` e ${formatMoney(fees, tier.currency)} de mensalidades no período` : ''}.
                 Resultados passados não garantem resultados futuros.
             </p>
 
             <StepCta onClick={onContinue}>Continuar com {lots} <ArrowRight /></StepCta>
-        </section>
+        </Step>
     );
 }

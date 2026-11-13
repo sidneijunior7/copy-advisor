@@ -17,10 +17,11 @@ import { apiError, cn } from '../../lib/utils';
 import { AFTER_VERIFY_KEY } from '../EmailLinks';
 import { CpfStep, DetailsStep, EmailStep, LoginStep, NameStep, PASSWORD_MIN } from './checkout/AccountSteps';
 import ContractsStep from './checkout/ContractsStep';
-import { periodWords, planTitle, signedMoney, tierPriceText, unitOf } from './checkout/format';
+import { periodWords, planTitle, signedMoney, unitOf } from './checkout/format';
 import HostingStep from './checkout/HostingStep';
 import { OrderBar, OrderSummary } from './checkout/OrderSummary';
-import { CheckoutSkeleton } from './checkout/parts';
+import { CheckoutColumns, CheckoutSkeleton } from './checkout/parts';
+import { PRIVACY_PATH, TERMS_PATH } from '../../components/TermsNotice';
 import { PaySummary, PromoSummary } from './checkout/SummaryStep';
 import {
     STAGE_LABELS, buildFlow, buildStages, progressOf, resolveStep, stageOf, type StageId, type StepId,
@@ -85,7 +86,9 @@ function buildFallbackSteps(listing: PublicListing): SimulationStep[] {
     return plans.length > 0 ? plans.map(p => step(p.max_lots, p)) : [1, 2, 3, 5, 10].map(lots => step(lots));
 }
 
-function Progress({ stages, current, pct, title, onBack }: { stages: StageId[]; current: number; pct: number; title: string; onBack: () => void }) {
+// Where the client is: the named stages on a wide screen, a bar and "Etapa 2 de 4" on a phone. The portfolio's name
+// is in the order, so it is not repeated here
+function Progress({ stages, current, pct, onBack }: { stages: StageId[]; current: number; pct: number; onBack: () => void }) {
     const label = STAGE_LABELS[stages[current]];
     return (
         <div className="space-y-3">
@@ -94,12 +97,9 @@ function Progress({ stages, current, pct, title, onBack }: { stages: StageId[]; 
                     className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                     <ArrowLeft className="size-4" /> Voltar
                 </button>
-                <p className="min-w-0 truncate text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{title}</span>
-                    <span className="sm:hidden"> · Etapa {current + 1} de {stages.length} · {label}</span>
-                </p>
+                <p className="min-w-0 truncate text-xs text-muted-foreground sm:hidden">Etapa {current + 1} de {stages.length} · {label}</p>
             </div>
-            <ol className="hidden grid-flow-col gap-2 sm:grid" aria-label="Etapas da assinatura">
+            <ol className="hidden grid-flow-col gap-2 border-b border-border pb-4 sm:grid" aria-label="Etapas da assinatura">
                 {stages.map((s, i) => (
                     <li key={s} aria-current={i === current ? 'step' : undefined}
                         className={cn('flex items-center gap-2 text-[13px] lg:text-sm', i === current ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
@@ -113,7 +113,7 @@ function Progress({ stages, current, pct, title, onBack }: { stages: StageId[]; 
                     </li>
                 ))}
             </ol>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary" role="progressbar" aria-label="Progresso da assinatura"
+            <div className="h-1 w-full overflow-hidden rounded-full bg-secondary sm:hidden" role="progressbar" aria-label="Progresso da assinatura"
                 aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-valuetext={`Etapa ${current + 1} de ${stages.length}: ${label}`}>
                 <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
             </div>
@@ -273,14 +273,14 @@ export default function CheckoutPage() {
     };
 
     if (missing) {
-        return <div className="panel"><EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do marketplace." /></div>;
+        return <div className="px-4 py-10"><EmptyState icon={<Store />} title="Portfólio não encontrado" description="Ele pode ter saído do marketplace." /></div>;
     }
     if (!listing || !tier) return <CheckoutSkeleton />;
 
     // A manager's or the platform's account cannot subscribe: said here, not at the last click
     if (user && user.role !== 'CLIENT') {
         return (
-            <div className="panel mx-auto max-w-xl">
+            <div className="mx-auto max-w-xl px-4 py-10">
                 <EmptyState icon={<UserX />} title="Entre com uma conta de cliente para assinar"
                     description="Esta conta é de gestor ou da plataforma. Para copiar um portfólio, use uma conta de cliente."
                     action={<Link to="/dashboard"><Button variant="outline">Ir para o meu painel</Button></Link>} />
@@ -410,15 +410,13 @@ export default function CheckoutPage() {
     const editCpf = (v: string) => { setCpf(v); setFieldError(null); setCpfTaken(false); };
     const unverified = me != null && me.email_enabled && !me.email_verified;
     const order = { listing, tier, promo, code, wantsHosting, periodLabel, copiers };
-    // What the email will get: the plan chosen and how it would have gone, so the question has a reason
+    // What the email will get, in one line: the plan and how it would have gone (its price is in the order beside)
     const preview = (
-        <>
-            <p className="mt-1 font-semibold">{listing.title} · {planTitle(tier)} · {tierPriceText(tier, periodLabel)}</p>
-            <p className="text-muted-foreground">
-                <span className={cn('font-medium', tier.simulated_profit >= 0 ? 'text-success' : 'text-destructive')}>{signedMoney(tier.simulated_profit, currency)}</span>
-                {simulation ? ` em ${periodWords(simulation.days)}` : ''} · maior queda de {formatMoney(tier.max_drawdown, currency)}
-            </p>
-        </>
+        <p>
+            <span className="font-medium">{planTitle(tier)}:</span>{' '}
+            <span className={cn('font-medium', tier.simulated_profit >= 0 ? 'text-success' : 'text-destructive')}>{signedMoney(tier.simulated_profit, currency)}</span>
+            <span className="text-muted-foreground">{simulation ? ` em ${periodWords(simulation.days)}` : ''}, maior queda de {formatMoney(tier.max_drawdown, currency)}</span>
+        </p>
     );
     const handleName = (e: FormEvent) => {
         e.preventDefault();
@@ -428,64 +426,72 @@ export default function CheckoutPage() {
     };
 
     return (
-        // A wide screen: the steps and, beside them, the order. Below that the order is a line that opens
-        <div className={cn('mx-auto max-w-6xl sm:pb-8 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-8',
-            step === 'summary' ? 'pb-56' : 'pb-28')}>
-            <div className="mx-auto w-full min-w-0 max-w-3xl space-y-5 lg:max-w-none">
-                <Progress stages={stages} current={progress.index} pct={progress.pct} title={listing.title} onBack={goBack} />
+        // A wide screen: the steps on one half and the order on the other, each to the edge of the screen. Below
+        // that the order is a line that opens under the progress
+        <CheckoutColumns
+            mainClassName={step === 'summary' ? 'pb-56 sm:pb-10' : 'pb-28 sm:pb-10'}
+            side={<OrderSummary {...order} />}
+            main={
+                <div className="space-y-6">
+                    <Progress stages={stages} current={progress.index} pct={progress.pct} onBack={goBack} />
 
-                {step !== 'summary' && <OrderBar {...order} className="lg:hidden" />}
+                    {step !== 'summary' && <OrderBar {...order} className="lg:hidden" />}
 
-                {mine && !done && (
-                    <p className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
-                        <span className="flex items-center gap-2"><CheckCircle2 className="size-4 shrink-0 text-success" />
-                            Você já copia este portfólio{mine.mt5_login != null ? ` na conta ${mine.mt5_login}` : ''}. Pode assinar para outra conta MT5.</span>
-                        <Link to={`/client/licenses/${mine.id}`} className="font-medium text-primary underline-offset-4 hover:underline">Ver minha cópia <ArrowRight className="inline size-3.5" /></Link>
-                    </p>
-                )}
+                    {mine && !done && (
+                        <p className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+                            <span className="flex items-center gap-2"><CheckCircle2 className="size-4 shrink-0 text-success" />
+                                Você já copia este portfólio{mine.mt5_login != null ? ` na conta ${mine.mt5_login}` : ''}. Pode assinar para outra conta MT5.</span>
+                            <Link to={`/client/licenses/${mine.id}`} className="font-medium text-primary underline-offset-4 hover:underline">Ver minha cópia <ArrowRight className="inline size-3.5" /></Link>
+                        </p>
+                    )}
 
-                {step === 'contracts' && (
-                    <ContractsStep steps={steps} tierIdx={tierIndex} onTier={setTierIdx} simulation={simulation} currency={currency}
-                        customCapital={customCapital} onCapital={setCustomCapital} onContinue={() => goNext('contracts')} />
-                )}
-                {step === 'email' && (
-                    <EmailStep email={email} onEmail={v => { setEmail(v); setFieldError(null); }} error={fe('email')} busy={busy} promo={promo}
-                        preview={preview} onSubmit={handleEmail} />
-                )}
-                {step === 'hosting' && (
-                    <HostingStep value={wantsHosting} onChange={setWantsHosting} price={listing.hosting_price}
-                        onContinue={() => { saveLead({ wants_hosting: wantsHosting, step: 'hosting' }); goNext('hosting'); }} />
-                )}
-                {step === 'login_password' && (
-                    <LoginStep email={email} password={password} onPassword={editPassword} error={fe('password')} busy={busy}
-                        onOtherEmail={otherEmail} onSubmit={handleLogin} />
-                )}
-                {step === 'name' && (
-                    <NameStep email={email} name={name} onName={editName} password={password} onPassword={editPassword}
-                        error={fieldError} onOtherEmail={otherEmail} onSubmit={handleName} />
-                )}
-                {step === 'cpf' && (
-                    <CpfStep cpf={cpf} onCpf={editCpf} error={fe('cpf')} taken={cpfTaken ? { onOtherEmail: otherEmail } : null} busy={busy}
-                        onSubmit={e => { e.preventDefault(); if (isValidCpf(cpf)) void register(); else setFieldError({ field: 'cpf', message: 'Confira os números: este CPF não é válido.' }); }} />
-                )}
-                {step === 'details' && (
-                    <DetailsStep email={email} name={name} onName={editName} password={password} onPassword={editPassword} cpf={cpf} onCpf={editCpf}
-                        error={fieldError} taken={cpfTaken ? { onOtherEmail: otherEmail } : null} busy={busy} onOtherEmail={otherEmail} onSubmit={handleDetails} />
-                )}
-                {step === 'summary' && (promo ? (
-                    <PromoSummary listing={listing} code={code} onCode={setCode} email={me?.email ?? email} unverified={unverified}
-                        risk={risk} onRisk={setRisk} busy={busy} onRedeem={() => handleRedeem(code)}
-                        onPreferPay={() => navigate(`/assinar/${slug}?passo=contracts`)} />
-                ) : (
-                    <PaySummary listing={listing} tier={tier} periodLabel={periodLabel} wantsHosting={wantsHosting}
-                        copiers={copiers} risk={risk} onRisk={setRisk} busy={busy} done={done} onEdit={goTo}
-                        onSubscribe={handleSubscribe} onRedeem={handleRedeem} />
-                ))}
-            </div>
+                    {step === 'contracts' && (
+                        <ContractsStep steps={steps} tierIdx={tierIndex} onTier={setTierIdx} simulation={simulation} currency={currency}
+                            customCapital={customCapital} onCapital={setCustomCapital} onContinue={() => goNext('contracts')} />
+                    )}
+                    {step === 'email' && (
+                        <EmailStep email={email} onEmail={v => { setEmail(v); setFieldError(null); }} error={fe('email')} busy={busy} promo={promo}
+                            preview={preview} onSubmit={handleEmail} />
+                    )}
+                    {step === 'hosting' && (
+                        <HostingStep value={wantsHosting} onChange={setWantsHosting} price={listing.hosting_price}
+                            onContinue={() => { saveLead({ wants_hosting: wantsHosting, step: 'hosting' }); goNext('hosting'); }} />
+                    )}
+                    {step === 'login_password' && (
+                        <LoginStep email={email} password={password} onPassword={editPassword} error={fe('password')} busy={busy}
+                            onOtherEmail={otherEmail} onSubmit={handleLogin} />
+                    )}
+                    {step === 'name' && (
+                        <NameStep email={email} name={name} onName={editName} password={password} onPassword={editPassword}
+                            error={fieldError} onOtherEmail={otherEmail} onSubmit={handleName} />
+                    )}
+                    {step === 'cpf' && (
+                        <CpfStep cpf={cpf} onCpf={editCpf} error={fe('cpf')} taken={cpfTaken ? { onOtherEmail: otherEmail } : null} busy={busy}
+                            onSubmit={e => { e.preventDefault(); if (isValidCpf(cpf)) void register(); else setFieldError({ field: 'cpf', message: 'Confira os números: este CPF não é válido.' }); }} />
+                    )}
+                    {step === 'details' && (
+                        <DetailsStep email={email} name={name} onName={editName} password={password} onPassword={editPassword} cpf={cpf} onCpf={editCpf}
+                            error={fieldError} taken={cpfTaken ? { onOtherEmail: otherEmail } : null} busy={busy} onOtherEmail={otherEmail} onSubmit={handleDetails} />
+                    )}
+                    {step === 'summary' && (promo ? (
+                        <PromoSummary listing={listing} code={code} onCode={setCode} email={me?.email ?? email} unverified={unverified}
+                            risk={risk} onRisk={setRisk} busy={busy} onRedeem={() => handleRedeem(code)}
+                            onPreferPay={() => navigate(`/assinar/${slug}?passo=contracts`)} />
+                    ) : (
+                        <PaySummary listing={listing} tier={tier} periodLabel={periodLabel} wantsHosting={wantsHosting}
+                            copiers={copiers} risk={risk} onRisk={setRisk} busy={busy} done={done} onEdit={goTo}
+                            onSubscribe={handleSubscribe} onRedeem={handleRedeem} />
+                    ))}
 
-            <div className="hidden lg:sticky lg:top-20 lg:block">
-                <OrderSummary {...order} />
-            </div>
-        </div>
+                    <footer className="space-y-1 border-t border-border pt-5 text-xs text-muted-foreground">
+                        <p>Resultados passados não garantem resultados futuros. Operar no mercado envolve risco de perda.</p>
+                        <p className="space-x-3">
+                            <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">Termos de Uso</a>
+                            <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">Privacidade</a>
+                        </p>
+                    </footer>
+                </div>
+            }
+        />
     );
 }

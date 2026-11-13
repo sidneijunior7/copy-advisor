@@ -36,7 +36,7 @@ function OrderBody({ listing, tier, promo, code, wantsHosting, periodLabel, copi
     return (
         <div className="space-y-4">
             <div className="flex items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-bold text-primary" aria-hidden>
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-bold text-primary" aria-hidden>
                     {initials(listing.manager.name)}
                 </span>
                 <div className="min-w-0">
@@ -95,13 +95,11 @@ function OrderBody({ listing, tier, promo, code, wantsHosting, periodLabel, copi
     );
 }
 
-// A wide screen: a column beside the steps, fixed while the page scrolls
+// A wide screen: the band beside the steps, fixed while the page scrolls. The band is the frame: no card in it
 export function OrderSummary(props: OrderProps) {
     return (
-        <aside className="panel p-5" aria-label="Seu pedido">
-            <p className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <ShoppingBag className="size-3.5" /> Seu pedido
-            </p>
+        <aside aria-label="Seu pedido">
+            <h2 className="mb-5 text-sm font-semibold">Seu pedido</h2>
             <OrderBody {...props} />
         </aside>
     );
@@ -111,7 +109,7 @@ export function OrderSummary(props: OrderProps) {
 export function OrderBar(props: OrderProps & { className?: string }) {
     const { tier, promo, periodLabel, className } = props;
     return (
-        <details className={cn('group panel overflow-hidden', className)}>
+        <details className={cn('group overflow-hidden rounded-xl border border-border bg-card', className)}>
             <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
                 <span className="flex min-w-0 items-center gap-2">
                     <ShoppingBag className="size-4 shrink-0 text-primary" />

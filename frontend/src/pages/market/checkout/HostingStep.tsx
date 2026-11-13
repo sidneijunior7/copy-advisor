@@ -4,7 +4,7 @@ import type { HostingPrice } from '../../../api';
 import { Badge } from '../../../components/ui/Badge';
 import { formatMoney, periodLabel } from '../../../lib/money';
 import { CLOUD_BILLED_APART, radioKeys } from './format';
-import { ChoiceCard, StepCta, StepHeader } from './parts';
+import { ChoiceCard, Step, StepCta, StepHeader } from './parts';
 
 const MANUAL_INSTALL_STEPS = [
     'Instalar o MetaTrader 5 no seu computador ou numa VPS Windows',
@@ -23,7 +23,7 @@ export default function HostingStep({ value, onChange, price, onContinue }: {
     const [showSteps, setShowSteps] = useState(false);
     const stepsOpen = showSteps || value === false;
     return (
-        <section className="panel space-y-6 p-5 sm:p-8">
+        <Step>
             <StepHeader title="Onde a sua cópia vai rodar?">
                 O MetaTrader 5 precisa ficar aberto para copiar as operações.
             </StepHeader>
@@ -60,14 +60,14 @@ export default function HostingStep({ value, onChange, price, onContinue }: {
                 </ChoiceCard>
             </div>
 
-            <div className="rounded-xl border border-border">
+            <div>
                 <button type="button" onClick={() => setShowSteps(v => !v)} aria-expanded={stepsOpen}
-                    className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm font-medium">
+                    className="inline-flex min-h-11 items-center gap-2 text-left text-sm font-medium text-muted-foreground hover:text-foreground">
                     O que a instalação própria exige? (6 passos)
                     <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${stepsOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {stepsOpen && (
-                    <ol className="space-y-1.5 border-t border-border px-4 py-3 text-sm text-muted-foreground">
+                    <ol className="space-y-1.5 pt-1 text-sm text-muted-foreground sm:columns-2 sm:gap-8">
                         {MANUAL_INSTALL_STEPS.map((item, i) => (
                             <li key={item} className="flex items-start gap-2.5">
                                 <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-[11px] font-bold text-foreground">{i + 1}</span>
@@ -90,6 +90,6 @@ export default function HostingStep({ value, onChange, price, onContinue }: {
                 note={value === null ? 'Escolha uma das opções para continuar.' : undefined}>
                 {value === null ? 'Continuar' : value ? 'Continuar com a nuvem' : 'Continuar com a instalação própria'} <ArrowRight />
             </StepCta>
-        </section>
+        </Step>
     );
 }
